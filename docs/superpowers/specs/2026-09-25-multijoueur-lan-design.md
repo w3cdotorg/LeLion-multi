@@ -59,10 +59,10 @@ de jeu.
 | `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, et côté hôte les commandes reçues d'un client, numérotées et dédoublonnées en phase 16). | Input |
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne connaît ni les règles ni le réseau. | `Joueur`, `Commandes` |
-| `Regles` (Node) | Réagit aux événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression) et décide des effets. `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
+| `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel) + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille). | rien |
 | `Reseau` (autoload) | Pair ENet, découverte UDP, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
-| `Main` | Instancie N lions via `MultiplayerSpawner`, instancie les `Regles` selon le mode, relaie tampons et scores. | tout le reste |
+| `Main` | Instancie N lions via `MultiplayerSpawner`, branche les `Regles` du mode dans `GameState` (à partir de la bataille), relaie tampons et scores. | tout le reste |
 
 ### 3.2 Flux d'une frame (bataille)
 

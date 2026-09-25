@@ -1,3 +1,4 @@
+class_name EtatPartie
 extends Node
 ## État global d'une partie : joueurs, progression de la peinture, chrono, fin de partie.
 ## L'état propre à chaque lion vit dans `Joueur` ; les propriétés et méthodes marquées
@@ -33,6 +34,8 @@ const NIVEAUX: Array[Dictionary] = [
 ## réassigné : les relais de signaux de la façade sont liés à `joueurs[0]` dans `_ready`
 ## (jusqu'à la phase 6), et une réassignation les rendrait muets sans erreur.
 var joueurs: Array[Joueur] = [Joueur.new()]
+## Règles de la partie : celles du solo par défaut ; la bataille branchera les siennes.
+var regles: Regles
 var progression := 0.0
 var temps_ecoule := 0.0
 var partie_en_cours := false
@@ -70,6 +73,10 @@ var bonus_restant: float:
 		return joueur_local().bonus_restant
 	set(valeur):
 		joueur_local().bonus_restant = valeur
+
+
+func _init() -> void:
+	regles = ReglesSolo.new(self)
 
 
 func _ready() -> void:
@@ -166,17 +173,13 @@ func est_invulnerable() -> bool:
 	return joueur_local().est_invulnerable()
 
 
-## Un ennemi touche le lion : perd une vie, ou termine la partie s'il n'en reste plus.
-## `origine` = position de l'ennemi, pour le recul (Vector2.INF si inconnue).
+## Façade : un ennemi touche le lion du joueur local (voir Regles.lion_touche_par_ennemi).
 func toucher_lion(origine: Vector2 = Vector2.INF) -> void:
-	if not partie_en_cours or not pret or est_invulnerable():
-		return
-	if joueur_local().encaisser_coup(origine, DUREE_INVULNERABILITE) <= 0:
-		terminer_partie(false)
+	regles.lion_touche_par_ennemi(joueur_local(), origine)
 
 
 func gagner_vie() -> bool:
-	return joueur_local().gagner_vie(VIES_MAX)
+	return regles.coeur_ramasse(joueur_local())
 
 
 func niveau() -> Dictionary:
@@ -201,9 +204,7 @@ func nb_couleurs_total() -> int:
 
 
 func debloquer_couleur(index: int) -> bool:
-	if index < 0 or index >= COULEURS_ARC_EN_CIEL.size():
-		return false
-	return joueur_local().debloquer_couleur(COULEURS_ARC_EN_CIEL[index])
+	return regles.pastille_ramassee(joueur_local(), index)
 
 
 func prochain_index_couleur() -> int:
@@ -223,8 +224,7 @@ func activer_bonus(duree: float) -> void:
 func signaler_progression(ratio: float) -> void:
 	progression = ratio
 	progression_changee.emit(ratio)
-	if partie_en_cours and ratio >= seuil_victoire():
-		terminer_partie(true)
+	regles.progression_mesuree(ratio)
 
 
 func terminer_partie(victoire: bool) -> void:
