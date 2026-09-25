@@ -1,9 +1,10 @@
-[gd_scene load_steps=11 format=3 uid="uid://dmayuumv4a1gh"]
+[gd_scene load_steps=13 format=3 uid="uid://dmayuumv4a1gh"]
 
 [ext_resource type="Script" uid="uid://dh0gkc6tf8etc" path="res://Scripts/Lion.gd" id="1_3r2l0"]
 [ext_resource type="Texture2D" uid="uid://cmjsa80060vyw" path="res://Assets/Sprites/LionHead.png" id="1_kx51r"]
 [ext_resource type="Texture2D" uid="uid://cdj6ds4mocio4" path="res://Assets/Sprites/LionHeadVomit.png" id="2_3r2l0"]
 [ext_resource type="Script" uid="uid://dmbxtsy64rnau" path="res://Scripts/GerbeTraceuse.gd" id="9_or3p1"]
+[ext_resource type="Texture2D" uid="uid://dy0pggnw08ymx" path="res://Assets/Sprites/etoile.png" id="10_etoile"]
 
 [sub_resource type="Animation" id="Animation_r1xi6"]
 resource_name = "Idle"
@@ -63,7 +64,11 @@ radius = 63.1981
 [sub_resource type="CircleShape2D" id="CircleShape2D_03dqy"]
 radius = 62.0725
 
+[sub_resource type="CircleShape2D" id="CircleShape2D_choc"]
+radius = 45.0
+
 [node name="Lion" type="CharacterBody2D" groups=["lion"]]
+collision_mask = 0
 script = ExtResource("1_3r2l0")
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
@@ -110,3 +115,31 @@ theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 26
 horizontal_alignment = 1
 vertical_alignment = 2
+
+[node name="Etoiles" type="Node2D" parent="."]
+visible = false
+z_index = 3
+position = Vector2(68, 18)
+
+[node name="Etoile1" type="Sprite2D" parent="Etoiles"]
+modulate = Color(1, 0.9, 0.3, 1)
+scale = Vector2(0.35, 0.35)
+texture = ExtResource("10_etoile")
+
+[node name="Etoile2" type="Sprite2D" parent="Etoiles"]
+modulate = Color(1, 0.9, 0.3, 1)
+scale = Vector2(0.35, 0.35)
+texture = ExtResource("10_etoile")
+
+[node name="Etoile3" type="Sprite2D" parent="Etoiles"]
+modulate = Color(1, 0.9, 0.3, 1)
+scale = Vector2(0.35, 0.35)
+texture = ExtResource("10_etoile")
+
+[node name="PareChocs" type="Area2D" parent="."]
+position = Vector2(68, 66)
+collision_layer = 16
+collision_mask = 16
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="PareChocs"]
+shape = SubResource("CircleShape2D_choc")

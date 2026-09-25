@@ -205,6 +205,7 @@ func _run() -> void:
 	_check(not is_instance_valid(pickup), "le pickup disparaît au contact")
 	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
 	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
+	_check(lion.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
 	var hud: Node = main.get_node("HUD")
 	_check(hud.indice.visible == false, "le HUD cache l'indice après la première couleur")
 	_check(hud._pastilles[0].color == GS.couleur(0) and hud._pastilles[1].color != GS.couleur(1),
@@ -710,7 +711,234 @@ func _run() -> void:
 	for l in lions_teintes:
 		l.free()
 
-	print("== %d échec(s) ==" % _echecs)
+	# Bataille : lions de bataille, dans une scène propre. La partie Hardcore est libérée d'abord
+	# (son lion, sa ville) : rien des sections précédentes ne doit toucher ces lions.
 	paused = false
 	main.free()
+	main = null
+	GS.configurer_bataille(2)
+	GS.nouvelle_partie()
+	GS.pret = true
+	var j_rouge: Joueur = GS.joueurs[0]
+	var j_bleu: Joueur = GS.joueurs[1]
+	var lions_bataille: Array[CharacterBody2D] = []
+	for j: Joueur in GS.joueurs:
+		var l: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+		l.joueur = j
+		l.commandes = Commandes.manuelles()
+		l.position = Vector2(200 + 1000 * lions_bataille.size(), 100)
+		root.add_child(l)
+		lions_bataille.append(l)
+	var lr: CharacterBody2D = lions_bataille[0]
+	var lb: CharacterBody2D = lions_bataille[1]
+	await _frames(2)
+
+	# Gerbe en trois nuances, rayon selon les crans
+	var couleurs_gerbe: Array = lr.vomi_container.get_children().map(
+		func(e: GPUParticles2D) -> Color: return (e.process_material as ParticleProcessMaterial).color_ramp.gradient.get_color(0))
+	_check(couleurs_gerbe == j_rouge.nuances(), "un lion de bataille a trois émetteurs, aux nuances de son joueur (%s)" % [couleurs_gerbe])
+	_check(lr.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
+	GS.regles.pastille_ramassee(j_rouge, 0)
+	_check(lr.traceuse_shape.shape.radius == 21.0 and lb.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
+	for i in range(10):
+		GS.regles.pastille_ramassee(j_rouge, 0)
+	_check(lr.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
+	lr.commandes.vomir_voulu = true
+	for i in range(3):
+		await process_frame  # le vomi démarre dans _process
+	_check(lr.est_en_train_de_vomir, "un lion de bataille vomit dès le départ, sans pastille")
+	lr.commandes.vomir_voulu = false
+	await _frames(2)
+
+	# Reliquats de la phase 7 : apparence appliquée trop tôt, matériau d'un autre shader
+	var lion_neuf: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	lion_neuf.joueur = Joueur.new()
+	lion_neuf.joueur.couleur = Color(0.18, 0.78, 0.25)
+	lion_neuf.commandes = Commandes.manuelles()
+	lion_neuf.position = Vector2(700, 400)
+	lion_neuf.appliquer_apparence()
+	root.add_child(lion_neuf)
+	await _frames(1)
+	_check(lion_neuf.sprite.material is ShaderMaterial and lion_neuf.sprite.material.shader == shader_lion,
+		"appliquer_apparence avant l'ajout à l'arbre ne fait rien ; _ready teinte le lion")
+	var materiau_etranger := ShaderMaterial.new()
+	materiau_etranger.shader = load("res://Shaders/Ville.gdshader")
+	lion_neuf.sprite.material = materiau_etranger
+	lion_neuf.appliquer_apparence()
+	_check(lion_neuf.sprite.material != materiau_etranger and lion_neuf.sprite.material.shader == shader_lion,
+		"un matériau d'un autre shader sur le sprite est remplacé par celui de la teinte")
+	lion_neuf.free()
+
+	# Étourdissement par un ennemi : immobile, repoussé, étoiles, sans barbouillage
+	var materiau_bleu := lb.sprite.material as ShaderMaterial
+	lb.commandes.direction_voulue = Vector2.LEFT
+	await _frames(5)
+	_check(lb._vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
+	materiau_bleu.set_shader_parameter("barbouillage_force", 0.5)  # pour un check discriminant : un ennemi doit bien la remettre à 0
+	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
+	_check(j_bleu.est_etourdi() and lb._vitesse == Vector2.ZERO and lb._recul.x > 0.0 and lb.etoiles.visible,
+		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
+	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "un ennemi ne barbouille pas")
+	lb.commandes.vomir_voulu = true
+	var position_etoile: Vector2 = lb.etoiles.get_child(0).position
+	await _frames(10)
+	_check(lb._vitesse == Vector2.ZERO and not lb.est_en_train_de_vomir, "étourdi, le lion ignore ses commandes : ni déplacement ni vomi")
+	_check(lb.etoiles.get_child(0).position != position_etoile, "les étoiles tournent autour de la tête")
+	j_bleu.etourdi_restant = 0.05
+	await create_timer(0.1).timeout
+	await _frames(2)
+	_check(not j_bleu.est_etourdi() and not lb.etoiles.visible and j_bleu.est_invulnerable()
+		and lb._clignotement != null and lb._clignotement.is_running(),
+		"à la fin de l'étourdissement, les étoiles s'en vont et l'immunité clignote")
+	_check(lb._vitesse.x < 0.0 and lb.est_en_train_de_vomir, "le lion obéit de nouveau à ses commandes")
+	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
+	_check(not j_bleu.est_etourdi(), "un ennemi ne ré-étourdit pas un lion immunisé")
+
+	# Étourdissement par le vomi : tête barbouillée de la couleur de l'agresseur
+	j_bleu.invulnerable_restant = 0.0
+	GS.regles.lion_touche_par_vomi(j_bleu, j_rouge, lb.global_position + lb.CENTRE + Vector2(0, -80))
+	_check(materiau_bleu.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur
+		and is_equal_approx(materiau_bleu.get_shader_parameter("barbouillage_force"), lb.FORCE_BARBOUILLAGE)
+		and materiau_bleu.get_shader_parameter("couleur_joueur") == j_bleu.couleur,
+		"le vomi barbouille la tête de la couleur de l'agresseur, par-dessus la teinte du joueur")
+	await _frames(3)
+	_check(not lb.est_en_train_de_vomir and not lb.gerbe_traceuse.monitoring, "étourdi en plein vomi, le lion arrête de vomir")
+	j_bleu.etourdi_restant = 0.05
+	await create_timer(0.1).timeout
+	await _frames(2)
+	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "le barbouillage s'efface à la fin de l'étourdissement")
+
+	# Un vrai ennemi, en plein vomi : l'étourdissement part d'un rappel physique (body_entered)
+	j_bleu.invulnerable_restant = 0.0
+	lb.commandes.direction_voulue = Vector2.ZERO
+	await _frames(3)
+	_check(lb.est_en_train_de_vomir, "(pré-condition) le lion bleu vomit")
+	var coccinelle_bataille: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_bataille.position = lb.global_position + lb.CENTRE
+	root.add_child(coccinelle_bataille)
+	await _frames(3)
+	_check(j_bleu.est_etourdi() and j_bleu.vies == 3 and not lb.est_en_train_de_vomir,
+		"une coccinelle étourdit le lion de bataille qu'elle touche, sans lui ôter de vie ; il arrête de vomir")
+	coccinelle_bataille.free()
+	lb.commandes.vomir_voulu = false
+	await _frames(2)
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
+	# Auto-guérison des effets visuels : `Joueur.reinitialiser` n'émet aucun signal
+	# (contrairement à `Joueur.etourdir`) ; le lion doit s'en remettre tout seul au `_process` suivant
+	var couleurs_j_bleu := j_bleu.couleurs_debloquees.duplicate()
+	GS.regles.lion_touche_par_vomi(j_bleu, j_rouge, lb.global_position + lb.CENTRE + Vector2(0, -80))
+	await _frames(2)
+	_check(j_bleu.est_etourdi() and lb.etoiles.visible and materiau_bleu.get_shader_parameter("barbouillage_force") > 0.0,
+		"(pré-condition) le lion bleu est étourdi et barbouillé, étoiles visibles")
+	j_bleu.reinitialiser(3, couleurs_j_bleu)
+	await _frames(3)
+	_check(not lb.etoiles.visible and materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0,
+		"Joueur.reinitialiser en plein étourdissement n'émet rien : étoiles et barbouillage se corrigent tout seuls")
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
+	# Zones de contact : trois, le long de la parabole, jusqu'au point de chute
+	var zones: Array[Area2D] = lr.zones_contact
+	_check(zones.size() == 3 and zones[2].position.is_equal_approx(lr.gerbe_traceuse.position)
+		and zones[0].position.y < zones[1].position.y and zones[1].position.y < zones[2].position.y
+		and zones.all(func(z: Area2D) -> bool: return z.collision_layer == 0 and not z.monitoring),
+		"trois zones de contact sur la parabole, la dernière au point de chute, inertes hors du vomi")
+	_check(zones[0].get_child(0).shape != lb.zones_contact[0].get_child(0).shape, "chaque lion a ses propres formes de zones de contact")
+	j_bleu.invulnerable_restant = 0.0
+	var infliges_avant: int = j_rouge.etourdissements_infliges
+	lb._recul = Vector2.ZERO
+	lb.global_position = lr.to_global(zones[1].position) - lb.CENTRE
+	await _frames(2)
+	lr.commandes.vomir_voulu = true
+	for i in range(30):  # vomi démarré au _process, contacts connus au tick physique suivant
+		await _frames(1)
+		if j_bleu.est_etourdi():
+			break
+	_check(j_bleu.est_etourdi() and materiau_bleu.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur
+		and j_rouge.etourdissements_infliges == infliges_avant + 1 and not j_rouge.est_etourdi(),
+		"la gerbe d'un lion étourdit l'autre lion qu'elle touche, barbouillé de sa couleur, et lui compte l'étourdissement")
+	var etourdi_apres_coup: float = j_bleu.etourdi_restant
+	await _frames(10)
+	_check(j_rouge.etourdissements_infliges == infliges_avant + 1 and j_bleu.etourdi_restant < etourdi_apres_coup,
+		"un lion déjà étourdi n'est pas ré-étourdi par la gerbe qui le touche encore")
+	lr.commandes.vomir_voulu = false
+	await _frames(3)  # le vomi s'arrête au _process suivant : pas de nouveau contact ensuite
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
+	# Auto-tamponneuses : pare-chocs réduit, recul proportionnel à la vitesse d'approche
+	_check(lr.collision_mask == 0 and lr.pare_chocs.collision_layer == 16 and lr.pare_chocs.collision_mask == 16
+		and is_equal_approx(lr._rayon_choc, 45.0) and lr.get_node("CollisionShape2D").shape.radius > 60.0,
+		"les lions se heurtent sur leur couche dédiée, à 45 px ; le corps (63 px) reste celui que touchent ennemis et pastilles")
+	lr._recul = Vector2.ZERO
+	lb._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	for i in range(90):
+		await _frames(1)
+		if j_rouge.chocs > 0:
+			break
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
+	_check(lr._recul.x < 0.0 and lb._recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
+		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
+	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")
+	var distance_min := 1e9
+	for i in range(30):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	_check(distance_min > 2 * 45.0 - 15.0 and j_rouge.chocs == 1,
+		"les lions ne s'enfoncent pas l'un dans l'autre (distance min %.0f px), un seul choc compté" % distance_min)
+
+	# Poussée continue de 2 s (120 ticks physiques) contre un lion immobile : avant cette
+	# correction, seul `_recul` s'opposait à `_vitesse` (qui ramenait aussitôt vers l'autre) et
+	# chaque re-contact comptait, jusqu'à 14 chocs en 2 s ; `_vitesse` doit maintenant se
+	# réaccélérer et le délai anti-rafale limiter le décompte.
+	lr._recul = Vector2.ZERO
+	lb._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	var chocs_rouge_avant: int = j_rouge.chocs
+	var chocs_bleu_avant: int = j_bleu.chocs
+	distance_min = 1e9
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	for i in range(120):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_rouge.chocs - chocs_rouge_avant <= 2 and j_bleu.chocs - chocs_bleu_avant <= 2,
+		"une poussée continue de 2 s ne rafale pas les chocs (%d, %d)" % [j_rouge.chocs - chocs_rouge_avant, j_bleu.chocs - chocs_bleu_avant])
+	_check(distance_min >= 75.0, "les deux lions restent à au moins 75 px l'un de l'autre pendant la poussée continue (min %.0f px)" % distance_min)
+
+	# Un lion étourdi peut être poussé
+	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
+	lb._recul = Vector2.ZERO
+	lr._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	var x_bleu: float = lb.global_position.x
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	distance_min = 1e9
+	for i in range(40):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_bleu.est_etourdi() and lb.global_position.x > x_bleu + 10.0 and j_rouge.chocs >= 2,
+		"un lion étourdi est poussé par celui qui le percute (%.0f px)" % (lb.global_position.x - x_bleu))
+	_check(distance_min > 2 * 45.0 - 15.0, "même en poussant sans relâche, un lion ne s'enfonce pas dans l'autre (distance min %.0f px)" % distance_min)
+
+	for l in lions_bataille:
+		l.free()
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+
+	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)

@@ -265,9 +265,16 @@ func _tester_regles_solo() -> void:
 
 	# Pastilles, étoile, cœur
 	_check(r.pastille_ramassee(j, 2) and j.couleurs_debloquees == [gs.couleur(2)], "une pastille débloque sa couleur de l'arc-en-ciel chez le joueur reçu")
-	_check(not r.pastille_ramassee(j, 2), "une couleur déjà débloquée n'a pas d'effet")
-	_check(not r.pastille_ramassee(j, -1) and not r.pastille_ramassee(j, gs.nb_couleurs_total()) and j.couleurs_debloquees.size() == 1,
-		"un index de couleur hors bornes est refusé")
+	_check(j.crans == 2, "en solo, chaque nouvelle couleur donne aussi un cran de gerbe")
+	_check(not r.pastille_ramassee(j, 2) and j.crans == 2, "une couleur déjà débloquée n'a pas d'effet, pas même un cran")
+	_check(not r.pastille_ramassee(j, -1) and not r.pastille_ramassee(j, gs.nb_couleurs_total()) and j.couleurs_debloquees.size() == 1
+		and j.crans == 2, "un index de couleur hors bornes est refusé")
+	var toutes := Joueur.new()
+	toutes.reinitialiser(3)
+	for i in range(gs.nb_couleurs_total()):
+		r.pastille_ramassee(toutes, i)
+	_check(toutes.couleurs_debloquees.size() == 7 and toutes.crans == Joueur.CRANS_MAX,
+		"les sept couleurs débloquées, la gerbe plafonne à son dernier cran (7)")
 	r.etoile_ramassee(j)
 	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
 	_check(r.coeur_ramasse(j) and j.vies == 3, "un cœur rend une vie")
