@@ -205,6 +205,7 @@ func _run() -> void:
 	_check(not is_instance_valid(pickup), "le pickup disparaît au contact")
 	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
 	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
+	_check(lion.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
 	var hud: Node = main.get_node("HUD")
 	_check(hud.indice.visible == false, "le HUD cache l'indice après la première couleur")
 	_check(hud._pastilles[0].color == GS.couleur(0) and hud._pastilles[1].color != GS.couleur(1),
@@ -710,7 +711,70 @@ func _run() -> void:
 	for l in lions_teintes:
 		l.free()
 
-	print("== %d échec(s) ==" % _echecs)
+	# Bataille : lions de bataille, dans une scène propre. La partie Hardcore est libérée d'abord
+	# (son lion, sa ville) : rien des sections précédentes ne doit toucher ces lions.
 	paused = false
 	main.free()
+	main = null
+	GS.configurer_bataille(2)
+	GS.nouvelle_partie()
+	GS.pret = true
+	var j_rouge: Joueur = GS.joueurs[0]
+	var j_bleu: Joueur = GS.joueurs[1]
+	var lions_bataille: Array[CharacterBody2D] = []
+	for j: Joueur in GS.joueurs:
+		var l: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+		l.joueur = j
+		l.commandes = Commandes.manuelles()
+		l.position = Vector2(200 + 1000 * lions_bataille.size(), 100)
+		root.add_child(l)
+		lions_bataille.append(l)
+	var lr: CharacterBody2D = lions_bataille[0]
+	var lb: CharacterBody2D = lions_bataille[1]
+	await _frames(2)
+
+	# Gerbe en trois nuances, rayon selon les crans
+	var couleurs_gerbe: Array = lr.vomi_container.get_children().map(
+		func(e: GPUParticles2D) -> Color: return (e.process_material as ParticleProcessMaterial).color_ramp.gradient.get_color(0))
+	_check(couleurs_gerbe == j_rouge.nuances(), "un lion de bataille a trois émetteurs, aux nuances de son joueur (%s)" % [couleurs_gerbe])
+	_check(lr.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
+	GS.regles.pastille_ramassee(j_rouge, 0)
+	_check(lr.traceuse_shape.shape.radius == 21.0 and lb.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
+	for i in range(10):
+		GS.regles.pastille_ramassee(j_rouge, 0)
+	_check(lr.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
+	lr.commandes.vomir_voulu = true
+	for i in range(3):
+		await process_frame  # le vomi démarre dans _process
+	_check(lr.est_en_train_de_vomir, "un lion de bataille vomit dès le départ, sans pastille")
+	lr.commandes.vomir_voulu = false
+	await _frames(2)
+
+	# Reliquats de la phase 7 : apparence appliquée trop tôt, matériau d'un autre shader
+	var lion_neuf: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	lion_neuf.joueur = Joueur.new()
+	lion_neuf.joueur.couleur = Color(0.18, 0.78, 0.25)
+	lion_neuf.commandes = Commandes.manuelles()
+	lion_neuf.position = Vector2(700, 400)
+	lion_neuf.appliquer_apparence()
+	root.add_child(lion_neuf)
+	await _frames(1)
+	_check(lion_neuf.sprite.material is ShaderMaterial and lion_neuf.sprite.material.shader == shader_lion,
+		"appliquer_apparence avant l'ajout à l'arbre ne fait rien ; _ready teinte le lion")
+	var materiau_etranger := ShaderMaterial.new()
+	materiau_etranger.shader = load("res://Shaders/Ville.gdshader")
+	lion_neuf.sprite.material = materiau_etranger
+	lion_neuf.appliquer_apparence()
+	_check(lion_neuf.sprite.material != materiau_etranger and lion_neuf.sprite.material.shader == shader_lion,
+		"un matériau d'un autre shader sur le sprite est remplacé par celui de la teinte")
+	lion_neuf.free()
+
+	for l in lions_bataille:
+		l.free()
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+
+	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)

@@ -16,6 +16,7 @@ const TEXTURE_PARTICULE := preload("res://Assets/Sprites/circle_white.png")
 const BOUCHE_X_DROITE := 89.0
 const BOUCHE_X_GAUCHE := 47.0
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
+const PAS_RAYON_PAR_CRAN := 5
 
 @export var speed: float = 350.0
 @export var acceleration: float = 2400.0
@@ -60,6 +61,7 @@ func _ready() -> void:
 	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
 	joueur.bonus_change.connect(_on_bonus_change)
 	joueur.touche.connect(_on_lion_touche)
+	joueur.crans_changes.connect(_on_crans_changes)
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
 	appliquer_apparence()
@@ -110,6 +112,8 @@ func _on_couleur_debloquee(_couleur: Color) -> void:
 ## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ;
 ## à rappeler si la couleur ou le pseudo du joueur change ensuite (aperçu du salon, phase 13).
 func appliquer_apparence() -> void:
+	if not is_node_ready():
+		return  # sprite et étiquette n'existent pas encore : `_ready` l'appliquera
 	_appliquer_teinte()
 	etiquette_pseudo.text = joueur.pseudo
 	etiquette_pseudo.add_theme_color_override("font_color", joueur.couleur)
@@ -124,7 +128,7 @@ func _appliquer_teinte() -> void:
 		sprite.material = null
 		return
 	var mat := sprite.material as ShaderMaterial
-	if mat == null:
+	if mat == null or mat.shader != SHADER_TEINTE:
 		mat = ShaderMaterial.new()
 		mat.shader = SHADER_TEINTE
 		sprite.material = mat
@@ -154,6 +158,10 @@ func _on_lion_touche(origine: Vector2) -> void:
 	for i in range(nb_clignotements):
 		tween.tween_property(sprite, "modulate:a", 0.25, 0.075)
 		tween.tween_property(sprite, "modulate:a", 1.0, 0.075)
+
+
+func _on_crans_changes(_crans: int) -> void:
+	_placer_traceuse()
 
 
 func _on_bonus_change(_actif: bool) -> void:
@@ -196,11 +204,12 @@ func _point_de_chute() -> Vector2:
 	return bouche.position + chute
 
 
+## Traceuse au point de chute ; rayon de peinture selon les crans (16 px au premier, 5 px de
+## plus par cran, 46 px au plus) et le bonus.
 func _placer_traceuse() -> void:
 	gerbe_traceuse.position = _point_de_chute()
 	if traceuse_shape.shape is CircleShape2D:
-		var n := joueur.couleurs_debloquees.size()
-		var rayon: float = clamp(RAYON_TRACEUSE.x + n * 5, RAYON_TRACEUSE.x, RAYON_TRACEUSE.y)
+		var rayon: float = clamp(RAYON_TRACEUSE.x + (joueur.crans - 1) * PAS_RAYON_PAR_CRAN, RAYON_TRACEUSE.x, RAYON_TRACEUSE.y)
 		traceuse_shape.shape.radius = rayon * _facteur_bonus()
 
 
@@ -213,7 +222,8 @@ func _orienter_emetteurs() -> void:
 			mat.direction = Vector3(cos(angle), sin(angle), 0)
 
 
-## Reconstruit un émetteur par couleur débloquée.
+## Reconstruit un émetteur par couleur débloquée (en bataille, les trois nuances du joueur,
+## débloquées dès le départ : voir `Regles.couleurs_de_depart`).
 func mettre_a_jour_degrade_vomi() -> void:
 	for child in vomi_container.get_children():
 		vomi_container.remove_child(child)

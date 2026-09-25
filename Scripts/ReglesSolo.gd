@@ -19,10 +19,15 @@ func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:
 		partie.terminer_partie(false)
 
 
+## Chaque nouvelle couleur donne aussi un cran de gerbe : le rayon de peinture grandit de 5 px
+## par couleur, de 21 px (une couleur) à 46 px.
 func pastille_ramassee(joueur: Joueur, index_couleur: int) -> bool:
 	if index_couleur < 0 or index_couleur >= partie.nb_couleurs_total():
 		return false
-	return joueur.debloquer_couleur(partie.couleur(index_couleur))
+	if not joueur.debloquer_couleur(partie.couleur(index_couleur)):
+		return false
+	joueur.gagner_cran()
+	return true
 
 
 func etoile_ramassee(joueur: Joueur) -> void:
