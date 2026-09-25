@@ -22,6 +22,7 @@ func _run() -> void:
 	_tester_joueur()
 	_tester_facade_game_state()
 	_tester_commandes()
+	_tester_regles_solo()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -184,3 +185,70 @@ func _tester_commandes() -> void:
 	m.direction_voulue = Vector2(3, 4)
 	_check(is_equal_approx(m.direction().length(), 1.0) and m.direction().is_equal_approx(Vector2(0.6, 0.8)),
 		"direction() borne les commandes manuelles à une longueur de 1")
+
+
+func _tester_regles_solo() -> void:
+	print("-- Règles")
+	var gs: Node = root.get_node("GameState")
+	var fins: Array[bool] = []
+	var sur_fin := func(v: bool) -> void: fins.append(v)
+	gs.partie_terminee.connect(sur_fin)
+	gs.difficulte_courante = 0
+	gs.nouvelle_partie()
+	gs.pret = true
+
+	# Règles de base : aucun effet
+	var base := Regles.new(gs)
+	var j := Joueur.new()
+	j.reinitialiser(3)
+	base.lion_touche_par_ennemi(j, Vector2.ZERO)
+	base.etoile_ramassee(j)
+	base.progression_mesuree(1.0)
+	_check(j.vies == 3 and not j.bonus_actif() and not base.pastille_ramassee(j, 0) and not base.coeur_ramasse(j)
+		and j.couleurs_debloquees.is_empty() and fins.is_empty(), "les règles de base n'ont aucun effet")
+
+	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
+	var r := ReglesSolo.new(gs)
+	var local: Joueur = gs.joueur_local()
+	r.lion_touche_par_ennemi(j, Vector2(3, 4))
+	_check(j.vies == 2 and j.est_invulnerable() and local.vies == 3, "un coup d'ennemi touche le joueur reçu, pas le joueur local")
+	r.lion_touche_par_ennemi(j, Vector2(3, 4))
+	_check(j.vies == 2, "pas de coup pendant l'invulnérabilité")
+	j.invulnerable_restant = 0.0
+	gs.pret = false
+	r.lion_touche_par_ennemi(j, Vector2(3, 4))
+	_check(j.vies == 2, "pas de coup pendant l'intro")
+	gs.pret = true
+
+	# Pastilles, étoile, cœur
+	_check(r.pastille_ramassee(j, 2) and j.couleurs_debloquees == [gs.couleur(2)], "une pastille débloque sa couleur de l'arc-en-ciel chez le joueur reçu")
+	_check(not r.pastille_ramassee(j, 2), "une couleur déjà débloquée n'a pas d'effet")
+	_check(not r.pastille_ramassee(j, -1) and not r.pastille_ramassee(j, gs.nb_couleurs_total()) and j.couleurs_debloquees.size() == 1,
+		"un index de couleur hors bornes est refusé")
+	r.etoile_ramassee(j)
+	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
+	_check(r.coeur_ramasse(j) and j.vies == 3, "un cœur rend une vie")
+	_check(not r.coeur_ramasse(j) and j.vies == gs.VIES_MAX, "un cœur ne dépasse pas le maximum de vies")
+
+	# Progression : victoire au seuil, une seule fois
+	r.progression_mesuree(gs.seuil_victoire() - 0.01)
+	_check(fins.is_empty() and gs.partie_en_cours, "sous le seuil, la partie continue")
+	r.progression_mesuree(gs.seuil_victoire())
+	_check(fins == [true] and not gs.partie_en_cours, "au seuil de la difficulté, la partie est gagnée")
+	r.progression_mesuree(1.0)
+	_check(fins == [true], "la victoire n'est signalée qu'une fois")
+
+	# Coup fatal : défaite, et plus aucun coup ensuite
+	gs.nouvelle_partie()
+	gs.pret = true
+	fins.clear()
+	j.reinitialiser(1)
+	r.lion_touche_par_ennemi(j, Vector2.INF)
+	_check(j.vies == 0 and fins == [false] and not gs.partie_en_cours, "le dernier coup termine la partie en défaite")
+	r.lion_touche_par_ennemi(j, Vector2.INF)
+	_check(j.vies == 0 and fins == [false], "après la fin de partie, un lion à 0 vie n'est plus frappé")
+
+	gs.partie_terminee.disconnect(sur_fin)
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
