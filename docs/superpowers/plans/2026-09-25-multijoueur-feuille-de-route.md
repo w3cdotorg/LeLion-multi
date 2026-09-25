@@ -120,11 +120,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
   jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
   ses lecteurs dans `_exit_tree` ;
-- **phase 8 bis** : ajouter `class_name Lion` (les zones de contact et le pare-chocs s'en servent).
-  **Phases 8 ter (ennemis) et 14 bis (pastilles)** : tester `body is Lion` dans les gestionnaires
-  de contact au lieu de supposer `body.joueur`. Les tests `--script` (compilés avant les
-  autoloads) continuent de typer les lions en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd`
-  nomme `GameState` et `Audio` ;
+- **phases 8 ter (ennemis) et 14 bis (pastilles)** : `class_name Lion` existe depuis la phase
+  8 bis ; tester `body is Lion` dans les gestionnaires de contact au lieu de supposer
+  `body.joueur`. Les tests `--script` (compilés avant les autoloads) continuent de typer les lions
+  en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd` nomme `GameState` et `Audio` ;
 - phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
@@ -161,10 +160,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sont `null` si la partie se termine pendant l'intro (`SCRIPT ERROR` dans `tests/screenshots.gd`) ;
   et le coup de `tests/screenshots.gd` (vers la ligne 96) tombe pendant l'intro et n'a aucun effet.
   Relancer `tests/screenshots.gd` à la main après correction (la CI ne le lance pas) ;
-- **phase 8 bis** : le barbouillage passe par les uniformes `barbouillage_couleur` /
-  `barbouillage_force` du matériau du lion (`Shaders/Lion.gdshader`, déjà prêts à 0). Ce matériau
-  n'existe que si le joueur a une couleur, ce qui est toujours vrai en bataille ;
-- **phase 8 bis** : `ReglesBataille.etoile_ramassee` lit `ReglesSolo.DUREE_ETOILE` : les règles de
+- **la prochaine phase qui touche `Regles.gd`, `ReglesSolo.gd` et `ReglesBataille.gd`** :
+  `ReglesBataille.etoile_ramassee` lit `ReglesSolo.DUREE_ETOILE` : les règles de
   bataille ne devraient pas dépendre des règles du solo. Monter `DUREE_ETOILE` dans la base
   `Regles`. De même, `ReglesSolo` répète en ligne le garde-fou
   `partie.partie_en_cours and partie.pret` que `ReglesBataille._manche_en_cours()` a déjà nommé :
@@ -202,3 +199,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - activer `rendering/viewport/hdr_2d` changerait les valeurs lues par `Shaders/Lion.gdshader` et
   décalerait ses seuils de masque (valeur, saturation) : refaire alors la planche de contrôle de la
   phase 7 et régler les seuils ;
+- **phase 16** : chaque machine simule le choc de son lion (`Lion._on_pare_chocs_area_entered` :
+  recul, secousse), mais seul l'hôte le signale aux règles ; l'étourdissement, lui, ne vient que
+  des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
+  `joueur.est_etourdi()` (spec §4.1) ;
+- **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
+  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
