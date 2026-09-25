@@ -12,6 +12,15 @@ func _on_body_entered(body: Node2D) -> void:
 		_signaler_si_lion(body)
 
 
+## Contact continu (le peintre, hors repos) : chaque lion qui chevauche l'ennemi est signalé à
+## chaque frame ; les règles ignorent un joueur déjà frappé, étourdi ou immunisé.
+func _signaler_les_lions_au_contact() -> void:
+	if not multiplayer.is_server():
+		return
+	for body in get_overlapping_bodies():
+		_signaler_si_lion(body)
+
+
 ## Point d'où part le coup, pour le recul du lion : par défaut, la position de l'ennemi.
 func origine_du_coup(_lion: Lion) -> Vector2:
 	return global_position
