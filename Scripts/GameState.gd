@@ -29,6 +29,9 @@ const NIVEAUX: Array[Dictionary] = [
 	{"id": "village", "nom": "NIVEAU_VILLAGE", "texture": "res://Assets/Sprites/skyline_village.png", "boss": true},
 ]
 
+## Le tableau doit être rempli ou réinitialisé en place (append, resize, etc.) et jamais
+## réassigné : les relais de signaux de la façade sont liés à `joueurs[0]` dans `_ready`
+## (jusqu'à la phase 6), et une réassignation les rendrait muets sans erreur.
 var joueurs: Array[Joueur] = [Joueur.new()]
 var progression := 0.0
 var temps_ecoule := 0.0
@@ -45,6 +48,8 @@ var temps_arcade := 0.0  # somme des temps des stages gagnés
 var couleurs_debloquees: Array[Color]:
 	get:
 		return joueur_local().couleurs_debloquees
+	set(_valeur):
+		push_error("GameState.couleurs_debloquees est en lecture seule : passer par debloquer_couleur()")
 var vies: int:
 	get:
 		return joueur_local().vies
@@ -53,6 +58,8 @@ var vies: int:
 var coups_recus: int:
 	get:
 		return joueur_local().coups_recus
+	set(valeur):
+		joueur_local().coups_recus = valeur
 var invulnerable_restant: float:
 	get:
 		return joueur_local().invulnerable_restant
@@ -66,6 +73,7 @@ var bonus_restant: float:
 
 
 func _ready() -> void:
+	assert(joueurs.size() == 1, "GameState._ready suppose un seul joueur (solo) pour lier les relais de signaux")
 	var j := joueur_local()
 	j.couleur_debloquee.connect(func(c: Color) -> void: couleur_debloquee.emit(c))
 	j.bonus_change.connect(func(actif: bool) -> void: bonus_change.emit(actif))

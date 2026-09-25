@@ -112,6 +112,9 @@ func _tester_facade_game_state() -> void:
 	gs.invulnerable_restant = 0.25
 	_check(j.vies == 1 and is_equal_approx(j.bonus_restant, 0.5) and is_equal_approx(j.invulnerable_restant, 0.25),
 		"les setters vies / bonus_restant / invulnerable_restant écrivent dans le joueur")
+	gs.coups_recus = 2
+	_check(j.coups_recus == 2, "le setter coups_recus écrit dans le joueur")
+	gs.coups_recus = 0
 
 	# Les minuteries ne tournent qu'en partie, une fois prêt
 	gs.pret = false

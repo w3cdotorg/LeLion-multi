@@ -10,8 +10,9 @@ env:
 
 jobs:
   test-et-export:
-    name: Smoke test + export Web
+    name: Tests + export Web
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
