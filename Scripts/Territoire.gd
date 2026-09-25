@@ -18,9 +18,14 @@ const GAIN := 4
 ## Charge à partir de laquelle une cellule compte pour son propriétaire : 3 tampons sur une
 ## cellule vierge, ce qui suit la mesure de couverture du solo pour une gerbe en mouvement.
 const SEUIL_POSSESSION := 12
-## Une cellule repeinte par son propriétaire se renforce jusqu'à CHARGE_MAX : la vider demande
-## alors 6 tampons adverses, et il en faut 3 de plus pour qu'elle compte pour le voleur.
-const CHARGE_MAX := 24
+## Plafonnée à SEUIL_POSSESSION (fiche de correction du 25/09, phase 9). Avec CHARGE_MAX = 24, une
+## seule passe pleine vitesse (environ 5 à 7 tampons par cellule à 60 Hz) rechargeait déjà les
+## cellules du propriétaire au maximum, si bien qu'une passe pleine vitesse d'un adversaire ne
+## faisait alors que les effacer sans les voler (l'écran montrait la couleur de l'attaquant, mais
+## le score ne bougeait pas). Un vol coûte maintenant 6 tampons (3 pour vider, 3 pour prendre)
+## contre 3 en terrain vierge, et une seule passe pleine vitesse vole le centre de son tracé. La
+## phase 10 rerègle ces constantes sur une vraie manche.
+const CHARGE_MAX := SEUIL_POSSESSION
 const PERSONNE := -1
 
 var taille_grille: Vector2i
@@ -54,7 +59,9 @@ func _init(taille_grille_: Vector2i, peignables: PackedByteArray, taille_cellule
 	reinitialiser()
 
 
-## Toute la ville redevient vierge (nouvelle manche), sans changement à synchroniser.
+## Toute la ville redevient vierge (nouvelle manche). Les changements pas encore lus par
+## `extraire_changements` sont alors perdus : la phase 14 doit les vider avant d'appeler
+## `reinitialiser`, ou envoyer « nouvelle manche » comme son propre message.
 func reinitialiser() -> void:
 	_proprietaires.fill(0)
 	_charges.fill(0)
@@ -74,12 +81,10 @@ func reinitialiser() -> void:
 func tamponner(index_joueur: int, centre: Vector2i, rayon: int) -> int:
 	# Garde d'exécution : contrairement à assert() (retirée à l'export release), elle reste active
 	# en release et empêche un index hors plage d'écrire un octet de propriétaire invalide (et donc
-	# de fausser les comptages). Placée avant l'assert, qui ne couvre plus ensuite qu'une
-	# précondition déjà vraie (utile pour le debug si un futur appel interne la contournait).
+	# de fausser les comptages).
 	if index_joueur < 0 or index_joueur >= EtatPartie.NB_JOUEURS_MAX:
 		push_error("Territoire.tamponner : index de joueur hors plage (%d)" % index_joueur)
 		return 0
-	assert(index_joueur >= 0 and index_joueur < EtatPartie.NB_JOUEURS_MAX, "index de joueur de 0 à 5")
 	if rayon <= 0:
 		return 0
 	var peintre := index_joueur + 1
@@ -135,9 +140,11 @@ func tamponner(index_joueur: int, centre: Vector2i, rayon: int) -> int:
 
 
 ## Cellules qui comptent pour le joueur `index_joueur` : son score. `cellules_de(PERSONNE)` :
-## les cellules peignables qui ne comptent pour personne.
+## les cellules peignables qui ne comptent pour personne. Un index hors plage renvoie 0 (un
+## `PackedByteArray` accepte les index négatifs en silence, en repartant de la fin).
 func cellules_de(index_joueur: int) -> int:
-	return _cellules[index_joueur + 1]
+	var i := index_joueur + 1
+	return _cellules[i] if i >= 0 and i < _cellules.size() else 0
 
 
 ## Index du joueur pour qui la cellule compte, PERSONNE si elle ne compte pour personne.

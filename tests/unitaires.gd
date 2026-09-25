@@ -517,8 +517,8 @@ func _tester_territoire() -> void:
 	var centre_5 := Vector2i(12, 12)
 	var n_prise := ceili(float(Territoire.SEUIL_POSSESSION) / Territoire.GAIN)
 	var n_vider := ceili(float(Territoire.CHARGE_MAX) / Territoire.GAIN)
-	_check(n_prise == 3 and n_vider == 6,
-		"réglages : 3 tampons pour posséder une cellule vierge, 6 pour vider une cellule renforcée (%d, %d)" % [n_prise, n_vider])
+	_check(n_prise == 3 and n_vider == 3,
+		"réglages : 3 tampons pour posséder une cellule vierge, 3 pour vider une cellule qui compte déjà (CHARGE_MAX = SEUIL_POSSESSION) (%d, %d)" % [n_prise, n_vider])
 	var t := Territoire.new(Vector2i(4, 3), peignables)
 	_check(t.nb_peignables == 11 and t.cellules_de(0) == 0 and t.cellules_de(Territoire.PERSONNE) == 11
 		and t.proprietaire(5) == Territoire.PERSONNE and t.extraire_changements().is_empty(),
@@ -539,7 +539,7 @@ func _tester_territoire() -> void:
 	for i in range(10):
 		t.tamponner(0, centre_5, 5)
 	_check(t.charge(5) == Territoire.CHARGE_MAX and t.cellules_de(0) == 1 and t.extraire_changements().is_empty(),
-		"repeinte par son propriétaire, la cellule se renforce jusqu'à CHARGE_MAX, sans nouveau changement")
+		"repeinte par son propriétaire, la charge reste à son plafond (déjà atteint dès le seuil de possession), sans nouveau changement")
 
 	# Vol : l'adversaire vide la cellule, la prend, puis la possède
 	var vols := 0
@@ -558,6 +558,58 @@ func _tester_territoire() -> void:
 	for i in range(n_vider + n_prise):
 		vols += t.tamponner(0, centre_5, 5)
 	_check(t.proprietaire_compte(5) == 0 and vols == 2, "la reprendre à son voleur est aussi un vol")
+
+	# Vol à trois : A possède, B décharge sans prendre, C prend : le vol est crédité à C, pas à B.
+	var t2 := Territoire.new(Vector2i(4, 3), peignables)
+	for i in range(n_prise):
+		t2.tamponner(0, centre_5, 5)  # A prend la cellule
+	for i in range(n_vider - 1):
+		t2.tamponner(1, centre_5, 5)  # B la décharge sous le seuil, sans la faire compter pour lui
+	_check(t2.proprietaire(5) == 0 and t2.proprietaire_compte(5) == Territoire.PERSONNE,
+		"B décharge la cellule d'A sous le seuil sans la lui prendre")
+	var vols_c := 0
+	for i in range(1 + n_prise):
+		vols_c += t2.tamponner(2, centre_5, 5)  # C la prend et la fait compter
+	_check(t2.proprietaire_compte(5) == 2 and vols_c == 1,
+		"le vol est crédité à C, qui fait compter la cellule, pas à B, qui l'avait seulement déchargée")
+
+	# Reprise sans vol : B prend la cellule brute d'A (sous le seuil), puis A la reprend : comme la
+	# cellule n'a jamais compté pour B, la reprise d'A n'est pas un vol.
+	var t3 := Territoire.new(Vector2i(4, 3), peignables)
+	for i in range(n_prise):
+		t3.tamponner(0, centre_5, 5)  # A prend et fait compter la cellule
+	for i in range(n_vider):
+		t3.tamponner(1, centre_5, 5)  # B la vide et se la fait attribuer, sans atteindre le seuil
+	_check(t3.proprietaire(5) == 1 and t3.proprietaire_compte(5) == Territoire.PERSONNE,
+		"la cellule vidée passe à B sans compter pour lui")
+	var vols_retour := 0
+	for i in range(n_prise):
+		vols_retour += t3.tamponner(0, centre_5, 5)  # A la reprend et la refait compter
+	_check(t3.proprietaire_compte(5) == 0 and vols_retour == 0,
+		"A reprend une cellule que B n'a jamais fait compter : ce n'est pas un vol")
+
+	# Réglage (fiche de correction du 25/09) : depuis CHARGE_MAX = SEUIL_POSSESSION, une passe pleine
+	# vitesse d'un adversaire vole des cellules au lieu de seulement les effacer. On reprend la forme
+	# de sonde du plan de la phase 9 : 60 tampons par seconde à 350 px/s, rayons 16 puis 21 (les deux
+	# premiers crans de gerbe).
+	for rayon_b in [16, 21]:
+		var largeur := 60
+		var hauteur := 4
+		var taille_cellule_bande := 8
+		var bande := PackedByteArray()
+		bande.resize(largeur * hauteur)
+		bande.fill(1)
+		var v := Territoire.new(Vector2i(largeur, hauteur), bande, taille_cellule_bande)
+		for i in range(n_prise):
+			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)  # A possède toute la bande
+		var avant_a := v.cellules_de(0)
+		var x := 0.0
+		while x < largeur * taille_cellule_bande:
+			v.tamponner(1, Vector2i(int(x), hauteur * taille_cellule_bande / 2), rayon_b)  # B traverse à 350 px/s, 60 tampons/s
+			x += 350.0 / 60.0
+		_check(v.cellules_de(1) > 0 and v.cellules_de(0) < avant_a,
+			"une passe pleine vitesse de B (rayon %d) sur la bande d'A lui vole des cellules (B : %d, A : %d → %d)"
+				% [rayon_b, v.cellules_de(1), avant_a, v.cellules_de(0)])
 
 	# Deux peintres qui se disputent une cellule vierge tampon après tampon
 	var u := Territoire.new(Vector2i(4, 3), peignables)
