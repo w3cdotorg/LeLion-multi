@@ -126,3 +126,20 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   (`multiplayer.is_server()`, phase 4) ;
 - références de phase périmées à corriger au passage : `Scripts/GameState.gd` lignes 5, 35 et 50
   (« phase 6 » → 6 bis).
+- **phase 9 (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
+  couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
+  tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
+  tampons en cache par jeu de couleurs (clé rayon + `to_rgba32` de chaque couleur, plusieurs
+  entrées), et durcir la vérification du smoke test « la traceuse d'un lion peint avec les
+  couleurs de son joueur » en faisant peindre d'abord le lion local avec autant de couleurs que
+  l'autre ;
+- **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
+  quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
+  seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
+  partie depuis `Main`) ;
+- **phase 6 bis** : garder `GameState.prochain_index_couleur()` (lu par `Spawner.gd`), réécrit sur
+  `joueur_local()` au lieu de la façade, et réécrire (pas supprimer) le commentaire sur l'invariant
+  « `joueurs` n'est jamais réassigné » en citant l'abonnement d'`Audio` ; lancer
+  `tests/screenshots.gd` à la main (la CI ne le lance pas) ;
+- **phase 10** : `Spawner.gd` choisit la prochaine pastille avec `GameState.prochain_index_couleur()`
+  (règle du solo) : à faire passer par les règles avec les autres conditions d'apparition.
