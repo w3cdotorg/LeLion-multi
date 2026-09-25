@@ -47,8 +47,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
 | 7 | **Teinte de la crinière** : masque déduit du sprite par le shader (teinte, valeur, saturation), uniformes de barbouillage prêts, pseudo au-dessus du lion ; le lion d'un joueur sans couleur (solo) n'a aucun matériau. Repli par rotation de teinte si le masque est laid. | ➕ `Shaders/Lion.gdshader` ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `tests/smoke_test.gd` | ◉ 6 lions teintés |
-| 8 | **Lion de bataille** : crans, gerbe en 3 nuances, 3 zones de contact sur la parabole, étourdissement 1,5 s / 2,5 s + 1 s d'immunité, barbouillage, auto-tamponneuses. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ➕ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` | tests verts |
-| 9 | **Territoire** : logique pure de charge et de vol, grille de propriété dans la ville. | ➕ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` | tests verts |
+| 8 | **Règles et état de bataille** : `ReglesBataille` (étourdissement 1,5 s par le vomi, 2,5 s par un ennemi, puis 1 s d'immunité ; crans ; chocs comptés ; ni vies ni cœurs), `Joueur` (crans, étourdissement, nuances, statistiques ; l'immunité est l'invulnérabilité du solo), événements de vomi et de choc dans `Regles`, `GameState.configurer_solo()` / `configurer_bataille(n)`. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Regles.gd` ➕ `Scripts/ReglesBataille.gd` ✏️ `Scripts/GameState.gd` ✏️ `tests/unitaires.gd` | tests verts |
+| 8 bis | **Lion de bataille** : rayon selon les crans (le solo gagne un cran par couleur), gerbe en 3 nuances, étourdissement (commandes ignorées, recul, barbouillage, étoiles, clignotement de l'immunité), 3 zones de contact sur la parabole, auto-tamponneuses, `class_name Lion`. | ✏️ `Scripts/ReglesSolo.gd` ✏️ `tests/unitaires.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `tests/smoke_test.gd` | tests verts, ◉ lions étourdis |
+| 8 ter | **Ennemis vers `body is Lion`** : base commune des gestionnaires de contact des ennemis (garde hôte, `body is Lion`, origine du coup). | ➕ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
+| 9 | **Territoire** : logique pure de charge et de vol, grille de propriété dans la ville, tampons en cache par jeu de couleurs. | ➕ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` | tests verts |
 | 10 | **Scène de bataille locale en 16:9** : N lions, ciel et caméra calculés, apparitions relatives au viewport, taille du peintre. Test à 4 lions pilotés dans un seul processus. | ✏️ `Scripts/Main.gd` ✏️ `Scripts/Spawner.gd` ✏️ `Scripts/Boss.gd` ➕ `tests/bataille_test.gd` | ◉ manche à 4 |
 
 ### C. Réseau
@@ -59,6 +61,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
+| 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Ajouté à la CI. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test vert en CI |
 | 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
@@ -67,6 +70,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
 | 17 | **HUD de bataille** : vignettes, couronne, chrono de 90 s, tic, musique sur le temps restant. | ➕ `Scenes/HUDBataille.tscn` ➕ `Scripts/HUDBataille.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ HUD à 6 |
+| 17 bis | **Sons de bataille** : « boing » des chocs entre lions (spec §5), synthétisé comme les autres effets. | ✏️ `tools/generer_sons.py` ➕ `Assets/Sons/boing.wav` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 18 | **Résultats** : podium, trois titres, Revanche / Niveau suivant / Salon. | ➕ `Scenes/Resultats.tscn` ➕ `Scripts/Resultats.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ résultats |
 | 19 | **Livraison Windows** : preset, `.pck` intégré, artefact CI, README « Jouer en LAN », captures. | ✏️ `export_presets.cfg` ✏️ `.github/workflows/ci.yml` ✏️ `README.md` ✏️ `tests/screenshots.gd` ✏️ `project.godot` | `.exe` en artefact, testé sur Windows par l'utilisateur |
 
@@ -86,8 +90,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Phase 3 (Règles) : `Joueur.encaisser_coup` n'a pas de plancher sur `vies` ; les règles doivent
   conserver le garde-fou `partie_en_cours` de GameState (ou un clamp) pour qu'un lion à 0 vie ne
   soit jamais retouché.
-- Phase 8 : réconcilier le `invulnerable_restant` du solo (1,5 s) avec l'`immunite_restante` de la
-  bataille (1 s) plutôt que d'ajouter un mécanisme parallèle.
 - Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
   choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.
 - Phases 10 et 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et
@@ -95,7 +97,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sinon il prend en silence le joueur local et le clavier de ce poste.
 - Prochaine phase qui touche `.github/workflows/ci.yml` : envelopper chaque lancement godot dans
   `timeout` (une erreur de script bloque le processus headless) et faire échouer le job si la
-  sortie contient `SCRIPT ERROR` ou `SHADER ERROR` (une erreur dans un callback de signal ne change pas le code de sortie) ;
+  sortie contient `SCRIPT ERROR` ou `SHADER ERROR` (une erreur dans un callback de signal, ou dans
+  une fonction appelée, ne change pas le code de sortie).
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick).
@@ -111,19 +114,17 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
   `vies_changees` en hausse) et retirer `Audio.jouer` des pastilles ;
-- phase 8 ou 14 : le gestionnaire de contact est copié dans `ColorPickup`, `BonusPickup` et
-  `CoeurPickup` ; en faire une base commune quand une de ces phases doit les modifier tous
-  (`body is Lion`, désapparition répliquée) ;
+- **phase 14 bis** : le gestionnaire de contact est copié dans `ColorPickup`, `BonusPickup` et
+  `CoeurPickup` ; en faire une base commune `Pastille` (garde hôte, `body is Lion`, premier
+  arrivé, premier servi). La désapparition répliquée reste à la phase 14 ;
 - à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
   jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
   ses lecteurs dans `_exit_tree` ;
-- phase 8 : `ReglesBataille.lion_touche_par_ennemi` ignore un joueur déjà étourdi ou immunisé (le
-  peintre signale le contact à chaque frame de chevauchement ; sinon l'étourdissement de 2,5 s
-  redémarrerait sans fin) ;
-- phase 8 : ajouter `class_name Lion` et tester `body is Lion` dans les gestionnaires de
-  contact au lieu de supposer `body.joueur`. Les tests `--script` (compilés avant les autoloads)
-  continuent de typer les lions en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd` nomme
-  `GameState` et `Audio` ;
+- **phase 8 bis** : ajouter `class_name Lion` (les zones de contact et le pare-chocs s'en servent).
+  **Phases 8 ter (ennemis) et 14 bis (pastilles)** : tester `body is Lion` dans les gestionnaires
+  de contact au lieu de supposer `body.joueur`. Les tests `--script` (compilés avant les
+  autoloads) continuent de typer les lions en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd`
+  nomme `GameState` et `Audio` ;
 - phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
@@ -141,34 +142,63 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   partie depuis `Main`) ;
 - **phase 10** : `Spawner.gd` choisit la prochaine pastille avec `GameState.prochain_index_couleur()`
   (règle du solo) : à faire passer par les règles avec les autres conditions d'apparition.
-- **phase 8 ou 10 (obligatoire avant la première partie de bataille)** : la mise en place et le
-  démontage d'un mode sur `GameState` doivent précéder `Main._enter_tree` (Main y appelle
-  `GameState.nouvelle_partie()`, puis Lion, Spawner, HUD et Main s'abonnent à `joueur_local()` dans
-  leur `_ready`). Ajouter `GameState.configurer_solo()` / `configurer_bataille(n)`, appelés **avant**
-  le changement de scène (règles, nombre de joueurs remplis en place, couleurs et pseudos), avec un
-  test unitaire : bataille puis solo rend `ReglesSolo` et un seul joueur, sans couleur (le lion du
-  solo retrouve son rendu d'origine) ;
+- **phase 10 (obligatoire avant la première partie de bataille)** : `GameState.configurer_solo()` /
+  `configurer_bataille(n)` existent depuis la phase 8 (règles, joueurs redimensionnés en place,
+  index et couleurs ; testés). Les appeler **avant** le changement de scène, jamais depuis la scène
+  de jeu : `Main._enter_tree` appelle `GameState.nouvelle_partie()`, puis Lion, Spawner, HUD et Main
+  s'abonnent à `joueur_local()` dans leur `_ready`. `configurer_bataille(n)` avant la scène de
+  bataille, et `configurer_solo()` avant toute partie solo, démo ou arcade lancée depuis le titre
+  (sans quoi une partie solo jouée après une bataille garderait les règles et la couleur de la
+  bataille) ;
 - **phase 14** : les réactions du `Joueur` sont des appels de méthode qui émettent des signaux
-  (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`). Un `MultiplayerSynchronizer` qui écrit
-  les champs bruts n'émettrait rien chez les clients (HUD, Audio, Lion muets) : choisir des RPC
-  d'événement qui appellent les mêmes méthodes du `Joueur`, ou des setters qui émettent. De même,
-  `GameState._process` ferait avancer les copies des clients (`Joueur.avancer`) : l'hôte seul décompte ;
+  (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`, `gagner_cran`, `etourdir`, et `avancer`
+  pour `etourdissement_fini`). Un `MultiplayerSynchronizer` qui écrit les champs bruts n'émettrait
+  rien chez les clients (HUD, Audio, Lion muets) : choisir des RPC d'événement qui appellent les
+  mêmes méthodes du `Joueur`, ou des setters qui émettent. De même, `GameState._process` ferait
+  avancer les copies des clients (`Joueur.avancer`) : l'hôte seul décompte ;
 - **préexistant, à corriger dès qu'une phase touche `Scripts/Spawner.gd` ou `tests/screenshots.gd`** :
   `Spawner._on_partie_terminee` appelle `stop()` sur `_timer_soucoupe` / `_timer_coccinelle`, qui
   sont `null` si la partie se termine pendant l'intro (`SCRIPT ERROR` dans `tests/screenshots.gd`) ;
   et le coup de `tests/screenshots.gd` (vers la ligne 96) tombe pendant l'intro et n'a aucun effet.
   Relancer `tests/screenshots.gd` à la main après correction (la CI ne le lance pas) ;
-- **phase 8** : le barbouillage passe par les uniformes `barbouillage_couleur` /
+- **phase 8 bis** : le barbouillage passe par les uniformes `barbouillage_couleur` /
   `barbouillage_force` du matériau du lion (`Shaders/Lion.gdshader`, déjà prêts à 0). Ce matériau
   n'existe que si le joueur a une couleur, ce qui est toujours vrai en bataille ;
+- **phase 8 bis** : `ReglesBataille.etoile_ramassee` lit `ReglesSolo.DUREE_ETOILE` : les règles de
+  bataille ne devraient pas dépendre des règles du solo. Monter `DUREE_ETOILE` dans la base
+  `Regles`. De même, `ReglesSolo` répète en ligne le garde-fou
+  `partie.partie_en_cours and partie.pret` que `ReglesBataille._manche_en_cours()` a déjà nommé :
+  monter `_manche_en_cours()` dans la base `Regles` et le faire utiliser par les deux. Une fois que
+  `Scripts/Lion.gd` ne lira plus directement `GameState.DUREE_INVULNERABILITE` (pour le nombre de
+  clignotements), descendre cette constante de `GameState` vers `ReglesSolo`, seule règle qui s'en
+  sert encore ;
 - **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
   lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
   passer sous le lion près du bord ;
+- **phase 13** : `GameState.configurer_bataille(nb_joueurs)` attribue l'index et la couleur de
+  chaque joueur depuis `PALETTE_BATAILLE`, par position ; une fois que le salon attribue les
+  couleurs (choix des joueurs), `configurer_bataille` ne doit plus les écraser : lui passer les
+  couleurs du salon, par exemple `configurer_bataille(nb_joueurs, couleurs)`. Son `assert` sur le
+  nombre de joueurs devra aussi devenir un clamp ou un `push_error` une fois que c'est le salon qui
+  l'appelle (un salon mal formé ne doit pas planter la partie) ;
 - **phase 11** : la palette de bataille (planche de la phase 7 : rouge `(0.90, 0.16, 0.16)`, bleu
   `(0.16, 0.39, 0.95)`, jaune `(0.98, 0.82, 0.10)`, vert `(0.18, 0.78, 0.25)`, magenta
-  `(0.90, 0.20, 0.85)`, cyan `(0.10, 0.85, 0.90)`) devient une constante unique. En simulation
+  `(0.90, 0.20, 0.85)`, cyan `(0.10, 0.85, 0.90)`) est depuis la phase 8 la constante unique
+  `GameState.PALETTE_BATAILLE`, attribuée par index par `configurer_bataille(n)` ; le salon
+  l'attribuera au choix des joueurs. En simulation
   deutéranopie, rouge, vert et jaune se confondent (kaki) et magenta et cyan se rapprochent, et le
   jaune est proche du visage du lion : différencier les luminosités (vert plus sombre, jaune plus
   clair, par exemple) et compter aussi sur le pseudo et les vignettes du HUD. Attribuer la couleur
   **avant** l'ajout du lion à l'arbre, ou rappeler `Lion.appliquer_apparence()` (aperçu du salon en
   phase 13) ;
+- **phase 9** : `Joueur.cellules_volees` existe depuis la phase 8 (remis à zéro par
+  `reinitialiser`, jamais incrémenté) : le territoire l'incrémente quand un tampon vole une
+  cellule. En bataille, les couleurs débloquées d'un joueur sont ses trois nuances (données par
+  `Regles.couleurs_de_depart`) : c'est ce que reçoivent la traceuse et `Ville.peindre` ;
+- **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
+  pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
+  donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
+  `apparence_changee`, auquel le lion s'abonne ;
+- activer `rendering/viewport/hdr_2d` changerait les valeurs lues par `Shaders/Lion.gdshader` et
+  décalerait ses seuils de masque (valeur, saturation) : refaire alors la planche de contrôle de la
+  phase 7 et régler les seuils ;

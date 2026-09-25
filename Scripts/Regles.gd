@@ -15,15 +15,32 @@ func _init(partie_: EtatPartie = null) -> void:
 	partie = partie_
 
 
+## Couleurs que le joueur vomit dès le départ d'une partie (lu par `nouvelle_partie`).
+func couleurs_de_depart(_joueur: Joueur) -> Array[Color]:
+	return []
+
+
 ## Un ennemi (soucoupe, coccinelle, peintre) touche le lion du joueur. `origine` = position de
-## l'ennemi, pour le recul (Vector2.INF si inconnue).
+## l'ennemi, pour le recul (Vector2.INF si inconnue). Le peintre le signale à chaque frame de
+## chevauchement : un joueur déjà frappé doit être ignoré.
 func lion_touche_par_ennemi(_joueur: Joueur, _origine: Vector2) -> void:
+	pass
+
+
+## Le vomi du lion d'`agresseur` touche le lion de `victime`, à `origine` (point de la gerbe,
+## pour le recul). Signalé à chaque frame de contact, comme le peintre.
+func lion_touche_par_vomi(_victime: Joueur, _agresseur: Joueur, _origine: Vector2) -> void:
+	pass
+
+
+## Les lions de `a` et `b` viennent de se rentrer dedans (signalé une fois par contact).
+func choc_entre_lions(_a: Joueur, _b: Joueur) -> void:
 	pass
 
 
 ## Renvoie true si la pastille a eu un effet (elle disparaît dans tous les cas ; la valeur de
 ## retour ne sert qu'au feedback). `index_couleur` ne compte que pour les règles qui utilisent
-## l'arc-en-ciel ; les règles de bataille l'ignoreront.
+## l'arc-en-ciel ; les règles de bataille l'ignorent.
 func pastille_ramassee(_joueur: Joueur, _index_couleur: int) -> bool:
 	return false
 

@@ -23,7 +23,9 @@ func _run() -> void:
 	_tester_game_state()
 	_tester_commandes()
 	_tester_regles_solo()
+	_tester_regles_bataille()
 	_tester_delegation_regles()
+	_tester_modes()
 	_tester_facade_retiree()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
@@ -88,6 +90,58 @@ func _tester_joueur() -> void:
 	_check(bonus.is_empty() and recues.is_empty() and journal.is_empty(), "reinitialiser n'émet aucun signal")
 	_check(j.vies == 1 and not j.bonus_actif() and j.couleurs_debloquees.is_empty() and j.coups_recus == 0,
 		"reinitialiser remet vies, bonus, couleurs et coups à l'état de départ")
+
+	# Crans de gerbe : de 1 à CRANS_MAX, signalés
+	var crans_recus: Array[int] = []
+	j.crans_changes.connect(func(c: int) -> void: crans_recus.append(c))
+	_check(j.crans == 1, "un joueur réinitialisé a un cran de gerbe")
+	for i in range(Joueur.CRANS_MAX - 1):
+		j.gagner_cran()
+	_check(j.crans == Joueur.CRANS_MAX and crans_recus == [2, 3, 4, 5, 6, 7], "chaque cran gagné est signalé, jusqu'à 7 (%s)" % [crans_recus])
+	_check(not j.gagner_cran() and j.crans == Joueur.CRANS_MAX and crans_recus.size() == 6, "au maximum, un cran de plus est refusé sans signal")
+
+	# Nuances de la gerbe de bataille
+	j.couleur = Color(0.16, 0.39, 0.95)
+	var n: Array[Color] = j.nuances()
+	_check(n.size() == 3 and n[1] == j.couleur and n[0].get_luminance() < n[1].get_luminance()
+		and n[2].get_luminance() > n[1].get_luminance() and n.all(func(c: Color) -> bool: return c.a == 1.0),
+		"trois nuances opaques : foncée, la couleur du joueur, claire")
+
+	# Étourdissement puis immunité : une seule minuterie de protection
+	var etourdissements: Array[String] = []
+	j.etourdi.connect(func(o: Vector2, b: Color) -> void: etourdissements.append("etourdi:%d,%d:%s" % [int(o.x), int(o.y), b.to_html()]))
+	j.etourdissement_fini.connect(func() -> void: etourdissements.append("fini"))
+	j.etourdir(1.5, 1.0, Vector2(5, 6), Color.RED)
+	_check(etourdissements == ["etourdi:5,6:%s" % Color.RED.to_html()], "etourdir signale l'origine et la couleur du barbouillage (%s)" % [etourdissements])
+	_check(j.est_etourdi() and is_equal_approx(j.etourdi_restant, 1.5) and j.est_invulnerable() and is_equal_approx(j.invulnerable_restant, 2.5),
+		"étourdi 1,5 s, et invulnérable pendant l'étourdissement puis 1 s d'immunité")
+	j.avancer(1.0)
+	_check(j.est_etourdi() and etourdissements.size() == 1, "l'étourdissement dure encore")
+	j.avancer(0.6)
+	_check(not j.est_etourdi() and j.etourdi_restant == 0.0 and etourdissements.back() == "fini",
+		"la fin de l'étourdissement est signalée, jamais en négatif")
+	_check(j.est_invulnerable() and is_equal_approx(j.invulnerable_restant, 0.9), "puis l'immunité continue seule (0,9 s restantes)")
+	j.avancer(1.0)
+	_check(not j.est_invulnerable() and etourdissements.size() == 2, "l'immunité s'arrête, la fin n'est signalée qu'une fois")
+
+	# Réinitialiser : crans, étourdissement et statistiques repartent de zéro, en silence
+	j.gagner_cran()
+	j.etourdir(1.5, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	j.etourdissements_infliges = 2
+	j.cellules_volees = 30
+	j.chocs = 4
+	crans_recus.clear()
+	etourdissements.clear()
+	j.reinitialiser(3)
+	_check(j.crans == 1 and not j.est_etourdi() and not j.est_invulnerable() and j.etourdissements_infliges == 0
+		and j.cellules_volees == 0 and j.chocs == 0 and crans_recus.is_empty() and etourdissements.is_empty(),
+		"reinitialiser remet crans, étourdissement et statistiques à zéro sans signal")
+	j.reinitialiser(3, j.nuances())
+	_check(j.couleurs_debloquees == j.nuances() and recues.is_empty(), "reinitialiser peut donner des couleurs de départ, sans les signaler")
+	var avant: Array[Color] = j.couleurs_debloquees
+	j.reinitialiser(3)
+	_check(j.couleurs_debloquees.is_empty() and is_same(avant, j.couleurs_debloquees),
+		"les couleurs sont remises à zéro en place (le tableau lu par le lion et le HUD reste le même)")
 
 
 func _tester_game_state() -> void:
@@ -183,6 +237,13 @@ func _tester_regles_solo() -> void:
 	j.vies = 2
 	_check(not base.coeur_ramasse(j) and j.vies == 2, "coeur_ramasse des règles de base n'a aucun effet, même sous le maximum")
 	j.vies = 3
+	var autre := Joueur.new()
+	autre.reinitialiser(3)
+	base.lion_touche_par_vomi(j, autre, Vector2.ZERO)
+	base.choc_entre_lions(j, autre)
+	_check(base.couleurs_de_depart(j).is_empty() and not j.est_etourdi() and not j.est_invulnerable()
+		and autre.etourdissements_infliges == 0 and j.chocs == 0 and autre.chocs == 0,
+		"sans règles de mode, ni couleur de départ, ni effet du vomi ou des chocs")
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)
@@ -236,6 +297,116 @@ func _tester_regles_solo() -> void:
 	gs.pret = false
 
 
+func _tester_regles_bataille() -> void:
+	print("-- Règles de bataille")
+	var gs: Node = root.get_node("GameState")
+	gs.difficulte_courante = 0
+	gs.nouvelle_partie()
+	gs.pret = true
+	var fins: Array[bool] = []
+	var sur_fin := func(v: bool) -> void: fins.append(v)
+	gs.partie_terminee.connect(sur_fin)
+	var r := ReglesBataille.new(gs)
+	var rouge := Joueur.new()
+	rouge.couleur = Color(0.90, 0.16, 0.16)
+	var bleu := Joueur.new()
+	bleu.couleur = Color(0.16, 0.39, 0.95)
+	for j: Joueur in [rouge, bleu]:
+		j.reinitialiser(3, r.couleurs_de_depart(j))
+	_check(rouge.couleurs_debloquees == rouge.nuances() and bleu.couleurs_debloquees == bleu.nuances(),
+		"en bataille, chaque joueur vomit dès le départ dans ses trois nuances")
+	var barbouillages: Array[Color] = []
+	bleu.etourdi.connect(func(_o: Vector2, b: Color) -> void: barbouillages.append(b))
+
+	# Vomi : 1,5 s d'étourdissement, barbouillé de la couleur de l'agresseur, puis 1 s d'immunité
+	r.lion_touche_par_vomi(bleu, rouge, Vector2(7, 8))
+	_check(bleu.est_etourdi() and is_equal_approx(bleu.etourdi_restant, ReglesBataille.DUREE_ETOURDI_VOMI)
+		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_VOMI + ReglesBataille.DUREE_IMMUNITE)
+		and barbouillages == [rouge.couleur],
+		"le vomi d'un autre lion étourdit 1,5 s, barbouille de la couleur de l'agresseur, puis immunise 1 s")
+	_check(rouge.etourdissements_infliges == 1 and bleu.vies == 3 and fins.is_empty(),
+		"l'étourdissement compte pour l'agresseur ; aucune vie perdue, la manche continue")
+	for i in range(10):
+		r.lion_touche_par_vomi(bleu, rouge, Vector2(7, 8))
+	_check(barbouillages.size() == 1 and rouge.etourdissements_infliges == 1 and is_equal_approx(bleu.etourdi_restant, ReglesBataille.DUREE_ETOURDI_VOMI),
+		"un lion déjà étourdi n'est pas ré-étourdi (contact signalé à chaque frame)")
+	bleu.avancer(ReglesBataille.DUREE_ETOURDI_VOMI + 0.1)
+	r.lion_touche_par_vomi(bleu, rouge, Vector2(7, 8))
+	_check(not bleu.est_etourdi() and bleu.est_invulnerable() and barbouillages.size() == 1 and rouge.etourdissements_infliges == 1,
+		"un lion immunisé n'est pas étourdi et ne compte pas")
+	bleu.avancer(ReglesBataille.DUREE_IMMUNITE)
+	r.lion_touche_par_vomi(rouge, rouge, Vector2.ZERO)
+	_check(not rouge.est_etourdi() and rouge.etourdissements_infliges == 1, "son propre vomi n'étourdit pas")
+	rouge.etourdir(1.0, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	rouge.etourdi_a_la_frame = Engine.get_physics_frames() - 1  # simule un étourdissement d'une frame passée
+	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
+	_check(not bleu.est_etourdi() and rouge.etourdissements_infliges == 1, "un lion étourdi lors d'une frame passée n'étourdit personne")
+	rouge.avancer(2.0)
+
+	# Trade tête-à-tête : deux lions se vomissent dessus la même frame, les deux rapports portent
+	var a := Joueur.new()
+	a.couleur = Color(0.90, 0.16, 0.16)
+	var b := Joueur.new()
+	b.couleur = Color(0.16, 0.39, 0.95)
+	for j: Joueur in [a, b]:
+		j.reinitialiser(3, r.couleurs_de_depart(j))
+	r.lion_touche_par_vomi(b, a, Vector2.ZERO)
+	r.lion_touche_par_vomi(a, b, Vector2.ZERO)
+	_check(a.est_etourdi() and b.est_etourdi() and a.etourdissements_infliges == 1 and b.etourdissements_infliges == 1,
+		"un trade tête-à-tête dans la même frame étourdit les deux lions (aucun n'est ignoré comme agresseur déjà étourdi)")
+
+	# Ennemis : 2,5 s sans barbouillage, puis 1 s d'immunité ; aucune vie perdue
+	for i in range(10):
+		r.lion_touche_par_ennemi(bleu, Vector2(1, 2))  # le peintre signale le contact à chaque frame
+	_check(bleu.est_etourdi() and is_equal_approx(bleu.etourdi_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI)
+		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_IMMUNITE)
+		and barbouillages.size() == 2 and barbouillages[1].a == 0.0 and bleu.vies == 3,
+		"un ennemi étourdit 2,5 s sans barbouillage (un seul étourdissement pour dix contacts), sans vie perdue")
+	bleu.avancer(ReglesBataille.DUREE_ETOURDI_ENNEMI + 0.5)
+	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
+	_check(barbouillages.size() == 2, "un ennemi ne ré-étourdit pas un lion immunisé")
+	bleu.avancer(1.0)
+	gs.pret = false
+	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
+	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
+	_check(barbouillages.size() == 2, "rien n'étourdit pendant l'intro")
+	gs.pret = true
+
+	# Chocs : comptés des deux côtés, jamais d'étourdissement
+	r.choc_entre_lions(rouge, bleu)
+	_check(rouge.chocs == 1 and bleu.chocs == 1 and not rouge.est_etourdi() and not bleu.est_etourdi(),
+		"un choc compte pour les deux lions et n'étourdit personne")
+	r.choc_entre_lions(rouge, rouge)
+	_check(rouge.chocs == 1, "un lion ne se choque pas lui-même")
+
+	# Pastilles, étoile, cœur, progression
+	_check(r.pastille_ramassee(rouge, 5) and rouge.crans == 2 and rouge.couleurs_debloquees == rouge.nuances(),
+		"une pastille donne un cran de gerbe, quelle que soit sa couleur, sans débloquer de couleur")
+	for i in range(10):
+		r.pastille_ramassee(rouge, 0)
+	_check(rouge.crans == Joueur.CRANS_MAX and not r.pastille_ramassee(rouge, 0), "les crans plafonnent à 7")
+	r.etoile_ramassee(bleu)
+	_check(bleu.bonus_actif() and is_equal_approx(bleu.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile XXL est celle du solo")
+	bleu.vies = 2
+	_check(not r.coeur_ramasse(bleu) and bleu.vies == 2, "aucun cœur en bataille")
+	r.progression_mesuree(1.0)
+	_check(fins.is_empty() and gs.partie_en_cours, "peindre toute la ville ne termine pas la manche (elle finit au chrono)")
+	gs.terminer_partie(false)
+	bleu.invulnerable_restant = 0.0
+	bleu.etourdi_restant = 0.0
+	var etourdissements_avant := rouge.etourdissements_infliges
+	r.lion_touche_par_ennemi(bleu, Vector2.ZERO)
+	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
+	r.choc_entre_lions(rouge, bleu)
+	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant,
+		"après la fin de manche, plus d'étourdissement (ennemi ou vomi) ni de choc compté")
+
+	gs.partie_terminee.disconnect(sur_fin)
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+
 func _tester_delegation_regles() -> void:
 	print("-- GameState délègue aux règles")
 	var gs: Node = root.get_node("GameState")
@@ -261,6 +432,39 @@ func _tester_delegation_regles() -> void:
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+
+func _tester_modes() -> void:
+	print("-- Mise en place des modes")
+	var gs: Node = root.get_node("GameState")
+	var tableau: Array[Joueur] = gs.joueurs
+	var local: Joueur = gs.joueur_local()
+	gs.configurer_bataille(4)
+	_check(gs.regles is ReglesBataille and gs.joueurs.size() == 4, "configurer_bataille(4) branche les règles de bataille pour 4 joueurs")
+	_check(is_same(tableau, gs.joueurs) and gs.joueur_local() == local,
+		"les joueurs sont ajoutés en place : même tableau, joueur local inchangé (Audio y est abonné)")
+	var indices: Array = gs.joueurs.map(func(j: Joueur) -> int: return j.index)
+	var couleurs: Array = gs.joueurs.map(func(j: Joueur) -> Color: return j.couleur)
+	_check(indices == [0, 1, 2, 3] and couleurs == gs.PALETTE_BATAILLE.slice(0, 4),
+		"chaque joueur a son index et sa couleur de la palette (%s)" % [indices])
+	var troisieme: Joueur = gs.joueurs[2]
+	gs.nouvelle_partie()
+	_check(gs.joueurs.all(func(j: Joueur) -> bool: return j.crans == 1 and j.couleurs_debloquees == j.nuances()),
+		"une nouvelle partie de bataille donne à chacun un cran et ses trois nuances")
+	gs.pret = true
+	troisieme.etourdir(1.0, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	gs._process(0.4)
+	_check(is_equal_approx(troisieme.etourdi_restant, 0.6), "GameState fait avancer tous les joueurs, pas seulement le joueur local")
+	gs.configurer_bataille(2)
+	_check(gs.joueurs.size() == 2 and is_same(tableau, gs.joueurs) and gs.joueur_local() == local, "moins de joueurs : retirés en place")
+	gs.configurer_solo()
+	_check(gs.regles is ReglesSolo and gs.joueurs.size() == 1 and gs.joueur_local() == local and is_same(tableau, gs.joueurs),
+		"bataille puis solo : règles du solo et un seul joueur, le même")
+	gs.nouvelle_partie()
+	_check(not local.a_une_couleur() and local.couleurs_debloquees.is_empty() and local.crans == 1,
+		"le joueur du solo n'a plus de couleur (son lion retrouve son rendu d'origine) et repart sans couleur débloquée")
 	gs.partie_en_cours = false
 	gs.pret = false
 
