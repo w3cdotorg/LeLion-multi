@@ -148,10 +148,27 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   appliquer la liste des cellules reçue de l'hôte (`Territoire.extraire_changements()` chez
   l'hôte, index u16 + propriétaire u8) par une méthode d'affichage à ajouter à `Territoire`
   (propriétaire compté posé tel quel, sans charge), d'où les mêmes scores chez tous ; ne jamais y
-  rejouer `tamponner`. Le tampon diffusé porte l'index du joueur : `Ville.peindre(position,
-  rayon, peintre)` prend déjà un `Joueur`. Le motif et les coulures d'un tampon viennent encore du
-  hasard global (`randi`, `randf`) : les tirer de la graine du tampon (spec §6) ;
+  rejouer `tamponner`. La traceuse ne peint que sur l'hôte (`multiplayer.is_server()` dans
+  `GerbeTraceuse._physics_process`, ou appel depuis le relais de `Main`) : sinon le
+  `MultiplayerSynchronizer` qui réplique le vomi met `monitoring = true` sur chaque réplique et
+  chaque client peindrait localement un premier tampon avec ses propres tirages, en double de
+  celui diffusé par l'hôte. Les clients peignent seulement les tampons reçus
+  (`Ville.peindre(position, rayon, GameState.joueurs[index])`). Le tampon diffusé porte l'index du
+  joueur : `Ville.peindre(position, rayon, peintre)` prend déjà un `Joueur`. Le motif et les
+  coulures d'un tampon viennent encore du hasard global (`randi`, `randf`), ce qui ne suffit pas
+  avec le cache (chaque machine génère ses `NB_TAMPONS` variantes séparément au premier usage) :
+  amorcer `_generer_tampons` avec un `RandomNumberGenerator` dont la graine est dérivée de
+  `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
+  tampon (spec §6) ;
 - **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
+- **phase 10** : chaque nouveau jeu de tampons (`Ville._generer_tampons`) est généré en GDScript,
+  dans le tick physique de l'hôte, au premier usage d'un rayon et d'un jeu de couleurs : coût
+  mesuré de 3,7 ms (46 px) à 14,5 ms (92 px, étoile XXL) sur la machine du plan. À 6 joueurs, 84
+  jeux possibles au pire, donc des à-coups visibles si plusieurs étoiles sont ramassées dans la
+  même seconde. Pré-générer les jeux de chaque joueur pendant l'intro « Prêt ? Vomissez ! » (ses
+  nuances, les 7 rayons, x2), ou les générer au premier cran atteint, ou mesurer d'abord sur la
+  manche à 4 lions avant de décider. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs (et
+  non 12 Mo comme l'annonce le commentaire de `Ville.gd`, sans conséquence) ;
 - **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
@@ -212,6 +229,12 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 14** : quand un joueur quitte la manche, ses cellules restent au classement (spec §4)
   mais `Territoire` n'a pas encore d'opération pour les libérer ou les geler : à décider avec la
   gestion des déconnexions ;
+- **phase 18** : le territoire de la ville ne se remet à zéro que dans `charger_skyline` ; si
+  « Revanche » ou « Niveau suivant » relance une manche sur la même ville sans y repasser, les
+  scores et les tampons dessinés de la manche précédente restent. Chaque nouvelle manche doit donc
+  soit repasser par `charger_skyline`, soit appeler `ville.territoire.reinitialiser()` après avoir
+  vidé `extraire_changements()` (contrainte déjà notée dans `Territoire.gd:64-66`). Coordonner
+  l'ordre de ce message avec la diffusion des scores de la phase 14 ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
