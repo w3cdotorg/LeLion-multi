@@ -54,7 +54,7 @@ de jeu.
 
 | Unité | Rôle | Dépend de |
 |---|---|---|
-| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `immunite_restante`, `cellules`, stats (étourdissements infligés, cellules volées, chocs). En solo il porte aussi `couleurs_debloquees`, `vies`. | rien |
+| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `immunite_restante`, `cellules`, stats (étourdissements infligés, cellules volées, chocs). En solo il porte aussi `couleurs_debloquees`, `vies`, et sa `couleur` reste transparente (pas de teinte). | rien |
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
 | `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, et côté hôte les commandes reçues d'un client, numérotées et dédoublonnées en phase 16). | Input |
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
@@ -129,12 +129,14 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 
 ## 5. Lion
 
-- **Teinte** : seule la crinière prend la couleur du joueur. `tools/generer_masques_lion.py`
-  produit un masque par sprite (`LionHead_masque.png`, `LionHeadVomit_masque.png`) à partir de la
-  teinte et de la luminance, en excluant le visage. Le shader `Lion.gdshader` mélange
-  `original` et `luminance × couleur_joueur` selon le masque. Paramètres `barbouillage_couleur` et
-  `barbouillage_force` pour l'étourdissement. **Repli** si le masque est laid : rotation de teinte
-  de toute la tête.
+- **Teinte** : seule la crinière prend la couleur du joueur. Le shader `Lion.gdshader` déduit le
+  masque du sprite lui-même, pixel par pixel : la crinière est dans les teintes du violet au rouge,
+  le visage dans l'orange et le jaune (exclu par sa teinte), la langue et les reflets sont trop
+  clairs, le contour trop sombre. Un seul shader vaut donc pour les deux sprites (repos et vomi),
+  sans masque généré. Il mélange `original` et `couleur_joueur × min(1, luminance × gain)` selon
+  le masque (la crinière est sombre : sans gain, elle noircit). Paramètres `barbouillage_couleur`
+  et `barbouillage_force` pour l'étourdissement. Un joueur sans couleur (alpha 0, le solo) laisse
+  le sprite sans matériau. **Repli** si le masque est laid : rotation de teinte de toute la tête.
 - **Pseudo** affiché au-dessus du lion, dans sa couleur, en multi uniquement.
 - **Gerbe** : 3 émetteurs (nuances du joueur) en éventail en bataille, un émetteur par couleur
   débloquée en solo.
@@ -247,7 +249,7 @@ Chaque phase touche 5 fichiers au plus, se termine par les tests verts, et atten
 
 1. Nettoyage (code mort) puis socle : `Joueur`, `Commandes`, `OfflineMultiplayerPeer`, `GameState`
    allégé. Solo identique.
-2. Teinte du lion (masques, shader), gerbe mono-couleur, étourdissement, collisions.
+2. Teinte du lion (masque calculé par le shader), gerbe mono-couleur, étourdissement, collisions.
 3. Autoload `Reseau`, écran Réseau, salon, viewport 16:9.
 4. `ReglesBataille`, grille de propriété, synchro des tampons et des scores, test réseau (sans
    prédiction).
