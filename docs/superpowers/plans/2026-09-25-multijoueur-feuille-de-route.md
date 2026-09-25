@@ -164,9 +164,23 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 8 bis** : le barbouillage passe par les uniformes `barbouillage_couleur` /
   `barbouillage_force` du matériau du lion (`Shaders/Lion.gdshader`, déjà prêts à 0). Ce matériau
   n'existe que si le joueur a une couleur, ce qui est toujours vrai en bataille ;
+- **phase 8 bis** : `ReglesBataille.etoile_ramassee` lit `ReglesSolo.DUREE_ETOILE` : les règles de
+  bataille ne devraient pas dépendre des règles du solo. Monter `DUREE_ETOILE` dans la base
+  `Regles`. De même, `ReglesSolo` répète en ligne le garde-fou
+  `partie.partie_en_cours and partie.pret` que `ReglesBataille._manche_en_cours()` a déjà nommé :
+  monter `_manche_en_cours()` dans la base `Regles` et le faire utiliser par les deux. Une fois que
+  `Scripts/Lion.gd` ne lira plus directement `GameState.DUREE_INVULNERABILITE` (pour le nombre de
+  clignotements), descendre cette constante de `GameState` vers `ReglesSolo`, seule règle qui s'en
+  sert encore ;
 - **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
   lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
   passer sous le lion près du bord ;
+- **phase 13** : `GameState.configurer_bataille(nb_joueurs)` attribue l'index et la couleur de
+  chaque joueur depuis `PALETTE_BATAILLE`, par position ; une fois que le salon attribue les
+  couleurs (choix des joueurs), `configurer_bataille` ne doit plus les écraser : lui passer les
+  couleurs du salon, par exemple `configurer_bataille(nb_joueurs, couleurs)`. Son `assert` sur le
+  nombre de joueurs devra aussi devenir un clamp ou un `push_error` une fois que c'est le salon qui
+  l'appelle (un salon mal formé ne doit pas planter la partie) ;
 - **phase 11** : la palette de bataille (planche de la phase 7 : rouge `(0.90, 0.16, 0.16)`, bleu
   `(0.16, 0.39, 0.95)`, jaune `(0.98, 0.82, 0.10)`, vert `(0.18, 0.78, 0.25)`, magenta
   `(0.90, 0.20, 0.85)`, cyan `(0.10, 0.85, 0.90)`) est depuis la phase 8 la constante unique

@@ -73,9 +73,12 @@ de jeu.
 3. Les traceuses de l'hôte détectent la ville et les autres lions. Les contacts remontent aux
    `Regles`.
 4. Les tampons de peinture sont appliqués sur l'hôte et **diffusés sous forme d'événements**.
-5. `MultiplayerSynchronizer` réplique position, vitesse, orientation, état de vomi,
-   étourdissement, crans et numéro de la dernière commande traitée de chaque lion. Les clients
-   interpolent les lions distants et recalent leur lion local (4.1).
+5. `MultiplayerSynchronizer` réplique position, vitesse, orientation, état de vomi, crans et
+   numéro de la dernière commande traitée de chaque lion. Les clients interpolent les lions
+   distants et recalent leur lion local (4.1). L'étourdissement, lui, ne se réplique pas comme un
+   champ brut : il voyage en événement (RPC hôte → clients qui appelle `Joueur.etourdir` avec la
+   couleur du barbouillage), conformément au point de vigilance transverse de la phase 14 (feuille
+   de route) sur les réactions du `Joueur`.
 
 ## 4. Réseau et salon
 
