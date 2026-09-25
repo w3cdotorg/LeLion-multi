@@ -5,6 +5,7 @@ extends SceneTree
 
 var _echecs := 0
 var GS: Node
+var JL: Joueur  # le joueur local (unique en solo)
 
 
 func _init() -> void:
@@ -27,6 +28,7 @@ func _frames(n: int) -> void:
 func _run() -> void:
 	print("== smoke test LeLion ==")
 	GS = root.get_node("GameState")
+	JL = GS.joueur_local()
 	var scores: Node = root.get_node("Scores")
 	var params: Node = root.get_node("Parametres")
 	scores.chemin = "user://scores_test.cfg"
@@ -199,7 +201,7 @@ func _run() -> void:
 	var pickup: Node = spawner.spawn_pickup(0, lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(pickup), "le pickup disparaît au contact")
-	_check(GS.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
+	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
 	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
 	var hud: Node = main.get_node("HUD")
 	_check(hud.indice.visible == false, "le HUD cache l'indice après la première couleur")
@@ -214,13 +216,13 @@ func _run() -> void:
 	var rayon_normal: float = lion.traceuse_shape.shape.radius
 	var bonus: Node = spawner.spawn_bonus(lion.global_position + Vector2(68, 66))
 	await _frames(3)
-	_check(not is_instance_valid(bonus) and GS.bonus_actif(), "l'étoile ramassée active la gerbe XXL")
+	_check(not is_instance_valid(bonus) and JL.bonus_actif(), "l'étoile ramassée active la gerbe XXL")
 	_check(lion.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
 	_check(hud.etiquette_bonus.visible, "le HUD affiche le bonus")
-	GS.bonus_restant = 0.01
+	JL.bonus_restant = 0.01
 	await create_timer(0.1).timeout
 	await _frames(1)
-	_check(not GS.bonus_actif() and lion.traceuse_shape.shape.radius == rayon_normal, "le bonus expire et le rayon revient à la normale")
+	_check(not JL.bonus_actif() and lion.traceuse_shape.shape.radius == rayon_normal, "le bonus expire et le rayon revient à la normale")
 	_check(root.get_node("Audio")._vomi.playing, "la boucle sonore de vomi tourne")
 	_check(ville.cellules_peintes > 0, "la ville a été peinte (%d cellules)" % ville.cellules_peintes)
 	_check(GS.progression > 0.0, "la progression est remontée dans GameState (%.4f)" % GS.progression)
@@ -234,14 +236,14 @@ func _run() -> void:
 	_check(not lion.est_en_train_de_vomir, "le lion arrête de vomir quand l'action est relâchée")
 
 	# Mode Facile : un coup enlève une vie et rend invulnérable un moment
-	_check(GS.vies == 3 and hud._coeurs[2].visible, "mode Facile : 3 vies affichées")
+	_check(JL.vies == 3 and hud._coeurs[2].visible, "mode Facile : 3 vies affichées")
 	_check(abs(GS.seuil_victoire() - 0.85) < 0.001 and abs(hud.repere_seuil.offset_left + 1.5 - 0.85 * hud.progression.size.x) < 2.0,
 		"seuil de victoire 85 %% en Facile, repère placé sur la barre")
 	var coccinelle: Node = spawner.spawn_coccinelle(lion.global_position.y + 66)
 	coccinelle.position.x = lion.global_position.x + 68
 	await _frames(3)
-	_check(GS.partie_en_cours and GS.vies == 2, "un coup coûte une vie, la partie continue (%d vies)" % GS.vies)
-	_check(GS.est_invulnerable(), "le lion est invulnérable après un coup")
+	_check(GS.partie_en_cours and JL.vies == 2, "un coup coûte une vie, la partie continue (%d vies)" % JL.vies)
+	_check(JL.est_invulnerable(), "le lion est invulnérable après un coup")
 	_check(lion._recul.length() > 0.0, "le lion est repoussé par le coup (%.0f px/s)" % lion._recul.length())
 	_check(hud.flash.color.a > 0.0, "l'écran flashe en rouge")
 	_check(main._tremblement_restant > 0.0, "la caméra tremble")
@@ -250,20 +252,20 @@ func _run() -> void:
 	var soucoupe2: Node = spawner.spawn_soucoupe(lion.global_position.y + 66)
 	soucoupe2.position.x = lion.global_position.x + 68
 	await _frames(3)
-	_check(GS.vies == 2, "un coup pendant l'invulnérabilité ne compte pas")
+	_check(JL.vies == 2, "un coup pendant l'invulnérabilité ne compte pas")
 	soucoupe2.queue_free()
-	GS.invulnerable_restant = 0.0
+	JL.invulnerable_restant = 0.0
 
 	# Cœur : rend une vie, jamais au-delà du maximum
 	var coeur: Node = spawner.spawn_coeur(lion.global_position + Vector2(68, 66))
 	await _frames(3)
-	_check(not is_instance_valid(coeur) and GS.vies == 3, "un cœur ramassé rend une vie (%d)" % GS.vies)
-	_check(not GS.gagner_vie(), "impossible de dépasser le maximum de vies")
+	_check(not is_instance_valid(coeur) and JL.vies == 3, "un cœur ramassé rend une vie (%d)" % JL.vies)
+	_check(not GS.regles.coeur_ramasse(JL), "impossible de dépasser le maximum de vies")
 
 	# Défaite : trois coups, le doigt toujours sur le stick
 	stick.debut(Vector2(300, 500))
 	stick.glisser(Vector2(300 + stick.rayon, 500))
-	GS.vies = 1
+	JL.vies = 1
 	coccinelle = spawner.spawn_coccinelle(lion.global_position.y + 66)
 	coccinelle.position.x = lion.global_position.x + 68
 	await _frames(3)
@@ -279,8 +281,8 @@ func _run() -> void:
 	overlay._fin_continue()
 	_check(overlay != null and not overlay.phase_continue and overlay.stats.visible, "à zéro, le bilan apparaît")
 	_check(overlay != null and overlay.titre.text == tr("GAME_OVER"), "l'overlay affiche GAME OVER")
-	_check(overlay != null and overlay._lignes.size() == 4 and overlay._lignes[2].cible == GS.coups_recus and GS.coups_recus == 2,
-		"le bilan de défaite a 4 lignes et compte les coups reçus (%d)" % GS.coups_recus)
+	_check(overlay != null and overlay._lignes.size() == 4 and overlay._lignes[2].cible == JL.coups_recus and JL.coups_recus == 2,
+		"le bilan de défaite a 4 lignes et compte les coups reçus (%d)" % JL.coups_recus)
 	_check(overlay != null and not overlay.sous_titre.visible, "pas de badge record sur une défaite")
 	overlay._terminer_animation()
 	_check(overlay != null and overlay._lignes[0].valeur.text == "%d %%" % int(round(GS.progression * 100)) and overlay.bouton_rejouer.has_focus(),
@@ -303,22 +305,22 @@ func _run() -> void:
 	GS.demarrer()
 	await _frames(1)
 	_check(Input.get_action_strength("deplacer_droite") == 0.0, "une nouvelle partie démarre avec les actions relâchées")
-	_check(GS.couleurs_debloquees.is_empty() and main.get_node("Lion").vomi_container.get_child_count() == 0
+	_check(JL.couleurs_debloquees.is_empty() and main.get_node("Lion").vomi_container.get_child_count() == 0
 		and main.get_node("HUD")._pastilles[0].color == main.get_node("HUD").COULEUR_VERROUILLEE,
 		"une nouvelle partie repart sans couleur : ni émetteur, ni pastille allumée")
-	_check(GS.vies == 3 and GS.coups_recus == 0 and main.get_node("HUD")._coeurs[2].modulate == main.get_node("HUD").COULEUR_COEUR,
+	_check(JL.vies == 3 and JL.coups_recus == 0 and main.get_node("HUD")._coeurs[2].modulate == main.get_node("HUD").COULEUR_COEUR,
 		"après une défaite, le niveau suivant repart avec tous ses cœurs affichés")
 	ville = main.get_node("Ville")
 	_check(ville.tex_size == Vector2i(2000, 320), "la ville a chargé la skyline du niveau Métropole (%s)" % ville.tex_size)
-	GS.debloquer_couleur(0)
+	GS.regles.pastille_ramassee(JL, 0)
 	var haut: float = ville.position.y - ville.tex_size.y / 2.0
 	# un seul tampon clairsemé ne suffit pas : la couverture réelle est mesurée
-	ville.peindre(Vector2(1000, haut + 200), 45, GS.couleurs_debloquees)
+	ville.peindre(Vector2(1000, haut + 200), 45, JL.couleurs_debloquees)
 	ville.mesurer_progression()
 	_check(GS.progression < 0.01, "un tampon isolé ne compte presque pas (couverture %.3f)" % GS.progression)
 	for x in range(0, ville.tex_size.x, 40):
 		for y in range(0, ville.tex_size.y, 40):
-			ville.peindre(Vector2(x, haut + y), 45, GS.couleurs_debloquees)
+			ville.peindre(Vector2(x, haut + y), 45, JL.couleurs_debloquees)
 	ville.mesurer_progression()
 	await _frames(3)
 	_check(GS.progression >= GS.seuil_victoire(), "progression >= seuil après avoir tout peint (%.2f)" % GS.progression)
@@ -378,7 +380,7 @@ func _run() -> void:
 	var etats_vus: Array = []
 	boss.etat_change.connect(func(e: int) -> void: etats_vus.append(e))
 	lion.global_position = Vector2(1000 - 68, boss.position.y - 66)  # au centre, sur le passage
-	var vies_avant: int = GS.vies
+	var vies_avant: int = JL.vies
 	await create_timer(0.9).timeout
 	_check(etats_vus.has(boss.Etat.PAUSE) and etats_vus.has(boss.Etat.SORTIE) and etats_vus.has(boss.Etat.REPOS),
 		"le boss enchaîne entrée, pause au centre, sortie, repos")
@@ -391,7 +393,7 @@ func _run() -> void:
 				x_max_poly = max(x_max_poly, p.x)
 	_check((boss.cote > 0 and x_max_poly > 200.0) or (boss.cote < 0 and x_max_poly < 200.0),
 		"la collision du boss est en miroir avec le sprite (x max %.0f, côté %d)" % [x_max_poly, boss.cote])
-	_check(GS.vies < vies_avant, "le boss blesse le lion au passage (%d → %d)" % [vies_avant, GS.vies])
+	_check(JL.vies < vies_avant, "le boss blesse le lion au passage (%d → %d)" % [vies_avant, JL.vies])
 	GS.niveau_courant = 0
 
 	# Arcade : neuf stages, Facile → Moyen → Hardcore
@@ -488,7 +490,7 @@ func _run() -> void:
 	lion = main.get_node("Lion")
 	spawner = main.get_node("Spawner")
 	hud = main.get_node("HUD")
-	_check(GS.vies == 1 and not hud._coeurs[1].visible, "mode Hardcore : un seul cœur affiché")
+	_check(JL.vies == 1 and not hud._coeurs[1].visible, "mode Hardcore : un seul cœur affiché")
 	_check(abs(GS.seuil_victoire() - 0.95) < 0.001, "mode Hardcore : 95 %% à peindre")
 	GS.signaler_progression(0.92)
 	_check(GS.partie_en_cours, "92 %% ne suffit pas en Hardcore")
@@ -510,14 +512,14 @@ func _run() -> void:
 	root.add_child(lion_autre)
 	await _frames(1)
 	_check(lion_autre.vomi_container.get_child_count() == 0, "un lion lié à un joueur sans couleur n'a pas d'émetteur")
-	GS.debloquer_couleur(3)
+	GS.regles.pastille_ramassee(JL, 3)
 	_check(lion_autre.vomi_container.get_child_count() == 0, "une couleur du joueur local ne touche pas un lion lié à un autre joueur")
 	autre.debloquer_couleur(Color.RED)
 	_check(lion_autre.vomi_container.get_child_count() == 1, "le lion reconstruit sa gerbe quand son propre joueur débloque une couleur")
 	var rayon_autre: float = lion_autre.traceuse_shape.shape.radius
-	GS.activer_bonus(5.0)
+	JL.activer_bonus(5.0)
 	_check(lion_autre.traceuse_shape.shape.radius == rayon_autre, "le bonus du joueur local ne touche pas un lion lié à un autre joueur")
-	GS.bonus_restant = 0.0
+	JL.bonus_restant = 0.0
 	autre.activer_bonus(5.0)
 	_check(is_equal_approx(lion_autre.traceuse_shape.shape.radius, rayon_autre * 2.0), "le bonus de son propre joueur double la gerbe du lion")
 	autre.encaisser_coup(Vector2.INF, 1.5)
@@ -551,7 +553,7 @@ func _run() -> void:
 	var couleurs_local: int = local.couleurs_debloquees.size()
 	var touches_locales: Array[Vector2] = []
 	var sur_touche_locale := func(o: Vector2) -> void: touches_locales.append(o)
-	GS.lion_touche.connect(sur_touche_locale)
+	JL.touche.connect(sur_touche_locale)
 	# La coccinelle qui a infligé la défaite Hardcore n'a jamais été libérée : elle continue de
 	# zigzaguer vers la gauche et peut retraverser le lion local, désormais de nouveau touchable
 	# ci-dessus, ce qui rendait ce test instable. On libère tout ennemi encore en jeu (et le peintre,
@@ -640,7 +642,7 @@ func _run() -> void:
 	_check(not couleurs_peintes.is_empty()
 		and couleurs_peintes.keys().all(func(k: int) -> bool: return rgba32_autre.has(k)),
 		"la traceuse d'un lion peint avec les couleurs de son joueur (%d couleur(s) sur la ville)" % couleurs_peintes.size())
-	GS.lion_touche.disconnect(sur_touche_locale)
+	JL.touche.disconnect(sur_touche_locale)
 	GS.partie_en_cours = false
 	local.vies = vies_local_avant  # on restaure l'état d'avant la section, mort Hardcore compris
 	lion_autre.free()
