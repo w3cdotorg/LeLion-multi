@@ -120,14 +120,20 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
   jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
   ses lecteurs dans `_exit_tree` ;
-- **phases 8 ter (ennemis) et 14 bis (pastilles)** : `class_name Lion` existe depuis la phase
-  8 bis ; tester `body is Lion` dans les gestionnaires de contact au lieu de supposer
-  `body.joueur`. Les tests `--script` (compilés avant les autoloads) continuent de typer les lions
-  en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd` nomme `GameState` et `Audio` ;
+- **phase 14 bis (pastilles)** : comme la base `Ennemi` de la phase 8 ter (`Scripts/Ennemi.gd`),
+  tester `body is Lion` dans le gestionnaire de contact commun au lieu de supposer `body.joueur`.
+  Les tests `--script` (compilés avant les autoloads) continuent de typer les lions en `Node` /
+  `CharacterBody2D`, et ne nomment ni `Lion`, ni `Ennemi`, ni `Pastille` : ces scripts nomment
+  `GameState` (`Lion.gd` aussi `Audio`). Le smoke test vérifie l'héritage d'un script par
+  `load(...).get_base_script().resource_path`. Le groupe « lion » ne sert alors plus qu'au
+  Spawner ;
 - phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
-  (`multiplayer.is_server()`, phase 4) ;
+  (`multiplayer.is_server()`, phase 4 ; pour les ennemis, dans la base `Ennemi` depuis la phase
+  8 ter, vérifié par le smoke test sur un sous-arbre dont le pair est un client ENet jamais
+  connecté : `SceneTree.set_multiplayer(api, chemin)`, technique réutilisable pour les pastilles
+  et la ville) ;
 - **phase 9 (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
   couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
   tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
