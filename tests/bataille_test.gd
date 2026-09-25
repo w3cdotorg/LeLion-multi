@@ -9,6 +9,7 @@ extends SceneTree
 
 const NB_LIONS := 4
 const TAILLE_BATAILLE := Vector2(2000, 1125)
+const HAUTEURS_JET: Array[float] = [-233.0, -200.0, -270.0]  # y du lion sous le haut de la skyline, comme le pilote de la démo
 
 var _echecs := 0
 var GS: Node
@@ -37,7 +38,9 @@ func _run() -> void:
 	print("== test de bataille LeLion ==")
 	GS = root.get_node("GameState")
 	seed(20260925)  # apparitions, ennemis et motifs des tampons reproductibles d'un passage à l'autre
+	await _tester_fin_pendant_intro()
 	await _tester_scene()
+	await _tester_apparitions()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
@@ -134,4 +137,92 @@ func _tester_solo_apres_bataille() -> void:
 	_check(main.get_node("Ciel").size == Vector2(2000, 648) and main.get_node("Camera").position == Vector2(1000, 324)
 		and boss != null and absf(boss.y_sol - (648 - 180)) < 0.5,
 		"ciel, caméra et peintre retrouvent l'écran du solo")
+	await _liberer(main)
+
+
+func _etoiles(main: Node) -> Array[Node]:
+	var etoiles: Array[Node] = []
+	for n in main.get_children():
+		if n.scene_file_path.ends_with("BonusPickup.tscn"):
+			etoiles.append(n)
+	return etoiles
+
+
+func _tester_fin_pendant_intro() -> void:
+	print("-- Fin de partie pendant l'intro")
+	var main := await _charger_bataille(0)
+	var spawner: Node = main.get_node("Spawner")
+	_check(not GS.pret and spawner._timer_soucoupe == null,
+		"(pré-condition) l'intro tourne, les minuteries des ennemis n'existent pas encore")
+	GS.terminer_partie(false)
+	_check(not GS.partie_en_cours and paused and main.get_node_or_null("GameOver") == null,
+		"une bataille terminée se fige sans le bilan du solo, même pendant l'intro (le Spawner n'a encore aucune minuterie à arrêter)")
+	await _liberer(main)
+
+
+func _tester_apparitions() -> void:
+	print("-- Apparitions de la bataille")
+	var main := await _charger_bataille(0)
+	var ville: Node2D = main.get_node("Ville")
+	var lions: Array = main.lions
+	await _attendre_depart()
+	# Ce qui apparaît est décidé par les règles, à l'échelle de l'écran
+	var spawner: Node = main.get_node("Spawner")
+	_check(spawner._timer_soucoupe != null and spawner._timer_coeur == null,
+		"en bataille, même en Facile, aucun cœur n'est programmé")
+	var echelle := TAILLE_BATAILLE.y / 648.0
+	var zone: Rect2 = spawner.zone_pickups
+	var dans_zone := true
+	var y_max := 0.0
+	var loin_de_tous := 0
+	for i in range(200):
+		var p: Vector2 = spawner._position_pickup_aleatoire()
+		y_max = maxf(y_max, p.y)
+		if p.x < zone.position.x or p.x > zone.end.x or p.y < zone.position.y * echelle - 0.01 or p.y > zone.end.y * echelle + 0.01:
+			dans_zone = false
+		if lions.all(func(l: Node2D) -> bool: return p.distance_to(l.global_position) >= spawner.distance_min_du_lion):
+			loin_de_tous += 1
+	_check(dans_zone and y_max > zone.end.y, "les pastilles apparaissent dans leur zone, à l'échelle de l'écran (y jusqu'à %.0f px)" % y_max)
+	_check(loin_de_tous >= 190, "les pastilles apparaissent loin de tous les lions, pas seulement du premier (%d/200)" % loin_de_tous)
+	var haut: float = ville.position.y - ville.tex_size.y / 2.0
+	var ys: Array[float] = []
+	for i in range(60):
+		var soucoupe: Node2D = spawner.spawn_soucoupe()
+		ys.append(soucoupe.position.y)
+		soucoupe.free()
+	_check(ys.min() >= spawner.zone_y_ennemis.x * echelle - 0.01 and ys.max() <= spawner.zone_y_ennemis.y * echelle + 0.01
+		and ys.max() > haut + HAUTEURS_JET[1],
+		"les ennemis apparaissent à l'échelle de l'écran et atteignent la bande de peinture (y de %.0f à %.0f)" % [ys.min(), ys.max()])
+
+	# Pastilles : la suivante arrive après le ramassage, même si aucune couleur n'est débloquée
+	spawner.delai_entre_pickups = 0.5
+	var premiere: Node2D = null
+	for i in range(120):
+		premiere = get_first_node_in_group("pickup")
+		if premiere != null:
+			break
+		await physics_frame
+	_check(premiere != null, "une première pastille arrive après le départ")
+	var l2: Node2D = lions[2]
+	premiere.global_position = l2.global_position + l2.CENTRE
+	await _frames(3)
+	_check(not is_instance_valid(premiere) and GS.joueurs[2].crans == 2
+		and GS.joueurs.filter(func(j: Joueur) -> bool: return j.crans > 1).size() == 1,
+		"une pastille donne un cran au lion qui la touche, à lui seul")
+	var suivante: Node2D = null
+	for i in range(90):
+		suivante = get_first_node_in_group("pickup")
+		if suivante != null:
+			break
+		await physics_frame
+	_check(suivante != null, "la pastille suivante arrive après le ramassage de la précédente (aucun déblocage de couleur ne le signale en bataille)")
+
+	# Étoile : possible quel que soit l'état du joueur local
+	GS.joueur_local().activer_bonus(5.0)
+	spawner._on_timer_bonus()
+	var etoiles := _etoiles(main)
+	_check(etoiles.size() == 1, "l'étoile apparaît même quand le joueur local est déjà en gerbe XXL")
+	for e in etoiles:
+		e.free()
+	GS.joueur_local().bonus_restant = 0.0
 	await _liberer(main)

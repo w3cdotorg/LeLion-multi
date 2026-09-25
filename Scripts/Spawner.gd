@@ -1,6 +1,8 @@
 extends Node
-## Fait apparaître pickups et ennemis dans la scène parente.
-## La difficulté (0 → 1) suit la progression de la peinture et le temps écoulé.
+## Fait apparaître pickups et ennemis dans la scène parente. Ce qui peut apparaître (pastilles,
+## étoile, cœurs) est décidé par les règles de la partie ; les hauteurs d'apparition, réglées pour
+## l'écran du solo, suivent la hauteur de l'écran. La difficulté (0 → 1) suit l'avancement de la
+## partie (`Regles.avancement`) et le temps écoulé.
 
 @export var color_pickup_scene: PackedScene = preload("res://Scenes/ColorPickup.tscn")
 @export var soucoupe_scene: PackedScene = preload("res://Scenes/Soucoupe.tscn")
@@ -11,16 +13,18 @@ extends Node
 
 @export_group("Pickups")
 @export var delai_premier_pickup := 1.0
+## Délai entre le départ d'une pastille (ramassée) et l'arrivée de la suivante.
 @export var delai_entre_pickups := 6.0
+## Zone des pastilles dans l'écran du solo (648 px de haut) ; sa hauteur suit celle de l'écran.
 @export var zone_pickups := Rect2(150, 80, 1700, 300)
 @export var distance_min_du_lion := 300.0
 @export var delai_premier_bonus := 20.0
 @export var intervalle_bonus := Vector2(25.0, 35.0)  # min, max
-@export var couleurs_requises_bonus := 2
 @export var delai_premier_coeur := 12.0
 @export var intervalle_coeur := Vector2(18.0, 28.0)  # min, max
 
 @export_group("Ennemis")
+## Hauteurs d'apparition des ennemis dans l'écran du solo ; elles suivent la hauteur de l'écran.
 @export var zone_y_ennemis := Vector2(120, 480)
 @export var intervalle_soucoupe := Vector2(6.0, 2.5)  # début → fin
 @export var intervalle_coccinelle := Vector2(8.0, 3.0)
@@ -36,8 +40,6 @@ var _facteur_ennemis := 1.0
 
 
 func _ready() -> void:
-	# En solo, les apparitions suivent l'unique joueur, le joueur local (plusieurs lions : phase 10).
-	GameState.joueur_local().couleur_debloquee.connect(_on_couleur_debloquee)
 	GameState.partie_terminee.connect(_on_partie_terminee)
 	if GameState.niveau().get("boss", false):
 		_facteur_ennemis = facteur_ennemis_avec_boss
@@ -51,16 +53,16 @@ func _ready() -> void:
 	_timer_soucoupe.start(intervalle_soucoupe.x * 0.5 * _facteur_ennemis)
 	_timer_coccinelle.start(intervalle_coccinelle.x * 0.8 * _facteur_ennemis)
 	_timer_bonus.start(delai_premier_bonus)
-	if GameState.difficulte().pickups_coeur:
+	if GameState.regles.coeurs_en_jeu():
 		_timer_coeur = _creer_timer(_on_timer_coeur)
 		_timer_coeur.start(delai_premier_coeur)
 
 
-## 0 au début, 1 quand la ville est presque peinte ou après `duree_montee_difficulte`.
+## 0 au début, 1 en fin de partie (avancement des règles : la ville presque peinte en solo, la
+## fin de la manche en bataille) ou après `duree_montee_difficulte`.
 func difficulte() -> float:
-	var par_progression := GameState.progression / GameState.seuil_victoire()
 	var par_temps := GameState.temps_ecoule / duree_montee_difficulte
-	return clamp(max(par_progression, par_temps), 0.0, 1.0)
+	return clamp(max(GameState.regles.avancement(), par_temps), 0.0, 1.0)
 
 
 func _intervalle(bornes: Vector2) -> float:
@@ -79,12 +81,11 @@ func _programmer(delai: float, action: Callable) -> void:
 	get_tree().create_timer(delai).timeout.connect(action)
 
 
+## Une partie peut se terminer pendant l'intro, avant la création des minuteries.
 func _on_partie_terminee(_victoire: bool) -> void:
-	_timer_soucoupe.stop()
-	_timer_coccinelle.stop()
-	_timer_bonus.stop()
-	if _timer_coeur != null:
-		_timer_coeur.stop()
+	for t: Timer in [_timer_soucoupe, _timer_coccinelle, _timer_bonus, _timer_coeur]:
+		if t != null:
+			t.stop()
 
 
 func _on_timer_soucoupe() -> void:
@@ -98,8 +99,7 @@ func _on_timer_coccinelle() -> void:
 
 
 func _on_timer_bonus() -> void:
-	var joueur := GameState.joueur_local()
-	if joueur.couleurs_debloquees.size() >= couleurs_requises_bonus and not joueur.bonus_actif():
+	if GameState.regles.etoile_peut_apparaitre():
 		spawn_bonus(_position_pickup_aleatoire())
 		_timer_bonus.start(randf_range(intervalle_bonus.x, intervalle_bonus.y))
 	else:
@@ -107,7 +107,7 @@ func _on_timer_bonus() -> void:
 
 
 func _on_timer_coeur() -> void:
-	if GameState.joueur_local().vies < GameState.VIES_MAX and get_tree().get_first_node_in_group("coeur_pickup") == null:
+	if GameState.regles.coeur_peut_apparaitre() and get_tree().get_first_node_in_group("coeur_pickup") == null:
 		spawn_coeur(_position_pickup_aleatoire())
 		_timer_coeur.start(randf_range(intervalle_coeur.x, intervalle_coeur.y))
 	else:
@@ -128,27 +128,44 @@ func spawn_bonus(position_bonus: Vector2) -> Node:
 	return bonus
 
 
-func _on_couleur_debloquee(_couleur: Color) -> void:
-	_programmer(delai_entre_pickups, _spawn_prochain_pickup)
+## La pastille suivante est programmée quand celle-ci quitte la scène (ramassée) : en bataille,
+## un cran de gerbe ne débloque aucune couleur, rien d'autre ne le signalerait. Une scène qui se
+## libère fait aussi sortir ses pastilles : rien n'est programmé hors de l'arbre.
+func _on_pastille_partie() -> void:
+	if is_inside_tree():
+		_programmer(delai_entre_pickups, _spawn_prochain_pickup)
 
 
 func _spawn_prochain_pickup() -> void:
-	var index := GameState.prochain_index_couleur()
+	var index := GameState.regles.pastille_a_offrir()
 	if index < 0 or not GameState.partie_en_cours:
 		return
 	spawn_pickup(index, _position_pickup_aleatoire())
 
 
+## Hauteur de l'écran rapportée à celle du solo : 1 en solo (hauteurs d'apparition inchangées).
+func _echelle_hauteur() -> float:
+	return get_viewport().get_visible_rect().size.y / Regles.TAILLE_ECRAN_SOLO.y
+
+
+## Au hasard dans la zone des pastilles, à `distance_min_du_lion` de chaque lion si possible
+## (dix essais).
 func _position_pickup_aleatoire() -> Vector2:
-	var lion: Node2D = get_tree().get_first_node_in_group("lion")
+	var lions := get_tree().get_nodes_in_group("lion")
+	var echelle := _echelle_hauteur()
 	var pos := Vector2.ZERO
 	for tentative in range(10):
 		pos = Vector2(
 			randf_range(zone_pickups.position.x, zone_pickups.end.x),
-			randf_range(zone_pickups.position.y, zone_pickups.end.y))
-		if lion == null or pos.distance_to(lion.global_position) >= distance_min_du_lion:
+			randf_range(zone_pickups.position.y * echelle, zone_pickups.end.y * echelle))
+		if lions.all(func(l: Node) -> bool: return pos.distance_to((l as Node2D).global_position) >= distance_min_du_lion):
 			break
 	return pos
+
+
+func _y_ennemi_aleatoire() -> float:
+	var echelle := _echelle_hauteur()
+	return randf_range(zone_y_ennemis.x * echelle, zone_y_ennemis.y * echelle)
 
 
 ## Le boss se pose sur le haut de la skyline. Ajout différé : depuis _ready, la ville n'a
@@ -170,6 +187,7 @@ func spawn_pickup(index: int, position_pickup: Vector2) -> Node:
 	var pickup := color_pickup_scene.instantiate()
 	pickup.couleur_index = index
 	pickup.global_position = position_pickup
+	pickup.tree_exited.connect(_on_pastille_partie)
 	get_parent().add_child(pickup)
 	return pickup
 
@@ -178,7 +196,7 @@ func spawn_pickup(index: int, position_pickup: Vector2) -> Node:
 func spawn_soucoupe(y_depart: float = -1.0) -> Node:
 	var soucoupe := soucoupe_scene.instantiate()
 	if y_depart < 0.0:
-		y_depart = randf_range(zone_y_ennemis.x, zone_y_ennemis.y)
+		y_depart = _y_ennemi_aleatoire()
 	soucoupe.position = Vector2(-200, y_depart)
 	soucoupe.speed = lerp(vitesse_soucoupe.x, vitesse_soucoupe.y, difficulte())
 	get_parent().add_child(soucoupe)
@@ -190,7 +208,7 @@ func spawn_coccinelle(y_depart: float = -1.0) -> Node:
 	var c := coccinelle_scene.instantiate()
 	var largeur := get_viewport().get_visible_rect().size.x
 	if y_depart < 0.0:
-		y_depart = randf_range(zone_y_ennemis.x, zone_y_ennemis.y)
+		y_depart = _y_ennemi_aleatoire()
 	c.position = Vector2(largeur + 100, y_depart)
 	get_parent().add_child(c)
 	return c
