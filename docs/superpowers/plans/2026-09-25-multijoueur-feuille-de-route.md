@@ -19,9 +19,10 @@ cd ~/Sites/LeLion-multi
 godot --headless --import . 2>&1 | grep -E "SCRIPT ERROR|Parse Error|Compile Error" && echo "ÉCHEC COMPILATION"
 godot --headless --script tests/unitaires.gd     # à partir de la phase 1
 godot --headless --script tests/smoke_test.gd
+godot --headless --fixed-fps 60 --script tests/bataille_test.gd  # à partir de la phase 10 bis
 ```
 
-Les deux derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0.
+Les trois derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0.
 
 Leur sortie ne doit contenir ni `SCRIPT ERROR` ni `SHADER ERROR` : en headless, le rendu factice
 compile quand même les shaders et signale leurs erreurs sans changer le code de sortie.
@@ -95,9 +96,19 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   soit jamais retouché.
 - Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
   choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.
-- Phases 10 et 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et
-  `commandes` avant `add_child` (en phase 14 via la `spawn_function` du `MultiplayerSpawner`) ;
-  sinon il prend en silence le joueur local et le clavier de ce poste.
+- Phase 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et `commandes`
+  avant `add_child`, via la `spawn_function` du `MultiplayerSpawner` (en local, c'est
+  `Main._ajouter_lions` depuis la phase 10 bis, vérifié par `tests/bataille_test.gd`) ; sinon il
+  prend en silence le joueur local et le clavier de ce poste. La fenêtre garde sa taille du solo
+  (1400×454) : en 16:9, la bataille s'y affiche avec des bandes ; régler la fenêtre pour la partie
+  à 2 fenêtres de la phase 14, puis dans `project.godot` en phase 19. En bataille, Échap ouvre
+  encore la pause du solo (`PauseMenu` met l'arbre en pause) : en réseau, un menu local sans pause
+  (spec §4). Le `$Lion` de `Scenes/Main.tscn` n'est `lions[0]`, `joueurs[0]` et `joueur_local()` à
+  la fois que sur l'hôte et en solo : sur un client (`joueur_local()` = `joueurs[k]`, k ≠ 0),
+  `_ajouter_lions` ferait deux lions pour `joueurs[k]` et aucun pour l'hôte. En bataille réseau,
+  créer tous les lions par le spawner, par index (`joueur = joueurs[i]`, commandes `LOCALES` pour
+  `joueur_local()` seulement) ; `Main.lion` devient le lion de `joueur_local()` et `$Lion` ne sert
+  plus qu'au solo.
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick).
@@ -106,9 +117,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
-- phase 10 : les conditions d'apparition (étoile à partir de 2 couleurs, cœurs) passent par les
-  règles (par exemple `regles.etoile_peut_apparaitre()`, aucun cœur en bataille) au lieu que le
-  Spawner lise le joueur local ;
+- **phase 17** (rythme de la manche) : le Spawner fait arriver une pastille à la fois, 6 s après le
+  départ de la précédente (phase 10 bis) ; une pastille que personne ne ramasse bloque la suivante,
+  comme en solo. À revoir en jeu à 4-6 joueurs (délai propre à la bataille dans les règles, durée
+  de vie des pastilles). La distance aux lions (`distance_min_du_lion`) se mesure depuis
+  `global_position` (coin du sprite, à ~95 px du centre du corps) et, après dix essais ratés, la
+  dernière position est gardée même collée à un lion : en bataille seulement (le solo ne change
+  pas), mesurer depuis `global_position + CENTRE` et garder le plus éloigné des dix candidats ;
+- **phase 17** : une bataille finie se fige sans issue (arbre en pause, pas d'overlay, Échap
+  inactif car `partie_en_cours` est faux). Sans conséquence tant que rien ne termine une bataille ;
+  dès que le chrono appelle `terminer_partie`, garder une sortie jusqu'à l'écran Résultats de la
+  phase 18 (Échap permis une fois la manche finie, retour au salon ou au titre), ou livrer 17 et 18
+  ensemble ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -163,20 +183,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
   tampon (spec §6) ;
 - **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
-- **phase 10** : chaque nouveau jeu de tampons (`Ville._generer_tampons`) est généré en GDScript,
-  dans le tick physique de l'hôte, au premier usage d'un rayon et d'un jeu de couleurs : coût
-  mesuré de 3,7 ms (46 px) à 14,5 ms (92 px, étoile XXL) sur la machine du plan. À 6 joueurs, 84
-  jeux possibles au pire, donc des à-coups visibles si plusieurs étoiles sont ramassées dans la
-  même seconde. Pré-générer les jeux de chaque joueur pendant l'intro « Prêt ? Vomissez ! » (ses
-  nuances, les 7 rayons, x2), ou les générer au premier cran atteint, ou mesurer d'abord sur la
-  manche à 4 lions avant de décider. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs (et
-  non 12 Mo comme l'annonce le commentaire de `Ville.gd`, sans conséquence) ;
+- **phase 14** : jeux de tampons (`Ville._generer_tampons`), mesurés en phase 10 : 0,5 ms (16 px)
+  à 3,7 ms (46 px), 14,6 ms pour l'étoile XXL (92 px), 65 ms pour les 14 jeux d'un joueur ; sur la
+  manche à 4 pilotée de `tests/bataille_test.gd` (ligne `MESURE jeux de tampons`, 5 passages), 16 à
+  18 jeux générés, au plus 2 dans une même frame (2 sur trois passages, 1 sur les deux autres).
+  Décision de la phase 10 bis : pas de pré-génération en local. En phase 14, chaque client génère
+  aussi ses jeux (graine dérivée de la clé) : les pré-générer pendant l'intro (nuances de joueur, 7
+  rayons, ×2) si la mesure sur un client montre des à-coups. Mémoire du cache plein : environ
+  14,5 Mo pour 6 joueurs ;
 - **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
   partie depuis `Main`) ;
-- **phase 10** : `Spawner.gd` choisit la prochaine pastille avec `GameState.prochain_index_couleur()`
-  (règle du solo) : à faire passer par les règles avec les autres conditions d'apparition.
 - **phase 10 (obligatoire avant la première partie de bataille)** : `GameState.configurer_solo()` /
   `configurer_bataille(n)` existent depuis la phase 8 (règles, joueurs redimensionnés en place,
   index et couleurs ; testés). Les appeler **avant** le changement de scène, jamais depuis la scène
@@ -191,11 +209,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   rien chez les clients (HUD, Audio, Lion muets) : choisir des RPC d'événement qui appellent les
   mêmes méthodes du `Joueur`, ou des setters qui émettent. De même, `GameState._process` ferait
   avancer les copies des clients (`Joueur.avancer`) : l'hôte seul décompte ;
-- **préexistant, à corriger dès qu'une phase touche `Scripts/Spawner.gd` ou `tests/screenshots.gd`** :
-  `Spawner._on_partie_terminee` appelle `stop()` sur `_timer_soucoupe` / `_timer_coccinelle`, qui
-  sont `null` si la partie se termine pendant l'intro (`SCRIPT ERROR` dans `tests/screenshots.gd`) ;
-  et le coup de `tests/screenshots.gd` (vers la ligne 96) tombe pendant l'intro et n'a aucun effet.
-  Relancer `tests/screenshots.gd` à la main après correction (la CI ne le lance pas) ;
+- **phase 19** (qui touche `tests/screenshots.gd`) : le coup de `tests/screenshots.gd` (vers la
+  ligne 96) tombe pendant l'intro et n'a aucun effet ; le déplacer après `GS.demarrer()` et relancer
+  le script à la main (la CI ne le lance pas). Les minuteries `null` du Spawner quand la partie se
+  termine pendant l'intro sont corrigées depuis la phase 10 bis (vérifié par
+  `tests/bataille_test.gd`) ;
 - les tests `--script` peuvent nommer `Territoire` (logique pure, phase 9) et les règles, jamais
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
@@ -225,15 +243,15 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   clair, par exemple) et compter aussi sur le pseudo et les vignettes du HUD. Attribuer la couleur
   **avant** l'ajout du lion à l'arbre, ou rappeler `Lion.appliquer_apparence()` (aperçu du salon en
   phase 13) ;
-- **phases 10 et 17** : le score d'un joueur se lit sur le territoire de la ville
+- **phase 17** : le score d'un joueur se lit sur le territoire de la ville
   (`ville.territoire.cellules_de(joueur.index)`, sur `ville.territoire.nb_peignables` pour un
-  pourcentage) ; il n'y a pas de `Joueur.cellules` (spec §3.1). La ville crée son territoire dans
-  `charger_skyline` d'après les règles branchées (`compte_le_territoire()`) : c'est une raison de
-  plus d'appeler `configurer_bataille(n)` avant la scène de bataille. La couverture du solo reste
-  mesurée en bataille (`GameState.progression`, lue par `Audio`, `Boss.facteur_vitesse` et le
-  HUD) : décider de ce que la bataille en garde (phase 10 pour le peintre, 17 pour la musique et
-  le HUD). Les réglages du territoire (`GAIN`, `SEUIL_POSSESSION`, `CHARGE_MAX`) sont à revoir
-  sur une vraie manche ;
+  pourcentage, comme la manche de `tests/bataille_test.gd`) ; il n'y a pas de `Joueur.cellules`
+  (spec §3.1). La couverture du solo reste mesurée en bataille (`GameState.progression`) : le
+  peintre et la difficulté des ennemis suivent `Regles.avancement()` depuis la phase 10 bis (le
+  temps de la manche en bataille) ; la musique (`Main._on_progression_changee`, encore sur la
+  couverture) et le HUD (encore celui du solo en bataille : cœurs, arc-en-ciel, chrono qui monte)
+  sont à la phase 17. `int(regles.avancement() × 3)` donne les couches de la spec §8 (arpèges à
+  30 s écoulées, mélodie à 60 s), mais au rythme du chrono, pas des mesures de couverture ;
 - **phase 14** : quand un joueur quitte la manche, ses cellules restent au classement (spec §4)
   mais `Territoire` n'a pas encore d'opération pour les libérer ou les geler : à décider avec la
   gestion des déconnexions ;
@@ -242,7 +260,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   scores et les tampons dessinés de la manche précédente restent. Chaque nouvelle manche doit donc
   soit repasser par `charger_skyline`, soit appeler `ville.territoire.reinitialiser()` après avoir
   vidé `extraire_changements()` (contrainte déjà notée dans `Territoire.gd:64-66`). Coordonner
-  l'ordre de ce message avec la diffusion des scores de la phase 14 ;
+  l'ordre de ce message avec la diffusion des scores de la phase 14. Même chose pour le Spawner :
+  en fin de manche ses minuteries s'arrêtent et la chaîne des pastilles s'interrompt, et son
+  `_ready` (première pastille, création des minuteries) ne repasse pas ; une nouvelle manche
+  recharge la scène, ou le Spawner reçoit un `relancer()` explicite ;
+- prochaine phase qui touche `Scripts/Boss.gd` : le commentaire de `acceleration_max` (« quand la
+  ville est presque peinte ») date d'avant la phase 10 bis : « facteur de durée en fin de partie
+  (avancement des règles) » ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal

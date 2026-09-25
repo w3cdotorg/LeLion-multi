@@ -6,7 +6,7 @@ enum Etat { REPOS, ANNONCE, ENTREE, PAUSE, SORTIE }
 
 signal etat_change(etat: Etat)
 
-@export var hauteur_ratio := 0.65        # part de la hauteur de l'écran
+@export var hauteur_ratio := 0.65        # part de la hauteur de l'écran du solo, dans les deux modes
 @export var duree_annonce := 1.0
 @export var duree_entree := 3.0
 @export var duree_pause := 1.0
@@ -28,8 +28,9 @@ var _polygones_base: Array[PackedVector2Array] = []  # silhouette tournée vers 
 
 
 func _ready() -> void:
-	var taille_ecran := get_viewport_rect().size
-	var hauteur_cible := taille_ecran.y * hauteur_ratio
+	# Le peintre garde sa taille du solo sur l'écran 16:9 de la bataille, comme les lions et les
+	# skylines : 65 % des 1125 px le feraient dominer tout le ciel.
+	var hauteur_cible := Regles.TAILLE_ECRAN_SOLO.y * hauteur_ratio
 	var echelle := hauteur_cible / sprite.texture.get_height()
 	sprite.scale = Vector2(echelle, echelle)
 	_demi_largeur = sprite.texture.get_width() * echelle / 2.0
@@ -59,9 +60,10 @@ func origine_du_coup(lion: Lion) -> Vector2:
 	return Vector2(global_position.x, lion.global_position.y)
 
 
-## Facteur appliqué aux durées : 1 au début, `acceleration_max` quand la ville est presque peinte.
+## Facteur appliqué aux durées : 1 au début, `acceleration_max` en fin de partie. L'avancement
+## vient des règles : la ville peinte en solo, le temps de la manche en bataille.
 func facteur_vitesse() -> float:
-	var avancement: float = clamp(GameState.progression / GameState.seuil_victoire(), 0.0, 1.0)
+	var avancement: float = clamp(GameState.regles.avancement(), 0.0, 1.0)
 	return lerp(1.0, acceleration_max, avancement)
 
 
