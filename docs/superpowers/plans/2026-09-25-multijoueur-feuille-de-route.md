@@ -95,7 +95,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sinon il prend en silence le joueur local et le clavier de ce poste.
 - Prochaine phase qui touche `.github/workflows/ci.yml` : envelopper chaque lancement godot dans
   `timeout` (une erreur de script bloque le processus headless) et faire échouer le job si la
-  sortie contient `SCRIPT ERROR` ou `SHADER ERROR`.
+  sortie contient `SCRIPT ERROR` ou `SHADER ERROR` (une erreur dans un callback de signal ne change pas le code de sortie) ;
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick).
