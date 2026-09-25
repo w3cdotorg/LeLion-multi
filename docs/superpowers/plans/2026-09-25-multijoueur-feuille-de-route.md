@@ -103,7 +103,12 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   (1400×454) : en 16:9, la bataille s'y affiche avec des bandes ; régler la fenêtre pour la partie
   à 2 fenêtres de la phase 14, puis dans `project.godot` en phase 19. En bataille, Échap ouvre
   encore la pause du solo (`PauseMenu` met l'arbre en pause) : en réseau, un menu local sans pause
-  (spec §4).
+  (spec §4). Le `$Lion` de `Scenes/Main.tscn` n'est `lions[0]`, `joueurs[0]` et `joueur_local()` à
+  la fois que sur l'hôte et en solo : sur un client (`joueur_local()` = `joueurs[k]`, k ≠ 0),
+  `_ajouter_lions` ferait deux lions pour `joueurs[k]` et aucun pour l'hôte. En bataille réseau,
+  créer tous les lions par le spawner, par index (`joueur = joueurs[i]`, commandes `LOCALES` pour
+  `joueur_local()` seulement) ; `Main.lion` devient le lion de `joueur_local()` et `$Lion` ne sert
+  plus qu'au solo.
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick).
@@ -115,7 +120,15 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 17** (rythme de la manche) : le Spawner fait arriver une pastille à la fois, 6 s après le
   départ de la précédente (phase 10 bis) ; une pastille que personne ne ramasse bloque la suivante,
   comme en solo. À revoir en jeu à 4-6 joueurs (délai propre à la bataille dans les règles, durée
-  de vie des pastilles) ;
+  de vie des pastilles). La distance aux lions (`distance_min_du_lion`) se mesure depuis
+  `global_position` (coin du sprite, à ~95 px du centre du corps) et, après dix essais ratés, la
+  dernière position est gardée même collée à un lion : en bataille seulement (le solo ne change
+  pas), mesurer depuis `global_position + CENTRE` et garder le plus éloigné des dix candidats ;
+- **phase 17** : une bataille finie se fige sans issue (arbre en pause, pas d'overlay, Échap
+  inactif car `partie_en_cours` est faux). Sans conséquence tant que rien ne termine une bataille ;
+  dès que le chrono appelle `terminer_partie`, garder une sortie jusqu'à l'écran Résultats de la
+  phase 18 (Échap permis une fois la manche finie, retour au salon ou au titre), ou livrer 17 et 18
+  ensemble ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -247,7 +260,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   scores et les tampons dessinés de la manche précédente restent. Chaque nouvelle manche doit donc
   soit repasser par `charger_skyline`, soit appeler `ville.territoire.reinitialiser()` après avoir
   vidé `extraire_changements()` (contrainte déjà notée dans `Territoire.gd:64-66`). Coordonner
-  l'ordre de ce message avec la diffusion des scores de la phase 14 ;
+  l'ordre de ce message avec la diffusion des scores de la phase 14. Même chose pour le Spawner :
+  en fin de manche ses minuteries s'arrêtent et la chaîne des pastilles s'interrompt, et son
+  `_ready` (première pastille, création des minuteries) ne repasse pas ; une nouvelle manche
+  recharge la scène, ou le Spawner reçoit un `relancer()` explicite ;
+- prochaine phase qui touche `Scripts/Boss.gd` : le commentaire de `acceleration_max` (« quand la
+  ville est presque peinte ») date d'avant la phase 10 bis : « facteur de durée en fin de partie
+  (avancement des règles) » ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
