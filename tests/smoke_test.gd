@@ -267,8 +267,7 @@ func _run() -> void:
 	coccinelle.position.x = lion.global_position.x + 68
 	await _frames(3)
 	_check(GS.partie_en_cours and JL.vies == 2, "un coup coûte une vie, la partie continue (%d vies)" % JL.vies)
-	var constantes_solo: Dictionary = GS.regles.get_script().get_script_constant_map()
-	_check(JL.est_invulnerable() and JL.invulnerable_restant > constantes_solo.get("DUREE_INVULNERABILITE", 99.0) - 0.2
+	_check(JL.est_invulnerable() and absf(JL.invulnerable_restant - ReglesSolo.DUREE_INVULNERABILITE) < 0.2
 		and not GS.get_script().get_script_constant_map().has("DUREE_INVULNERABILITE"),
 		"le lion est invulnérable après un coup, pour la durée que fixent les règles du solo (plus GameState)")
 	_check(lion._recul.length() > 0.0, "le lion est repoussé par le coup (%.0f px/s)" % lion._recul.length())
@@ -1069,7 +1068,8 @@ func _run() -> void:
 	var rgba32_rouge: Array = j_r.nuances().map(_rgba8)
 	var rgba32_bleu: Array = j_b.nuances().map(_rgba8)
 	_check(cellules_rouges > 0 and t.cellules_de(1) == 0, "les cellules que peint un lion comptent pour son joueur (%d)" % cellules_rouges)
-	_check(_couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_rouge.has(k)),
+	_check(not _couleurs_peintes(ville_b.image).is_empty()
+		and _couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_rouge.has(k)),
 		"le lion rouge peint dans ses nuances")
 	_check(t.extraire_changements().size() == cellules_rouges and t.extraire_changements().is_empty(),
 		"les cellules qui se mettent à compter sont listées pour la synchronisation, une fois")
@@ -1084,7 +1084,8 @@ func _run() -> void:
 	await _frames(40)
 	l_b.commandes.vomir_voulu = false
 	await _frames(2)
-	_check(_couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_bleu.has(k)),
+	_check(not _couleurs_peintes(ville_b.image).is_empty()
+		and _couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_bleu.has(k)),
 		"à rayon et nombre de couleurs égaux, le second lion peint dans ses propres nuances")
 	_check(t.cellules_de(1) > 0 and t.cellules_de(0) < cellules_rouges and j_b.cellules_volees > 0
 		and j_b.cellules_volees == cellules_rouges - t.cellules_de(0) and j_r.cellules_volees == 0,
@@ -1110,13 +1111,15 @@ func _run() -> void:
 		ville_b.peindre(point_vierge, 30, j_r)
 	_check(t.cellules_de(0) > scores_avant[0], "de retour sur l'hôte, les mêmes tampons comptent")
 
-	# Ruling (b) (revue finale phase 9 bis) : après terminer_partie, partie_en_cours retombe mais
-	# pret reste vrai (pas de retour à l'intro) ; un lion peut donc encore peindre. Le tampon visuel
-	# doit rester, mais plus aucun score de territoire ne doit bouger.
+	# Après terminer_partie, partie_en_cours retombe mais pret reste vrai (pas de retour à
+	# l'intro) ; un lion peut donc encore peindre. Le tampon visuel doit rester, mais plus aucun
+	# score de territoire ne doit bouger.
 	GS.terminer_partie(true)
 	_check(GS.pret and not GS.partie_en_cours, "(pré-condition) la manche est terminée mais le jeu reste « pret »")
 	var scores_manche_finie := [t.cellules_de(0), t.cellules_de(1)]
 	var volees_manche_finie := [j_r.cellules_volees, j_b.cellules_volees]
+	ville_b.image.fill(Color(0, 0, 0, 0))
+	ville_b.coulures.clear()
 	l_r.global_position = poste_peinture  # cellules déjà possédées par le bleu : un vol s'y verrait
 	await _frames(1)
 	l_r.commandes.vomir_voulu = true
@@ -1127,6 +1130,16 @@ func _run() -> void:
 		and [t.cellules_de(0), t.cellules_de(1)] == scores_manche_finie
 		and [j_r.cellules_volees, j_b.cellules_volees] == volees_manche_finie,
 		"après la fin de la manche, peindre dessine toujours le tampon mais ne change plus aucun score de territoire")
+
+	# Éviction du cache des tampons : au-delà de TAMPONS_EN_CACHE_MAX jeux, le cache repart de zéro
+	# (M4) ; passer par l'instance, le test ne peut pas nommer le script de la ville.
+	for r in range(1, ville_b.TAMPONS_EN_CACHE_MAX + 2):
+		ville_b._tampons_pour(r, j_r.couleurs_debloquees)
+	_check(ville_b._tampons.size() <= ville_b.TAMPONS_EN_CACHE_MAX,
+		"le cache des tampons ne dépasse jamais TAMPONS_EN_CACHE_MAX jeux (%d)" % ville_b._tampons.size())
+	var gros_tampons: Array = ville_b._tampons_pour(97, j_r.couleurs_debloquees)
+	_check(gros_tampons.size() == ville_b.NB_TAMPONS and gros_tampons.all(func(im: Image) -> bool: return im.get_width() == 195),
+		"un jeu de tampons régénéré après éviction reste correct (rayon 97 -> 195 px)")
 
 	for l in lions_t:
 		l.free()
