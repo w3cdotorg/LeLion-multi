@@ -75,3 +75,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Identifiants et commentaires en français, comme le reste du code.
 - Les numéros de phase 11 à 19 peuvent être rééquilibrés dans leurs propres plans si le code des
   phases précédentes change la répartition des fichiers (toujours 5 au plus).
+- Les fichiers `.uid` générés par Godot à côté des nouveaux scripts sont committés avec eux et ne
+  comptent pas dans le plafond de 5 fichiers d'une phase.
+- `OfflineMultiplayerPeer` est le pair multijoueur par défaut de Godot 4 : le solo tourne déjà
+  dessus, aucun code n'est nécessaire (spec §3/§12).
+- Phase 3 (Règles) : `Joueur.encaisser_coup` n'a pas de plancher sur `vies` ; les règles doivent
+  conserver le garde-fou `partie_en_cours` de GameState (ou un clamp) pour qu'un lion à 0 vie ne
+  soit jamais retouché.
+- Phase 8 : réconcilier le `invulnerable_restant` du solo (1,5 s) avec l'`immunite_restante` de la
+  bataille (1 s) plutôt que d'ajouter un mécanisme parallèle.
+- Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
+  choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.

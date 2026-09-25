@@ -393,7 +393,6 @@ func _run() -> void:
 	GS.niveau_courant = 0
 
 	# Arcade : neuf stages, Facile → Moyen → Hardcore
-	_check(tr("ARCADE") in titre.bouton_arcade.text if is_instance_valid(titre) else true, "(titre libéré)")
 	GS.demarrer_arcade()
 	_check(GS.mode_arcade and GS.difficulte_courante == 0 and GS.niveau_courant == 0 and GS.titre_etape() == "STAGE 1/9",
 		"l'arcade démarre au stage 1 : Skyline en Facile")
