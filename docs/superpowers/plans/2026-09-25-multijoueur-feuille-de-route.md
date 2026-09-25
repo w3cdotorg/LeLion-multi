@@ -261,10 +261,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
-- **prochaine phase qui touche `Scripts/Regles.gd`** : `Regles._manche_en_cours()` est maintenant
-  appelée de l'extérieur des règles, depuis `Scripts/Ville.gd` (phase 9 bis) : la renommer en
-  `manche_en_cours()` publique. Chercher tous les appelants (`Regles`, `ReglesSolo`,
-  `ReglesBataille`, `Ville`, les tests) ;
+- **phase 10 ter** : `GameState.prochain_index_couleur()` n'a plus d'appelant depuis la phase 10 bis
+  (le Spawner lit `GameState.regles.pastille_a_offrir()`, que `ReglesSolo` tient depuis la phase 10,
+  vérifications unitaires comprises) : la retirer ;
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
