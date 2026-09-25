@@ -242,9 +242,12 @@ func _tester_regles_solo() -> void:
 	autre.reinitialiser(3)
 	base.lion_touche_par_vomi(j, autre, Vector2.ZERO)
 	base.choc_entre_lions(j, autre)
+	base.vol_de_cellules(j, 4)
 	_check(base.couleurs_de_depart(j).is_empty() and not j.est_etourdi() and not j.est_invulnerable()
-		and autre.etourdissements_infliges == 0 and j.chocs == 0 and autre.chocs == 0,
-		"sans règles de mode, ni couleur de départ, ni effet du vomi ou des chocs")
+		and autre.etourdissements_infliges == 0 and j.chocs == 0 and autre.chocs == 0 and j.cellules_volees == 0,
+		"sans règles de mode, ni couleur de départ, ni effet du vomi, des chocs ou des vols")
+	_check(not base.compte_le_territoire() and not ReglesSolo.new(gs).compte_le_territoire(),
+		"ni les règles de base ni celles du solo ne se jouent au territoire")
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)
@@ -277,7 +280,7 @@ func _tester_regles_solo() -> void:
 	_check(toutes.couleurs_debloquees.size() == 7 and toutes.crans == Joueur.CRANS_MAX,
 		"les sept couleurs débloquées, la gerbe plafonne à son dernier cran (7)")
 	r.etoile_ramassee(j)
-	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
+	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, Regles.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
 	_check(r.coeur_ramasse(j) and j.vies == 3, "un cœur rend une vie")
 	_check(not r.coeur_ramasse(j) and j.vies == gs.VIES_MAX, "un cœur ne dépasse pas le maximum de vies")
 
@@ -394,11 +397,21 @@ func _tester_regles_bataille() -> void:
 		r.pastille_ramassee(rouge, 0)
 	_check(rouge.crans == Joueur.CRANS_MAX and not r.pastille_ramassee(rouge, 0), "les crans plafonnent à 7")
 	r.etoile_ramassee(bleu)
-	_check(bleu.bonus_actif() and is_equal_approx(bleu.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile XXL est celle du solo")
+	_check(bleu.bonus_actif() and is_equal_approx(bleu.bonus_restant, Regles.DUREE_ETOILE), "l'étoile XXL est celle du solo (même durée, constante de la base)")
 	bleu.vies = 2
 	_check(not r.coeur_ramasse(bleu) and bleu.vies == 2, "aucun cœur en bataille")
 	r.progression_mesuree(1.0)
 	_check(fins.is_empty() and gs.partie_en_cours, "peindre toute la ville ne termine pas la manche (elle finit au chrono)")
+
+	# Territoire : la bataille s'y joue, les vols comptent pour « Le voleur »
+	_check(r.compte_le_territoire(), "la bataille se joue au territoire")
+	r.vol_de_cellules(rouge, 5)
+	r.vol_de_cellules(rouge, 0)
+	_check(rouge.cellules_volees == 5 and bleu.cellules_volees == 0, "les cellules volées comptent pour le voleur seul (%d)" % rouge.cellules_volees)
+	gs.pret = false
+	r.vol_de_cellules(rouge, 2)
+	_check(rouge.cellules_volees == 5, "un vol pendant l'intro ne compte pas")
+	gs.pret = true
 	gs.terminer_partie(false)
 	bleu.invulnerable_restant = 0.0
 	bleu.etourdi_restant = 0.0
@@ -406,8 +419,10 @@ func _tester_regles_bataille() -> void:
 	r.lion_touche_par_ennemi(bleu, Vector2.ZERO)
 	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
 	r.choc_entre_lions(rouge, bleu)
-	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant,
-		"après la fin de manche, plus d'étourdissement (ennemi ou vomi) ni de choc compté")
+	r.vol_de_cellules(rouge, 3)
+	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant
+		and rouge.cellules_volees == 5,
+		"après la fin de manche, plus d'étourdissement (ennemi ou vomi), de choc ni de vol compté")
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()

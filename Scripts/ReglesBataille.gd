@@ -3,8 +3,9 @@ extends Regles
 ## Règles de la bataille de peinture (spec §2) : ni vies ni cœurs. Chaque joueur vomit dès le
 ## départ dans les trois nuances de sa couleur ; le vomi d'un autre lion l'étourdit 1,5 s (tête
 ## barbouillée de la couleur de l'agresseur), un ennemi 2,5 s, puis 1 s d'immunité ; chaque
-## pastille donne un cran de gerbe ; l'étoile XXL est celle du solo. Le territoire (phase 9) et
-## la fin de manche au chrono (phase 17) s'y ajouteront.
+## pastille donne un cran de gerbe ; l'étoile XXL est celle du solo. La manche se joue au
+## territoire, que tient la ville (`Territoire`) : les règles en comptent les vols. La fin de
+## manche au chrono (phase 17) s'y ajoutera.
 
 const DUREE_ETOURDI_VOMI := 1.5
 const DUREE_ETOURDI_ENNEMI := 2.5
@@ -18,6 +19,10 @@ func _init(partie_: EtatPartie) -> void:
 
 func couleurs_de_depart(joueur: Joueur) -> Array[Color]:
 	return joueur.nuances()
+
+
+func compte_le_territoire() -> bool:
+	return true
 
 
 ## Pas de vie perdue : l'ennemi étourdit, sans barbouillage.
@@ -52,15 +57,17 @@ func pastille_ramassee(joueur: Joueur, _index_couleur: int) -> bool:
 
 
 func etoile_ramassee(joueur: Joueur) -> void:
-	joueur.activer_bonus(ReglesSolo.DUREE_ETOILE)
+	joueur.activer_bonus(DUREE_ETOILE)
+
+
+## Les cellules volées comptent pour le titre « Le voleur » (écran Résultats), pendant la manche.
+func vol_de_cellules(voleur: Joueur, nb: int) -> void:
+	if nb > 0 and _manche_en_cours():
+		voleur.cellules_volees += nb
 
 
 # coeur_ramasse et progression_mesuree : ceux de la base, sans effet (aucun cœur en bataille,
 # la manche se termine au chrono).
-
-
-func _manche_en_cours() -> bool:
-	return partie.partie_en_cours and partie.pret
 
 
 ## Un joueur déjà étourdi ou encore immunisé est ignoré : le peintre et la gerbe signalent leur

@@ -1,10 +1,8 @@
 class_name ReglesSolo
 extends Regles
 ## Règles du jeu solo : des cœurs, l'arc-en-ciel à débloquer pastille par pastille, et la
-## victoire quand la ville est peinte au seuil de la difficulté.
-
-## Durée de la gerbe XXL donnée par une étoile.
-const DUREE_ETOILE := 8.0
+## victoire quand la ville est peinte au seuil de la difficulté. La durée de l'étoile XXL est
+## celle de la base (`Regles.DUREE_ETOILE`).
 
 
 func _init(partie_: EtatPartie) -> void:
@@ -13,7 +11,7 @@ func _init(partie_: EtatPartie) -> void:
 
 
 func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:
-	if not partie.partie_en_cours or not partie.pret or joueur.est_invulnerable():
+	if not _manche_en_cours() or joueur.est_invulnerable():
 		return
 	if joueur.encaisser_coup(origine, partie.DUREE_INVULNERABILITE) <= 0:
 		partie.terminer_partie(false)
