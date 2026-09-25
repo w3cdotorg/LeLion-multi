@@ -1,6 +1,6 @@
 extends CharacterBody2D
 ## Le lion : déplacement, gerbe de vomi multicolore, traceuse de peinture ; en bataille,
-## crinière à la couleur de son joueur et pseudo au-dessus de la tête.
+## crinière à la couleur de son joueur, pseudo au-dessus de la tête et étourdissement.
 ## La gerbe part de la bouche à 45° vers le bas ; la traceuse est placée au point de
 ## chute calculé avec la même physique que les particules.
 
@@ -17,6 +17,10 @@ const BOUCHE_X_DROITE := 89.0
 const BOUCHE_X_GAUCHE := 47.0
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 const PAS_RAYON_PAR_CRAN := 5
+const CENTRE := Vector2(68, 66)  # centre du corps, dans le repère du lion
+const FORCE_BARBOUILLAGE := 0.7
+const RAYON_ETOILES := Vector2(40, 12)
+const VITESSE_ETOILES := 5.0  # radians par seconde
 
 @export var speed: float = 350.0
 @export var acceleration: float = 2400.0
@@ -30,6 +34,7 @@ const PAS_RAYON_PAR_CRAN := 5
 @onready var traceuse_shape: CollisionShape2D = $GerbeTraceuse/CollisionShape2D
 @onready var bouche: Marker2D = $Bouche
 @onready var etiquette_pseudo: Label = $Pseudo
+@onready var etoiles: Node2D = $Etoiles
 
 var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
@@ -48,6 +53,7 @@ var commandes: Commandes
 var _vitesse := Vector2.ZERO
 var _recul := Vector2.ZERO
 var _temps := 0.0
+var _clignotement: Tween
 
 
 func _ready() -> void:
@@ -62,6 +68,8 @@ func _ready() -> void:
 	joueur.bonus_change.connect(_on_bonus_change)
 	joueur.touche.connect(_on_lion_touche)
 	joueur.crans_changes.connect(_on_crans_changes)
+	joueur.etourdi.connect(_on_etourdi)
+	joueur.etourdissement_fini.connect(_on_etourdissement_fini)
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
 	appliquer_apparence()
@@ -95,14 +103,17 @@ func _process(_delta: float) -> void:
 			demarrer_vomi()
 	elif est_en_train_de_vomir:
 		arreter_vomi()
+	if etoiles.visible:
+		_tourner_etoiles()
 
 
+## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
 func _direction_voulue() -> Vector2:
-	return commandes.direction() if GameState.pret else Vector2.ZERO
+	return commandes.direction() if GameState.pret and not joueur.est_etourdi() else Vector2.ZERO
 
 
 func _veut_vomir() -> bool:
-	return GameState.pret and commandes.vomir()
+	return GameState.pret and not joueur.est_etourdi() and commandes.vomir()
 
 
 func _on_couleur_debloquee(_couleur: Color) -> void:
@@ -144,20 +155,72 @@ func _animer_deplacement(delta: float) -> void:
 	sprite.position.y = lerp(sprite.position.y, 67.0 + bob, min(1.0, 12.0 * delta))
 
 
-## Recul et clignotement pendant l'invulnérabilité qui suit un coup.
+## Recul et clignotement pendant l'invulnérabilité qui suit un coup (solo).
 func _on_lion_touche(origine: Vector2) -> void:
 	Audio.jouer("mort")
+	_reculer(origine)
+	_clignoter(joueur.invulnerable_restant)
+
+
+## Étourdi (bataille) : immobile, repoussé, tête barbouillée de la couleur de l'agresseur
+## (aucune pour un ennemi), étoiles qui tournent. Le vomi s'arrête au `_process` suivant
+## (`_veut_vomir` est faux pendant l'étourdissement) ; d'ici là, les règles n'ignorent un
+## agresseur étourdi que depuis une frame physique antérieure (un échange simultané étourdit
+## les deux lions).
+func _on_etourdi(origine: Vector2, barbouillage: Color) -> void:
+	_vitesse = Vector2.ZERO
+	_reculer(origine)
+	_barbouiller(barbouillage)
+	etoiles.visible = true
+	_tourner_etoiles()
+
+
+## Fin de l'étourdissement : barbouillage et étoiles s'en vont, l'immunité clignote.
+func _on_etourdissement_fini() -> void:
+	_barbouiller(Color.TRANSPARENT)
+	etoiles.visible = false
+	_clignoter(joueur.invulnerable_restant)
+
+
+func _reculer(origine: Vector2) -> void:
 	var direction_recul := Vector2(-direction_du_lion, 0.0)
 	if origine.is_finite():
-		direction_recul = (global_position + Vector2(68, 66) - origine).normalized()
+		direction_recul = (global_position + CENTRE - origine).normalized()
 		if direction_recul.length() < 0.1:
 			direction_recul = Vector2(-direction_du_lion, 0.0)
 	_recul = direction_recul * force_recul
-	var tween := create_tween()
-	var nb_clignotements := int(GameState.DUREE_INVULNERABILITE / 0.15)
+
+
+## Clignotement de l'invulnérabilité : le même après un coup (solo) et pour l'immunité qui suit
+## un étourdissement (bataille).
+func _clignoter(duree: float) -> void:
+	var nb_clignotements := int(duree / 0.15)
+	if nb_clignotements <= 0:
+		return
+	if _clignotement != null:
+		_clignotement.kill()
+	sprite.modulate.a = 1.0
+	_clignotement = create_tween()
 	for i in range(nb_clignotements):
-		tween.tween_property(sprite, "modulate:a", 0.25, 0.075)
-		tween.tween_property(sprite, "modulate:a", 1.0, 0.075)
+		_clignotement.tween_property(sprite, "modulate:a", 0.25, 0.075)
+		_clignotement.tween_property(sprite, "modulate:a", 1.0, 0.075)
+
+
+## Toute la tête vire à `couleur` (uniformes du shader de teinte) ; une couleur transparente
+## efface le barbouillage. Sans matériau (joueur sans couleur), rien à barbouiller.
+func _barbouiller(couleur: Color) -> void:
+	var mat := sprite.material as ShaderMaterial
+	if mat == null:
+		return
+	mat.set_shader_parameter("barbouillage_couleur", couleur)
+	mat.set_shader_parameter("barbouillage_force", FORCE_BARBOUILLAGE if couleur.a > 0.0 else 0.0)
+
+
+func _tourner_etoiles() -> void:
+	var nb := etoiles.get_child_count()
+	for i in range(nb):
+		var angle := _temps * VITESSE_ETOILES + TAU * i / nb
+		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)
 
 
 func _on_crans_changes(_crans: int) -> void:

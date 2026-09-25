@@ -769,6 +769,61 @@ func _run() -> void:
 		"un matériau d'un autre shader sur le sprite est remplacé par celui de la teinte")
 	lion_neuf.free()
 
+	# Étourdissement par un ennemi : immobile, repoussé, étoiles, sans barbouillage
+	var materiau_bleu := lb.sprite.material as ShaderMaterial
+	lb.commandes.direction_voulue = Vector2.LEFT
+	await _frames(5)
+	_check(lb._vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
+	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
+	_check(j_bleu.est_etourdi() and lb._vitesse == Vector2.ZERO and lb._recul.x > 0.0 and lb.etoiles.visible,
+		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
+	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "un ennemi ne barbouille pas")
+	lb.commandes.vomir_voulu = true
+	var position_etoile: Vector2 = lb.etoiles.get_child(0).position
+	await _frames(10)
+	_check(lb._vitesse == Vector2.ZERO and not lb.est_en_train_de_vomir, "étourdi, le lion ignore ses commandes : ni déplacement ni vomi")
+	_check(lb.etoiles.get_child(0).position != position_etoile, "les étoiles tournent autour de la tête")
+	j_bleu.etourdi_restant = 0.05
+	await create_timer(0.1).timeout
+	await _frames(2)
+	_check(not j_bleu.est_etourdi() and not lb.etoiles.visible and j_bleu.est_invulnerable()
+		and lb._clignotement != null and lb._clignotement.is_running(),
+		"à la fin de l'étourdissement, les étoiles s'en vont et l'immunité clignote")
+	_check(lb._vitesse.x < 0.0 and lb.est_en_train_de_vomir, "le lion obéit de nouveau à ses commandes")
+	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
+	_check(not j_bleu.est_etourdi(), "un ennemi ne ré-étourdit pas un lion immunisé")
+
+	# Étourdissement par le vomi : tête barbouillée de la couleur de l'agresseur
+	j_bleu.invulnerable_restant = 0.0
+	GS.regles.lion_touche_par_vomi(j_bleu, j_rouge, lb.global_position + lb.CENTRE + Vector2(0, -80))
+	_check(materiau_bleu.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur
+		and is_equal_approx(materiau_bleu.get_shader_parameter("barbouillage_force"), lb.FORCE_BARBOUILLAGE)
+		and materiau_bleu.get_shader_parameter("couleur_joueur") == j_bleu.couleur,
+		"le vomi barbouille la tête de la couleur de l'agresseur, par-dessus la teinte du joueur")
+	await _frames(3)
+	_check(not lb.est_en_train_de_vomir and not lb.gerbe_traceuse.monitoring, "étourdi en plein vomi, le lion arrête de vomir")
+	j_bleu.etourdi_restant = 0.05
+	await create_timer(0.1).timeout
+	await _frames(2)
+	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "le barbouillage s'efface à la fin de l'étourdissement")
+
+	# Un vrai ennemi, en plein vomi : l'étourdissement part d'un rappel physique (body_entered)
+	j_bleu.invulnerable_restant = 0.0
+	lb.commandes.direction_voulue = Vector2.ZERO
+	await _frames(3)
+	_check(lb.est_en_train_de_vomir, "(pré-condition) le lion bleu vomit")
+	var coccinelle_bataille: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_bataille.position = lb.global_position + lb.CENTRE
+	root.add_child(coccinelle_bataille)
+	await _frames(3)
+	_check(j_bleu.est_etourdi() and j_bleu.vies == 3 and not lb.est_en_train_de_vomir,
+		"une coccinelle étourdit le lion de bataille qu'elle touche, sans lui ôter de vie ; il arrête de vomir")
+	coccinelle_bataille.free()
+	lb.commandes.vomir_voulu = false
+	await _frames(2)
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
 	for l in lions_bataille:
 		l.free()
 	GS.configurer_solo()
