@@ -60,7 +60,7 @@ de jeu.
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. | `Joueur`, `Commandes` |
 | `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, vol de cellules, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille) et dit si la partie se joue au territoire (en bataille seulement). `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
-| `Ville` (scène) | Masque de peinture (visuel) + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille). | rien |
+| `Ville` (scène) | Masque de peinture (visuel), tampons en cache par rayon et jeu de couleurs, + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille : un `Territoire`, créé quand les règles se jouent au territoire, tamponné par l'hôte seul, qui tient aussi les scores). Chaque tampon est peint pour un `Joueur`, dans ses couleurs. | `Joueur`, `Territoire`, `Regles` |
 | `Reseau` (autoload) | Pair ENet, découverte UDP, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
 | `Main` | Instancie N lions via `MultiplayerSpawner`, branche les `Regles` du mode dans `GameState` (à partir de la bataille), relaie tampons et scores. | tout le reste |
 
@@ -194,8 +194,10 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   rayon u8, graine u16)`, regroupés par frame, sur le canal fiable. Chaque machine dessine avec la
   graine reçue : motifs et coulures identiques. Environ 3 Ko/s à 6 joueurs.
 - **Synchro du score** : toutes les 0,2 s, l'hôte envoie la liste des cellules dont le
-  propriétaire compté a changé (index u16 + propriétaire u8) et les scores. Les clients
-  n'effectuent aucun calcul de propriété.
+  propriétaire compté a changé (index u16 + propriétaire u8, `Territoire.extraire_changements()`)
+  et les scores. Les clients n'effectuent aucun calcul de propriété : leur ville dessine les
+  tampons reçus sans toucher à son territoire, auquel elle applique la liste reçue, d'où les
+  mêmes scores que l'hôte.
 - **Solo** : mesure de couverture actuelle (alpha moyen ≥ 0,4 par cellule) inchangée.
 
 ## 7. Viewport multi
