@@ -203,9 +203,13 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 ## 7. Viewport multi
 
 - En entrant dans une scène multi (salon compris), `get_tree().root.content_scale_size` passe à
-  2000×1125, et revient à 2000×648 au retour au titre.
-- Le dégradé du ciel et le centre de la caméra, aujourd'hui en dur, sont calculés depuis la taille
-  du viewport. Les hauteurs d'apparition des ennemis et des pastilles sont vérifiées.
+  2000×1125, et revient à 2000×648 au retour au titre. La scène de jeu applique l'écran de ses
+  règles (`Regles.taille_ecran()`) en entrant dans l'arbre ; l'écran titre remet le solo
+  (`configurer_solo()`) et son écran.
+- Le dégradé du ciel et le centre de la caméra sont calculés depuis la taille du viewport. Les
+  hauteurs d'apparition des ennemis et des pastilles, réglées pour les 648 px du solo, suivent la
+  hauteur de l'écran ; le peintre garde sa taille du solo (65 % de 648 px), comme les lions et
+  les skylines, et accélère en bataille avec le temps de la manche.
 - Les skylines restent les mêmes PNG, posées en bas de l'écran. La peinture impose de voler
   environ 230 px au-dessus des toits : l'écran se partage entre une bande de peinture exposée et
   un grand ciel pour les duels.
