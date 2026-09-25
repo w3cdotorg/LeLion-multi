@@ -129,6 +129,8 @@ func _run() -> void:
 	var lion: CharacterBody2D = main.get_node("Lion")
 	var spawner: Node = main.get_node("Spawner")
 	_check(GS.partie_en_cours, "partie en cours après Main._ready")
+	_check(lion.joueur == GS.joueur_local() and lion.commandes.source == Commandes.Source.LOCALES,
+		"hors démo, le lion porte le joueur local et lit les commandes de ce poste")
 
 	# Intro « Prêt ? Vomissez ! » : le jeu attend
 	_check(not GS.pret and main.get_node_or_null("Intro") != null, "l'intro s'affiche et le jeu n'est pas encore prêt")
@@ -454,13 +456,14 @@ func _run() -> void:
 	_check(main.get_node_or_null("Pilote") != null and main.get_node_or_null("Demo") != null, "en démo, le pilote et l'étiquette DÉMO sont là")
 	lion = main.get_node("Lion")
 	spawner = main.get_node("Spawner")
+	_check(lion.commandes.source == Commandes.Source.MANUELLES, "en démo, le lion suit des commandes manuelles")
 	spawner.spawn_pickup(0, Vector2(1200, 250))
 	await _frames(10)
-	_check(lion.pilote_direction.length() > 0.9 and lion._vitesse.length() > 0.0, "le pilote dirige le lion vers la pastille")
+	_check(lion.commandes.direction_voulue.length() > 0.9 and lion._vitesse.length() > 0.0, "le pilote dirige le lion vers la pastille")
 	var soucoupe3: Node = spawner.spawn_soucoupe(lion.global_position.y + 66)
 	soucoupe3.position.x = lion.global_position.x + 250
 	await _frames(2)
-	_check(lion.pilote_direction.x < 0.0, "le pilote fuit un ennemi proche")
+	_check(lion.commandes.direction_voulue.x < 0.0, "le pilote fuit un ennemi proche")
 	soucoupe3.queue_free()
 	Input.action_press("deplacer_droite")
 	await _frames(2)
@@ -495,6 +498,36 @@ func _run() -> void:
 	await _frames(3)
 	_check(not GS.partie_en_cours, "mode Hardcore : un coup et c'est fini")
 	GS.difficulte_courante = 0
+
+	# Un lion lié à un autre joueur suit ce joueur et ses propres commandes
+	paused = false
+	var autre := Joueur.new()
+	autre.reinitialiser(3)
+	var lion_autre: Node = load("res://Scenes/Lion.tscn").instantiate()
+	lion_autre.joueur = autre
+	lion_autre.commandes = Commandes.manuelles()
+	lion_autre.position = Vector2(400, 200)
+	root.add_child(lion_autre)
+	await _frames(1)
+	_check(lion_autre.vomi_container.get_child_count() == 0, "un lion lié à un joueur sans couleur n'a pas d'émetteur")
+	GS.debloquer_couleur(3)
+	_check(lion_autre.vomi_container.get_child_count() == 0, "une couleur du joueur local ne touche pas un lion lié à un autre joueur")
+	autre.debloquer_couleur(Color.RED)
+	_check(lion_autre.vomi_container.get_child_count() == 1, "le lion reconstruit sa gerbe quand son propre joueur débloque une couleur")
+	GS.pret = false
+	lion_autre.commandes.direction_voulue = Vector2.RIGHT
+	var x_avant: float = lion_autre.global_position.x
+	await _frames(5)
+	_check(lion_autre.global_position.x == x_avant, "hors jeu (intro), même des commandes manuelles sont ignorées")
+	GS.pret = true
+	await _frames(5)
+	_check(lion_autre.global_position.x > x_avant, "le lion avance selon ses commandes manuelles")
+	lion_autre.commandes.vomir_voulu = true
+	await _frames(2)
+	_check(lion_autre.est_en_train_de_vomir, "le lion vomit quand ses commandes manuelles le demandent")
+	lion_autre.commandes.vomir_voulu = false
+	await _frames(2)
+	lion_autre.free()
 
 	print("== %d échec(s) ==" % _echecs)
 	paused = false

@@ -1,6 +1,6 @@
 extends Node
 ## Pilote automatique de l'attract mode : fuit les ennemis proches, ramasse les pastilles,
-## puis balaie la ville en vomissant. Écrit dans lion.pilote_direction / pilote_vomir.
+## puis balaie la ville en vomissant. Écrit dans les commandes manuelles du lion.
 
 const DISTANCE_DANGER := 280.0
 const DISTANCE_PICKUP_TENTANT := 450.0
@@ -27,16 +27,16 @@ func _physics_process(delta: float) -> void:
 		if ecart.length() < DISTANCE_DANGER:
 			fuite += ecart.normalized() * (DISTANCE_DANGER - ecart.length())
 	if fuite != Vector2.ZERO:
-		lion.pilote_direction = fuite.normalized()
-		lion.pilote_vomir = false
+		lion.commandes.direction_voulue = fuite.normalized()
+		lion.commandes.vomir_voulu = false
 		return
 
 	# 2. Une pastille à portée, ou aucune couleur : on va la chercher
 	var pickup := _pickup_le_plus_proche(centre)
-	if pickup != null and (GameState.couleurs_debloquees.is_empty()
+	if pickup != null and (lion.joueur.couleurs_debloquees.is_empty()
 			or pickup.global_position.distance_to(centre) < DISTANCE_PICKUP_TENTANT):
 		_aller_vers(pickup.global_position - Vector2(68, 66))
-		lion.pilote_vomir = false
+		lion.commandes.vomir_voulu = false
 		return
 
 	# 3. Balayer la ville en vomissant
@@ -47,12 +47,12 @@ func _physics_process(delta: float) -> void:
 		_rangee = (_rangee + 1) % HAUTEURS_JET.size()
 	var haut_ville: float = ville.position.y - ville.tex_size.y / 2.0
 	_aller_vers(Vector2(_cible_x, haut_ville + HAUTEURS_JET[_rangee]))
-	lion.pilote_vomir = not GameState.couleurs_debloquees.is_empty()
+	lion.commandes.vomir_voulu = not lion.joueur.couleurs_debloquees.is_empty()
 
 
 func _aller_vers(cible: Vector2) -> void:
 	var ecart: Vector2 = cible - lion.global_position
-	lion.pilote_direction = ecart.normalized() if ecart.length() > 24.0 else Vector2.ZERO
+	lion.commandes.direction_voulue = ecart.normalized() if ecart.length() > 24.0 else Vector2.ZERO
 
 
 func _pickup_le_plus_proche(centre: Vector2) -> Node2D:

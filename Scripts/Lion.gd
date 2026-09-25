@@ -29,17 +29,23 @@ const BOUCHE_X_GAUCHE := 47.0
 
 var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
-var pilote_direction := Vector2.ZERO  # attract mode
-var pilote_vomir := false
+## État du lion (couleurs, bonus, coups) et source de ses intentions. À fournir avant l'ajout
+## à l'arbre ; à défaut, le joueur local et ses commandes (celles du pilote en démo).
+var joueur: Joueur
+var commandes: Commandes
 var _vitesse := Vector2.ZERO
 var _recul := Vector2.ZERO
 var _temps := 0.0
 
 
 func _ready() -> void:
-	GameState.couleur_debloquee.connect(_on_couleur_debloquee)
-	GameState.bonus_change.connect(_on_bonus_change)
-	GameState.lion_touche.connect(_on_lion_touche)
+	if joueur == null:
+		joueur = GameState.joueur_local()
+	if commandes == null:
+		commandes = Commandes.manuelles() if GameState.demo else Commandes.locales()
+	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
+	joueur.bonus_change.connect(_on_bonus_change)
+	joueur.touche.connect(_on_lion_touche)
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
 
@@ -75,17 +81,11 @@ func _process(_delta: float) -> void:
 
 
 func _direction_voulue() -> Vector2:
-	if not GameState.pret:
-		return Vector2.ZERO
-	if GameState.demo:
-		return pilote_direction
-	return Input.get_vector("deplacer_gauche", "deplacer_droite", "deplacer_haut", "deplacer_bas")
+	return commandes.direction() if GameState.pret else Vector2.ZERO
 
 
 func _veut_vomir() -> bool:
-	if not GameState.pret:
-		return false
-	return pilote_vomir if GameState.demo else Input.is_action_pressed("vomir")
+	return GameState.pret and commandes.vomir()
 
 
 func _on_couleur_debloquee(_couleur: Color) -> void:
@@ -123,7 +123,7 @@ func _on_bonus_change(_actif: bool) -> void:
 
 
 func _facteur_bonus() -> float:
-	return FACTEUR_BONUS if GameState.bonus_actif() else 1.0
+	return FACTEUR_BONUS if joueur.bonus_actif() else 1.0
 
 
 func _appliquer_taille_particules() -> void:
@@ -160,7 +160,7 @@ func _point_de_chute() -> Vector2:
 func _placer_traceuse() -> void:
 	gerbe_traceuse.position = _point_de_chute()
 	if traceuse_shape.shape is CircleShape2D:
-		var n := GameState.couleurs_debloquees.size()
+		var n := joueur.couleurs_debloquees.size()
 		var rayon: float = clamp(RAYON_TRACEUSE.x + n * 5, RAYON_TRACEUSE.x, RAYON_TRACEUSE.y)
 		traceuse_shape.shape.radius = rayon * _facteur_bonus()
 
@@ -180,7 +180,7 @@ func mettre_a_jour_degrade_vomi() -> void:
 		vomi_container.remove_child(child)
 		child.queue_free()
 
-	for couleur in GameState.couleurs_debloquees:
+	for couleur in joueur.couleurs_debloquees:
 		var gradient := Gradient.new()
 		gradient.set_color(0, couleur)
 		gradient.set_color(1, Color(couleur, 0.0))
@@ -210,7 +210,7 @@ func mettre_a_jour_degrade_vomi() -> void:
 
 
 func demarrer_vomi() -> void:
-	if GameState.couleurs_debloquees.is_empty():
+	if joueur.couleurs_debloquees.is_empty():
 		return
 	est_en_train_de_vomir = true
 	gerbe_traceuse.monitoring = true
