@@ -1,5 +1,6 @@
 extends CharacterBody2D
-## Le lion : déplacement, gerbe de vomi multicolore, traceuse de peinture.
+## Le lion : déplacement, gerbe de vomi multicolore, traceuse de peinture ; en bataille,
+## crinière à la couleur de son joueur et pseudo au-dessus de la tête.
 ## La gerbe part de la bouche à 45° vers le bas ; la traceuse est placée au point de
 ## chute calculé avec la même physique que les particules.
 
@@ -14,6 +15,7 @@ const FACTEUR_BONUS := 2.0
 const TEXTURE_PARTICULE := preload("res://Assets/Sprites/circle_white.png")
 const BOUCHE_X_DROITE := 89.0
 const BOUCHE_X_GAUCHE := 47.0
+const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 
 @export var speed: float = 350.0
 @export var acceleration: float = 2400.0
@@ -26,6 +28,7 @@ const BOUCHE_X_GAUCHE := 47.0
 @onready var gerbe_traceuse: Area2D = $GerbeTraceuse
 @onready var traceuse_shape: CollisionShape2D = $GerbeTraceuse/CollisionShape2D
 @onready var bouche: Marker2D = $Bouche
+@onready var etiquette_pseudo: Label = $Pseudo
 
 var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
@@ -59,6 +62,7 @@ func _ready() -> void:
 	joueur.touche.connect(_on_lion_touche)
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
+	appliquer_apparence()
 
 
 func _physics_process(delta: float) -> void:
@@ -101,6 +105,30 @@ func _veut_vomir() -> bool:
 
 func _on_couleur_debloquee(_couleur: Color) -> void:
 	mettre_a_jour_degrade_vomi()
+
+
+## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ;
+## à rappeler si la couleur ou le pseudo du joueur change ensuite (aperçu du salon, phase 13).
+func appliquer_apparence() -> void:
+	_appliquer_teinte()
+	etiquette_pseudo.text = joueur.pseudo
+	etiquette_pseudo.add_theme_color_override("font_color", joueur.couleur)
+	etiquette_pseudo.visible = joueur.a_une_couleur() and not joueur.pseudo.is_empty()
+
+
+## Un joueur sans couleur (le solo) laisse le sprite sans matériau : le lion s'affiche
+## exactement comme ses sprites d'origine. Sinon, le lion crée son propre matériau (jamais
+## partagé entre instances de Lion.tscn) ; il vaut pour les deux sprites, repos et vomi.
+func _appliquer_teinte() -> void:
+	if not joueur.a_une_couleur():
+		sprite.material = null
+		return
+	var mat := sprite.material as ShaderMaterial
+	if mat == null:
+		mat = ShaderMaterial.new()
+		mat.shader = SHADER_TEINTE
+		sprite.material = mat
+	mat.set_shader_parameter("couleur_joueur", joueur.couleur)
 
 
 ## Penche le lion dans le sens de la course et le fait trottiner.

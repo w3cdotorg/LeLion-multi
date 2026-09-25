@@ -1,6 +1,7 @@
 class_name Joueur
 extends Resource
-## État d'un lion pendant une partie : couleurs débloquées, vies, invulnérabilité, bonus.
+## État d'un lion : identité (index, pseudo, couleur) et, pendant une partie, couleurs
+## débloquées, vies, invulnérabilité, bonus.
 ## Ne dépend de rien : ce sont les règles qui décident quand appeler ces méthodes.
 
 signal couleur_debloquee(couleur: Color)
@@ -10,7 +11,9 @@ signal touche(origine: Vector2)
 
 @export var index := 0
 @export var pseudo := ""
-@export var couleur := Color.WHITE
+## Couleur du lion en bataille. Transparente (alpha 0) = pas de couleur de lion : c'est le cas
+## du solo, dont le lion garde sa crinière d'origine et n'affiche pas de pseudo.
+@export var couleur := Color.TRANSPARENT
 
 var couleurs_debloquees: Array[Color] = []
 var vies := 3
@@ -73,6 +76,11 @@ func est_invulnerable() -> bool:
 
 func bonus_actif() -> bool:
 	return bonus_restant > 0.0
+
+
+## Vrai si le joueur a une couleur de lion (bataille), faux en solo.
+func a_une_couleur() -> bool:
+	return couleur.a > 0.0
 
 
 ## Active (ou prolonge) la gerbe XXL pour `duree` secondes.
