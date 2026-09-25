@@ -643,6 +643,7 @@ func _tester_territoire() -> void:
 	# vitesse d'un adversaire vole des cellules au lieu de seulement les effacer. On reprend la forme
 	# de sonde du plan de la phase 9 : 60 tampons par seconde à 350 px/s, rayons 16 puis 21 (les deux
 	# premiers crans de gerbe).
+	var n_saturer := ceili(float(Territoire.CHARGE_MAX) / Territoire.GAIN)
 	for rayon_b in [16, 21]:
 		var largeur := 60
 		var hauteur := 4
@@ -651,9 +652,14 @@ func _tester_territoire() -> void:
 		bande.resize(largeur * hauteur)
 		bande.fill(1)
 		var v := Territoire.new(Vector2i(largeur, hauteur), bande, taille_cellule_bande)
-		for i in range(n_prise):
-			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)  # A possède toute la bande
+		# A charge sa bande au maximum, comme une passe pleine vitesse (5 à 7 tampons par cellule) :
+		# chargée au seul seuil (n_prise tampons), la vérification passait aussi avec l'ancien
+		# CHARGE_MAX = 24, qu'elle doit refuser.
+		for i in range(n_saturer):
+			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)
 		var avant_a := v.cellules_de(0)
+		_check(v.charge(0) == Territoire.CHARGE_MAX and avant_a == largeur * hauteur,
+			"(pré-condition) A possède toute la bande, chargée au maximum (%d)" % v.charge(0))
 		var x := 0.0
 		while x < largeur * taille_cellule_bande:
 			v.tamponner(1, Vector2i(int(x), hauteur * taille_cellule_bande / 2), rayon_b)  # B traverse à 350 px/s, 60 tampons/s
