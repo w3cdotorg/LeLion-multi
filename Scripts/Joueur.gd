@@ -34,6 +34,9 @@ var coups_recus := 0
 ## durée (1,5 s après un coup en solo ; en bataille, l'étourdissement puis 1 s).
 var invulnerable_restant := 0.0
 var etourdi_restant := 0.0
+## Frame physique du dernier étourdissement (-1 = aucun), pour que les règles distinguent un
+## étourdissement de cette frame-ci d'un étourdissement plus ancien (trade tête-à-tête).
+var etourdi_a_la_frame := -1
 var bonus_restant := 0.0
 # Statistiques de bataille, pour les titres de l'écran Résultats (les cellules volées sont
 # comptées par le territoire, phase 9).
@@ -51,6 +54,7 @@ func reinitialiser(vies_depart: int, couleurs_depart: Array[Color] = []) -> void
 	coups_recus = 0
 	invulnerable_restant = 0.0
 	etourdi_restant = 0.0
+	etourdi_a_la_frame = -1
 	bonus_restant = 0.0
 	etourdissements_infliges = 0
 	cellules_volees = 0
@@ -107,6 +111,7 @@ func gagner_cran() -> bool:
 func etourdir(duree: float, duree_immunite: float, origine: Vector2, barbouillage: Color) -> void:
 	etourdi_restant = duree
 	invulnerable_restant = duree + duree_immunite
+	etourdi_a_la_frame = Engine.get_physics_frames()
 	etourdi.emit(origine, barbouillage)
 
 

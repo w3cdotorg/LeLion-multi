@@ -338,9 +338,22 @@ func _tester_regles_bataille() -> void:
 	r.lion_touche_par_vomi(rouge, rouge, Vector2.ZERO)
 	_check(not rouge.est_etourdi() and rouge.etourdissements_infliges == 1, "son propre vomi n'étourdit pas")
 	rouge.etourdir(1.0, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	rouge.etourdi_a_la_frame = Engine.get_physics_frames() - 1  # simule un étourdissement d'une frame passée
 	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
-	_check(not bleu.est_etourdi() and rouge.etourdissements_infliges == 1, "un lion étourdi n'étourdit personne")
+	_check(not bleu.est_etourdi() and rouge.etourdissements_infliges == 1, "un lion étourdi lors d'une frame passée n'étourdit personne")
 	rouge.avancer(2.0)
+
+	# Trade tête-à-tête : deux lions se vomissent dessus la même frame, les deux rapports portent
+	var a := Joueur.new()
+	a.couleur = Color(0.90, 0.16, 0.16)
+	var b := Joueur.new()
+	b.couleur = Color(0.16, 0.39, 0.95)
+	for j: Joueur in [a, b]:
+		j.reinitialiser(3, r.couleurs_de_depart(j))
+	r.lion_touche_par_vomi(b, a, Vector2.ZERO)
+	r.lion_touche_par_vomi(a, b, Vector2.ZERO)
+	_check(a.est_etourdi() and b.est_etourdi() and a.etourdissements_infliges == 1 and b.etourdissements_infliges == 1,
+		"un trade tête-à-tête dans la même frame étourdit les deux lions (aucun n'est ignoré comme agresseur déjà étourdi)")
 
 	# Ennemis : 2,5 s sans barbouillage, puis 1 s d'immunité ; aucune vie perdue
 	for i in range(10):
@@ -381,9 +394,12 @@ func _tester_regles_bataille() -> void:
 	gs.terminer_partie(false)
 	bleu.invulnerable_restant = 0.0
 	bleu.etourdi_restant = 0.0
+	var etourdissements_avant := rouge.etourdissements_infliges
 	r.lion_touche_par_ennemi(bleu, Vector2.ZERO)
+	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
 	r.choc_entre_lions(rouge, bleu)
-	_check(not bleu.est_etourdi() and bleu.chocs == 1, "après la fin de manche, plus d'étourdissement ni de choc compté")
+	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant,
+		"après la fin de manche, plus d'étourdissement (ennemi ou vomi) ni de choc compté")
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()

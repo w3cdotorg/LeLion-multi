@@ -27,10 +27,12 @@ func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:
 	joueur.etourdir(DUREE_ETOURDI_ENNEMI, DUREE_IMMUNITE, origine, Color.TRANSPARENT)
 
 
-## Un lion étourdi ne vomit plus : s'il est signalé comme agresseur (contact de la frame où il
-## a été étourdi), il n'étourdit personne.
+## Un lion étourdi ne vomit plus : s'il est signalé comme agresseur, il n'étourdit personne, sauf
+## si son étourdissement date de cette frame-ci (trade tête-à-tête : deux lions se vomissent
+## dessus la même frame, les deux rapports doivent porter et les étourdir tous les deux).
 func lion_touche_par_vomi(victime: Joueur, agresseur: Joueur, origine: Vector2) -> void:
-	if victime == agresseur or agresseur.est_etourdi() or not _peut_etre_etourdi(victime):
+	var agresseur_deja_etourdi := agresseur.est_etourdi() and agresseur.etourdi_a_la_frame < Engine.get_physics_frames()
+	if victime == agresseur or agresseur_deja_etourdi or not _peut_etre_etourdi(victime):
 		return
 	victime.etourdir(DUREE_ETOURDI_VOMI, DUREE_IMMUNITE, origine, agresseur.couleur)
 	agresseur.etourdissements_infliges += 1
