@@ -41,6 +41,7 @@ func _run() -> void:
 	await _tester_fin_pendant_intro()
 	await _tester_scene()
 	await _tester_apparitions()
+	await _tester_peintre()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
@@ -225,4 +226,34 @@ func _tester_apparitions() -> void:
 	for e in etoiles:
 		e.free()
 	GS.joueur_local().bonus_restant = 0.0
+	await _liberer(main)
+
+
+func _tester_peintre() -> void:
+	print("-- Peintre en 16:9")
+	var main := await _charger_bataille(2)
+	var ville: Node2D = main.get_node("Ville")
+	await _frames(1)  # le Spawner ajoute le peintre en différé
+	var boss: Node2D = get_first_node_in_group("boss")
+	_check(boss != null, "le Village de la bataille a son peintre")
+	var hauteur: float = boss.sprite.scale.y * boss.sprite.texture.get_height()
+	_check(absf(hauteur - 648.0 * boss.hauteur_ratio) < 1.0,
+		"le peintre garde sa taille du solo (%.0f px) sur l'écran de 1125 px" % hauteur)
+	_check(absf(boss.y_sol - (TAILLE_BATAILLE.y - ville.tex_size.y)) < 0.5 and absf(boss.position.y + boss._demi_hauteur - boss.y_sol) < 0.5,
+		"le peintre est posé sur le haut de la skyline, en bas de l'écran (sol %.0f)" % boss.y_sol)
+	GS.progression = 0.0
+	GS.temps_ecoule = ReglesBataille.DUREE_MANCHE / 2.0
+	_check(is_equal_approx(boss.facteur_vitesse(), lerpf(1.0, boss.acceleration_max, 0.5)),
+		"à mi-manche, le peintre a fait la moitié de son accélération, que la ville soit peinte ou non (%.3f)" % boss.facteur_vitesse())
+	GS.temps_ecoule = 0.0
+	await _attendre_depart()
+	boss._arreter()
+	boss.etat = boss.Etat.PAUSE
+	boss.position.x = TAILLE_BATAILLE.x / 2.0
+	var l3: Node2D = main.lions[3]
+	var j3: Joueur = GS.joueurs[3]
+	l3.global_position = Vector2(boss.position.x - l3.CENTRE.x, boss.position.y - l3.CENTRE.y)
+	await _frames(3)
+	_check(j3.est_etourdi() and j3.etourdi_restant > ReglesBataille.DUREE_ETOURDI_ENNEMI - 0.2 and j3.vies == 3,
+		"le peintre étourdit le lion de bataille qu'il touche, sans lui ôter de vie")
 	await _liberer(main)
