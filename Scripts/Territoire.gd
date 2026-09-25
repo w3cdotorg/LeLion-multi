@@ -72,6 +72,13 @@ func reinitialiser() -> void:
 ## cellule que personne n'a encore possédée ne se volent rien. Coût mesuré au moment du plan :
 ## environ 25 µs pour un tampon de 46 px.
 func tamponner(index_joueur: int, centre: Vector2i, rayon: int) -> int:
+	# Garde d'exécution : contrairement à assert() (retirée à l'export release), elle reste active
+	# en release et empêche un index hors plage d'écrire un octet de propriétaire invalide (et donc
+	# de fausser les comptages). Placée avant l'assert, qui ne couvre plus ensuite qu'une
+	# précondition déjà vraie (utile pour le debug si un futur appel interne la contournait).
+	if index_joueur < 0 or index_joueur >= EtatPartie.NB_JOUEURS_MAX:
+		push_error("Territoire.tamponner : index de joueur hors plage (%d)" % index_joueur)
+		return 0
 	assert(index_joueur >= 0 and index_joueur < EtatPartie.NB_JOUEURS_MAX, "index de joueur de 0 à 5")
 	if rayon <= 0:
 		return 0

@@ -567,6 +567,13 @@ func _tester_territoire() -> void:
 	_check(w.charge(4) == 0 and w.proprietaire(4) == Territoire.PERSONNE and w.cellules_de(Territoire.PERSONNE) == 11
 		and w.extraire_changements().is_empty(), "reinitialiser rend toute la ville vierge")
 
+	# Index de joueur hors plage : la garde d'exécution (pas seulement l'assert de debug, retirée
+	# à l'export release) refuse le tampon sans rien changer.
+	_check(w.tamponner(-1, centre_5, 5) == 0 and w.tamponner(EtatPartie.NB_JOUEURS_MAX, centre_5, 5) == 0
+		and w.charge(5) == 0 and w.proprietaire(5) == Territoire.PERSONNE
+		and w.cellules_de(Territoire.PERSONNE) == 11 and w.extraire_changements().is_empty(),
+		"un index de joueur hors plage (négatif ou ≥ NB_JOUEURS_MAX) ne touche aucune cellule")
+
 	# Déterminisme et scores, sur une suite de tampons pseudo-aléatoire à trois joueurs
 	var grande := PackedByteArray()
 	grande.resize(40 * 20)
