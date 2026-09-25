@@ -54,12 +54,12 @@ de jeu.
 
 | Unité | Rôle | Dépend de |
 |---|---|---|
-| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `invulnerable_restant` (l'immunité : une seule minuterie pour le solo et la bataille, voir §5), `cellules`, stats (`etourdissements_infliges`, `cellules_volees`, `chocs`). En solo il porte aussi `couleurs_debloquees`, `vies`, et sa `couleur` reste transparente (pas de teinte). | rien |
+| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `invulnerable_restant` (l'immunité : une seule minuterie pour le solo et la bataille, voir §5), stats (`etourdissements_infliges`, `cellules_volees`, `chocs`) ; son score (les cellules qu'il possède) est tenu par le territoire de la ville (§6), pas par le `Joueur`. En solo il porte aussi `couleurs_debloquees`, `vies`, et sa `couleur` reste transparente (pas de teinte). | rien |
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
 | `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, et côté hôte les commandes reçues d'un client, numérotées et dédoublonnées en phase 16). | Input |
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. | `Joueur`, `Commandes` |
-| `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille). `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
+| `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, vol de cellules, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille) et dit si la partie se joue au territoire (en bataille seulement). `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel) + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille). | rien |
 | `Reseau` (autoload) | Pair ENet, découverte UDP, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
 | `Main` | Instancie N lions via `MultiplayerSpawner`, branche les `Regles` du mode dans `GameState` (à partir de la bataille), relaie tampons et scores. | tout le reste |
@@ -165,18 +165,25 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 
 ## 6. Peinture, territoire et synchronisation
 
-- **Grille** : la grille de cellules de 8 px existante (≈ 250 × 81 à 2000 px de large, seules les
-  cellules opaques comptent).
+- **Grille** : la grille de cellules de 8 px existante (250 colonnes à 2000 px de large, 23 à 40
+  rangées selon la skyline, haute de 180 à 320 px ; seules les cellules opaques comptent).
 - **Propriété (bataille, hôte uniquement)** : par cellule, `proprietaire` (0 = personne,
   1 à 6) et `charge` (0 à `CHARGE_MAX`), en `PackedByteArray`. Un tampon de rayon *r* touche les
   cellules peignables dont le centre est à moins de *r* :
   - cellule au peintre ou vierge : `charge += GAIN` (plafonnée) et propriétaire = peintre ;
   - cellule adverse : `charge -= GAIN`. Si `charge <= 0`, la cellule passe au peintre avec
-    `charge = -charge`, et le vol est compté dans les stats.
+    `charge = -charge`.
   - une cellule compte dans le score si `charge >= SEUIL_POSSESSION`.
+  - **vol** (statistique `cellules_volees`, comptée par les règles pendant la manche) : une
+    cellule qui se met à compter pour le peintre alors qu'elle comptait en dernier pour un autre
+    joueur. Deux lions qui se disputent une cellule que personne n'a encore possédée ne se volent
+    donc rien (compté au passage de `charge <= 0`, chaque tampon de la dispute serait un vol).
   Les valeurs de `GAIN`, `CHARGE_MAX` et `SEUIL_POSSESSION` sont réglées pour qu'il faille à peu
-  près autant de temps pour peindre une cellule qu'aujourd'hui en solo. Calcul entier et
-  déterministe.
+  près autant de temps pour peindre une cellule qu'aujourd'hui en solo : `GAIN = 4` et
+  `SEUIL_POSSESSION = 12`, soit 3 tampons sur une cellule vierge, ce qui suit la mesure du solo
+  pour une gerbe en mouvement (16 à 46 px de rayon) ; `CHARGE_MAX = 24` : une cellule que son
+  propriétaire repeint se renforce, et se vide alors en 6 tampons adverses. Calcul entier et
+  déterministe (`Territoire`, phase 9).
 - **Visuel** : masque RGBA et `Ville.gdshader` inchangés. Chaque tampon est dessiné dans les
   nuances du peintre et recouvre ce qui est dessous. Les zones disputées apparaissent bigarrées.
 - **Synchro des tampons** : l'hôte diffuse chaque tampon `(index joueur u8, x u16, y u16,

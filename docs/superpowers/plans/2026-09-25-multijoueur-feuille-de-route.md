@@ -50,7 +50,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 8 | **Règles et état de bataille** : `ReglesBataille` (étourdissement 1,5 s par le vomi, 2,5 s par un ennemi, puis 1 s d'immunité ; crans ; chocs comptés ; ni vies ni cœurs), `Joueur` (crans, étourdissement, nuances, statistiques ; l'immunité est l'invulnérabilité du solo), événements de vomi et de choc dans `Regles`, `GameState.configurer_solo()` / `configurer_bataille(n)`. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Regles.gd` ➕ `Scripts/ReglesBataille.gd` ✏️ `Scripts/GameState.gd` ✏️ `tests/unitaires.gd` | tests verts |
 | 8 bis | **Lion de bataille** : rayon selon les crans (le solo gagne un cran par couleur), gerbe en 3 nuances, étourdissement (commandes ignorées, recul, barbouillage, étoiles, clignotement de l'immunité), 3 zones de contact sur la parabole, auto-tamponneuses, `class_name Lion`. | ✏️ `Scripts/ReglesSolo.gd` ✏️ `tests/unitaires.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `tests/smoke_test.gd` | tests verts, ◉ lions étourdis |
 | 8 ter | **Ennemis vers `body is Lion`** : base commune `Ennemi` des gestionnaires de contact des ennemis (garde hôte, `body is Lion`, origine du coup redéfinissable) ; le peintre garde ses deux chemins de contact (`body_entered` et contact continu hors repos). | ➕ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
-| 9 | **Territoire** : logique pure de charge et de vol, grille de propriété dans la ville, tampons en cache par jeu de couleurs. | ➕ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` | tests verts |
+| 9 | **Territoire, logique** : `Territoire` (charge, prise, vol, seuil de possession, scores par joueur, liste des cellules changées), réglé sur la couverture du solo ; règles : vols comptés (`vol_de_cellules`), partie au territoire (`compte_le_territoire`) ; `DUREE_ETOILE` et `_manche_en_cours()` montent dans la base `Regles`. | ➕ `Scripts/Territoire.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/ReglesSolo.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` | tests verts |
+| 9 bis | **Territoire dans la ville** : tampons en cache par jeu de couleurs (obligatoire), la ville tient le territoire en bataille et le tamponne sur l'hôte, la traceuse peint pour son joueur ; `DUREE_INVULNERABILITE` descend dans `ReglesSolo`. | ✏️ `Scripts/Ville.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/ReglesSolo.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 10 | **Scène de bataille locale en 16:9** : N lions, ciel et caméra calculés, apparitions relatives au viewport, taille du peintre. Test à 4 lions pilotés dans un seul processus. | ✏️ `Scripts/Main.gd` ✏️ `Scripts/Spawner.gd` ✏️ `Scripts/Boss.gd` ➕ `tests/bataille_test.gd` | ◉ manche à 4 |
 
 ### C. Réseau
@@ -142,7 +143,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   échoue d'elle-même sous l'ancien typage ; vérifier la direction du recul (horizontale) après le
   contact continu du peintre au lieu d'appeler `origine_du_coup` directement ; remettre le peintre
   au repos après sa vérification ;
-- **phase 9 (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
+- **phase 9 bis (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
   couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
   tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
   tampons en cache par jeu de couleurs (clé rayon + `to_rgba32` de chaque couleur, plusieurs
@@ -202,10 +203,12 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   clair, par exemple) et compter aussi sur le pseudo et les vignettes du HUD. Attribuer la couleur
   **avant** l'ajout du lion à l'arbre, ou rappeler `Lion.appliquer_apparence()` (aperçu du salon en
   phase 13) ;
-- **phase 9** : `Joueur.cellules_volees` existe depuis la phase 8 (remis à zéro par
-  `reinitialiser`, jamais incrémenté) : le territoire l'incrémente quand un tampon vole une
-  cellule. En bataille, les couleurs débloquées d'un joueur sont ses trois nuances (données par
-  `Regles.couleurs_de_depart`) : c'est ce que reçoivent la traceuse et `Ville.peindre` ;
+- **phases 9 et 9 bis** : `Joueur.cellules_volees` existe depuis la phase 8 (remis à zéro par
+  `reinitialiser`, jamais incrémenté) : `Territoire.tamponner` renvoie les cellules que vole un
+  tampon (phase 9), la ville de l'hôte les signale aux règles (`Regles.vol_de_cellules`, phase
+  9 bis), qui l'incrémentent pendant la manche. En bataille, les couleurs débloquées d'un joueur
+  sont ses trois nuances (données par `Regles.couleurs_de_depart`) : c'est ce que reçoivent la
+  traceuse et `Ville.peindre` ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
