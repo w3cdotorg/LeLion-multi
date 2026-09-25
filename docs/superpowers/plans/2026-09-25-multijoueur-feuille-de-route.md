@@ -102,8 +102,19 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
-- phase 5 : `BonusPickup` reçoit le même drapeau « déjà ramassée » que `ColorPickup` (premier
-  arrivé, premier servi) ;
+- phase 10 : les conditions d'apparition (étoile à partir de 2 couleurs, cœurs) passent par les
+  règles (par exemple `regles.etoile_peut_apparaitre()`, aucun cœur en bataille) au lieu que le
+  Spawner lise le joueur local ;
+- phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
+  réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
+  du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
+  `vies_changees` en hausse) et retirer `Audio.jouer` des pastilles ;
+- phase 7/8 ou 14 : le gestionnaire de contact est copié dans `ColorPickup`, `BonusPickup` et
+  `CoeurPickup` ; en faire une base commune quand une de ces phases doit les modifier tous
+  (`body is Lion`, désapparition répliquée) ;
+- à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
+  jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
+  ses lecteurs dans `_exit_tree` ;
 - phase 8 : `ReglesBataille.lion_touche_par_ennemi` ignore un joueur déjà étourdi ou immunisé (le
   peintre signale le contact à chaque frame de chevauchement ; sinon l'étourdissement de 2,5 s
   redémarrerait sans fin) ;
@@ -113,5 +124,5 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
   (`multiplayer.is_server()`, phase 4) ;
-- références de phase périmées à corriger au passage : `Scripts/ReglesSolo.gd:7` (« phase 4 » →
-  phase 5), `Scripts/GameState.gd` lignes 5, 35 et 50 (« phase 6 » → 6 bis).
+- références de phase périmées à corriger au passage : `Scripts/GameState.gd` lignes 5, 35 et 50
+  (« phase 6 » → 6 bis).
