@@ -10,6 +10,7 @@ extends SceneTree
 const NB_LIONS := 4
 const TAILLE_BATAILLE := Vector2(2000, 1125)
 const HAUTEURS_JET: Array[float] = [-233.0, -200.0, -270.0]  # y du lion sous le haut de la skyline, comme le pilote de la démo
+const DISTANCE_PASTILLE_TENTANTE := 900.0  # le pilote de la manche va chercher une pastille dans ce rayon
 
 var _echecs := 0
 var GS: Node
@@ -42,6 +43,7 @@ func _run() -> void:
 	await _tester_scene()
 	await _tester_apparitions()
 	await _tester_peintre()
+	await _tester_manche()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
@@ -256,4 +258,102 @@ func _tester_peintre() -> void:
 	await _frames(3)
 	_check(j3.est_etourdi() and j3.etourdi_restant > ReglesBataille.DUREE_ETOURDI_ENNEMI - 0.2 and j3.vies == 3,
 		"le peintre étourdit le lion de bataille qu'il touche, sans lui ôter de vie")
+	await _liberer(main)
+
+
+## Pastilles et étoiles de la scène.
+func _pastilles(main: Node) -> Array[Node]:
+	var liste: Array[Node] = []
+	liste.assign(get_nodes_in_group("pickup"))
+	liste.append_array(_etoiles(main))
+	return liste
+
+
+## La pastille (ou l'étoile) que ce lion va chercher : la plus proche à portée, dont il est le
+## lion le plus proche ; null s'il n'y en a pas.
+func _pastille_visee(lion: Node2D, lions: Array, pastilles: Array[Node]) -> Node2D:
+	var centre: Vector2 = lion.global_position + lion.CENTRE
+	var visee: Node2D = null
+	var distance := DISTANCE_PASTILLE_TENTANTE
+	for p: Node2D in pastilles:
+		var d := centre.distance_to(p.global_position)
+		var plus_proche := lions.all(func(l: Node2D) -> bool:
+			return l == lion or (l.global_position + l.CENTRE).distance_to(p.global_position) >= d)
+		if d < distance and plus_proche:
+			distance = d
+			visee = p
+	return visee
+
+
+## Pilote d'un lion de la manche : il va chercher sa pastille s'il en vise une ; sinon il balaie
+## son couloir en vomissant et change de hauteur à chaque demi-tour. Les couloirs voisins se
+## chevauchent : les lions se volent des cellules.
+func _piloter(lion: Node2D, couloir: Dictionary, haut: float, lions: Array, pastilles: Array[Node]) -> void:
+	var centre: Vector2 = lion.global_position + lion.CENTRE
+	var visee := _pastille_visee(lion, lions, pastilles)
+	if visee != null:
+		lion.commandes.direction_voulue = (visee.global_position - centre).normalized()
+		lion.commandes.vomir_voulu = false
+		return
+	if centre.x >= couloir.max:
+		couloir.sens = -1.0
+		couloir.rangee = (couloir.rangee + 1) % HAUTEURS_JET.size()
+	elif centre.x <= couloir.min:
+		couloir.sens = 1.0
+		couloir.rangee = (couloir.rangee + 1) % HAUTEURS_JET.size()
+	var ecart_y: float = haut + HAUTEURS_JET[couloir.rangee] - lion.global_position.y
+	lion.commandes.direction_voulue = Vector2(couloir.sens, clampf(ecart_y / 60.0, -1.0, 1.0)).normalized()
+	lion.commandes.vomir_voulu = true
+
+
+func _tester_manche() -> void:
+	print("-- Manche à 4 lions, pilotée")
+	var main := await _charger_bataille(0)
+	var ville: Node2D = main.get_node("Ville")
+	var t: Territoire = ville.territoire
+	var lions: Array = main.lions
+	lions[0].commandes = Commandes.manuelles()  # le lion local est piloté par le test, comme les autres
+	await _attendre_depart()
+	var haut: float = ville.position.y - ville.tex_size.y / 2.0
+	var couloirs: Array[Dictionary] = []
+	for i in range(NB_LIONS):
+		var centre := TAILLE_BATAILLE.x * (i + 0.5) / NB_LIONS
+		couloirs.append({"min": maxf(centre - 350.0, 150.0), "max": minf(centre + 350.0, 1850.0),
+			"sens": 1.0 if i % 2 == 0 else -1.0, "rangee": i % HAUTEURS_JET.size()})
+	var jeux_au_depart: int = ville._tampons.size()
+	var jeux_max_par_frame := 0
+	var pire_frame_ms := 0.0
+	var instant := Time.get_ticks_usec()
+	for f in range(int(ReglesBataille.DUREE_MANCHE * Engine.physics_ticks_per_second)):
+		var pastilles := _pastilles(main)
+		for i in range(NB_LIONS):
+			_piloter(lions[i], couloirs[i], haut, lions, pastilles)
+		var jeux_avant: int = ville._tampons.size()
+		await physics_frame
+		jeux_max_par_frame = maxi(jeux_max_par_frame, ville._tampons.size() - jeux_avant)
+		var maintenant := Time.get_ticks_usec()
+		pire_frame_ms = maxf(pire_frame_ms, (maintenant - instant) / 1000.0)
+		instant = maintenant
+	GS.terminer_partie(true)
+	var scores: Array = range(NB_LIONS).map(func(i: int) -> int: return t.cellules_de(i))
+	var comptees: int = scores.reduce(func(somme: int, n: int) -> int: return somme + n, 0)
+	var personne := t.cellules_de(Territoire.PERSONNE)
+	var chargees := 0
+	for c in range(t.taille_grille.x * t.taille_grille.y):
+		if t.proprietaire(c) != Territoire.PERSONNE:
+			chargees += 1
+	var vols: Array = GS.joueurs.map(func(j: Joueur) -> int: return j.cellules_volees)
+	print("  MESURE manche de %d s : cellules %s (%.1f %% de la ville), %d chargées dont %d ne comptent pour personne (%.0f %%), couverture %.1f %%"
+		% [int(ReglesBataille.DUREE_MANCHE), scores, 100.0 * comptees / t.nb_peignables, chargees, chargees - comptees,
+			100.0 * (chargees - comptees) / maxi(chargees, 1), 100.0 * ville.progression()])
+	print("  MESURE vols %s, étourdissements infligés %s, chocs %s, crans %s"
+		% [vols, GS.joueurs.map(func(j: Joueur) -> int: return j.etourdissements_infliges),
+			GS.joueurs.map(func(j: Joueur) -> int: return j.chocs), GS.joueurs.map(func(j: Joueur) -> int: return j.crans)])
+	print("  MESURE jeux de tampons : %d générés pendant la manche (%d en cache), au plus %d dans une même frame ; frame la plus longue %.1f ms"
+		% [ville._tampons.size() - jeux_au_depart, ville._tampons.size(), jeux_max_par_frame, pire_frame_ms])
+	_check(scores.all(func(n: int) -> bool: return n > 0), "chaque lion possède des cellules en fin de manche (%s)" % [scores])
+	_check(comptees + personne == t.nb_peignables, "les scores et les cellules qui ne comptent pour personne font toute la ville")
+	_check(vols.any(func(n: int) -> bool: return n > 0), "les couloirs qui se chevauchent donnent des vols (%s)" % [vols])
+	_check(GS.joueurs.any(func(j: Joueur) -> bool: return j.crans > 1), "des pastilles sont ramassées en cours de manche")
+	_check(paused and main.get_node_or_null("GameOver") == null, "la fin de manche fige la bataille, sans le bilan du solo")
 	await _liberer(main)
