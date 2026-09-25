@@ -209,6 +209,12 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   couleurs du salon, par exemple `configurer_bataille(nb_joueurs, couleurs)`. Son `assert` sur le
   nombre de joueurs devra aussi devenir un clamp ou un `push_error` une fois que c'est le salon qui
   l'appelle (un salon mal formé ne doit pas planter la partie) ;
+- **phase 13** : `Regles` ne s'exécute sur l'hôte que pour ses événements ; ses requêtes de
+  mode (`taille_ecran`, `compte_le_territoire`) sont lues sur chaque poste (spec §3.1). Chaque
+  client doit donc appeler `GameState.configurer_bataille(n)` (sans écraser les couleurs déjà
+  attribuées par le salon, voir le point ci-dessus) avant que la scène de jeu ne charge,
+  sans quoi il reste sur `ReglesSolo` (posé par `EtatPartie._init`) : écran 2000×648 et aucun
+  territoire créé par sa `Ville` ;
 - **phase 11** : la palette de bataille (planche de la phase 7 : rouge `(0.90, 0.16, 0.16)`, bleu
   `(0.16, 0.39, 0.95)`, jaune `(0.98, 0.82, 0.10)`, vert `(0.18, 0.78, 0.25)`, magenta
   `(0.90, 0.20, 0.85)`, cyan `(0.10, 0.85, 0.90)`) est depuis la phase 8 la constante unique
@@ -264,6 +270,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 10 ter** : `GameState.prochain_index_couleur()` n'a plus d'appelant depuis la phase 10 bis
   (le Spawner lit `GameState.regles.pastille_a_offrir()`, que `ReglesSolo` tient depuis la phase 10,
   vérifications unitaires comprises) : la retirer ;
+- **phase 10 ter** : quand `Titre._ready` applique `taille_ecran()` (retour au titre en solo
+  2000×648), étendre le docstring de `Regles.taille_ecran()` ("appliquée par `Main` en entrant
+  dans la scène de jeu") avec "et par le titre" ;
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.

@@ -2,8 +2,11 @@ class_name Regles
 extends RefCounted
 ## Règles d'une partie : reçoivent les événements du jeu et décident de leurs effets.
 ## Chaque événement concerne le joueur reçu, qui n'est pas forcément le joueur local.
-## Sans effet par défaut ; chaque mode (solo, bataille) en dérive. Ne s'exécutent que sur
-## l'hôte (en solo, le poste est son propre hôte).
+## Sans effet par défaut ; chaque mode (solo, bataille) en dérive. Les événements (coups,
+## pastilles, chocs, vols, progression) ne s'exécutent que sur l'hôte (en solo, le poste
+## est son propre hôte) ; les requêtes de mode (`taille_ecran`, `compte_le_territoire`,
+## apparitions) sont lues sur chaque poste, qui doit donc brancher les mêmes règles
+## (`configurer_bataille(n)` chez les clients aussi, phase 13).
 
 ## Durée de la gerbe XXL donnée par une étoile, la même en solo et en bataille.
 const DUREE_ETOILE := 8.0
