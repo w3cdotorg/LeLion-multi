@@ -39,6 +39,12 @@ const AMPLITUDE_SECOUSSE := 6.0
 @export var facteur_choc: float = 1.2
 ## Vitesse d'écartement de deux lions qui se chevauchent, par pixel d'enfoncement.
 @export var raideur_choc: float = 8.0
+## Vitesse d'approche minimale (px/s) pour qu'un contact compte comme un choc ; en dessous,
+## les lions se bloquent quand même (`_bloquer_contre_les_lions`), sans secousse ni décompte.
+@export var approche_min_choc: float = 100.0
+## Délai minimal entre deux chocs comptés avec le même autre lion, pour qu'une poussée
+## continue ne rafale pas les chocs (la commande maintenue ramène aussitôt l'un vers l'autre).
+@export var delai_entre_chocs: float = 0.3
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var anim: AnimationPlayer = $AnimationPlayer
@@ -72,9 +78,16 @@ var _recul := Vector2.ZERO
 var _temps := 0.0
 var _clignotement: Tween
 var _secousse_restante := 0.0
+## Générateur propre au lion pour la secousse du sprite : ne pas consommer la séquence globale
+## de `randf_range`, dont dépendent le Spawner et les ennemis.
+var _rng := RandomNumberGenerator.new()
+## Horodatage (`Time.get_ticks_msec()`) du dernier choc compté avec chaque autre lion,
+## par identifiant d'instance ; entrées des lions libérés nettoyées à la volée.
+var _derniers_chocs: Dictionary = {}
 
 
 func _ready() -> void:
+	_rng.randomize()
 	if joueur == null:
 		joueur = GameState.joueur_local()
 	if commandes == null:
@@ -113,8 +126,16 @@ func _physics_process(delta: float) -> void:
 
 	var screen_rect := get_viewport_rect()
 	var sprite_size := sprite.texture.get_size()
-	global_position.x = clamp(global_position.x, 0, screen_rect.size.x - sprite_size.x)
-	global_position.y = clamp(global_position.y, 0, screen_rect.size.y - sprite_size.y)
+	var x_borne: float = clamp(global_position.x, 0, screen_rect.size.x - sprite_size.x)
+	var y_borne: float = clamp(global_position.y, 0, screen_rect.size.y - sprite_size.y)
+	# Un lion plaqué contre un bord n'a plus de vitesse fantôme sur cet axe : move_and_slide()
+	# ne connaît pas ce bord (ce n'est pas une collision), il ne l'a donc pas déjà annulée.
+	if x_borne != global_position.x:
+		velocity.x = 0.0
+	if y_borne != global_position.y:
+		velocity.y = 0.0
+	global_position.x = x_borne
+	global_position.y = y_borne
 	_signaler_vomi_sur_les_lions()
 
 
@@ -124,12 +145,16 @@ func _process(delta: float) -> void:
 			demarrer_vomi()
 	elif est_en_train_de_vomir:
 		arreter_vomi()
+	if (etoiles.visible or _barbouillage_actif()) and not joueur.est_etourdi():
+		# L'étourdissement peut finir sans passer par le signal (`Joueur.reinitialiser` en plein
+		# étourdissement, par exemple, qui n'émet rien) : les effets visuels se corrigent d'eux-mêmes.
+		_on_etourdissement_fini()
 	if etoiles.visible:
 		_tourner_etoiles()
 	if _secousse_restante > 0.0:
 		_secousse_restante = max(0.0, _secousse_restante - delta)
 		var amplitude := AMPLITUDE_SECOUSSE * _secousse_restante / DUREE_SECOUSSE
-		sprite.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * amplitude
+		sprite.offset = Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * amplitude
 
 
 ## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
@@ -248,19 +273,51 @@ func _tourner_etoiles() -> void:
 		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)
 
 
-## Auto-tamponneuses, au premier contact : chaque lion recule en proportion de la vitesse à
-## laquelle les deux se rapprochaient (un lion étourdi est donc poussé), et son sprite tremble.
+## Auto-tamponneuses, à chaque contact : la part de la vitesse commandée qui pointait vers
+## l'autre lion est annulée (sinon la commande maintenue y ramène aussitôt et re-déclenche un
+## choc à chaque frame, ~7/s en pratique) ; le lion doit donc réaccélérer avant de retraverser.
+## Le choc n'est compté, secoué et signalé aux règles que si l'approche était assez rapide et
+## que le délai anti-rafale est passé avec cet autre lion (un lion étourdi reste poussable).
 func _on_pare_chocs_area_entered(zone: Area2D) -> void:
 	var autre := zone.get_parent() as Lion
 	if autre == null or autre == self:
 		return
 	var normale := _normale_de_choc(autre)
 	var approche := (velocity - autre.velocity).dot(-normale)
-	_recul += normale * maxf(approche, 0.0) * facteur_choc
+	var vers_autre := _vitesse.dot(-normale)
+	if vers_autre > 0.0:
+		_vitesse += normale * vers_autre
+	if approche < approche_min_choc:
+		return
+	_nettoyer_derniers_chocs()
+	var maintenant := Time.get_ticks_msec()
+	var dernier: int = _derniers_chocs.get(autre.get_instance_id(), -1)
+	if dernier >= 0 and maintenant - dernier < delai_entre_chocs * 1000.0:
+		return
+	_derniers_chocs[autre.get_instance_id()] = maintenant
+	_recul += normale * approche * facteur_choc
 	_secousse_restante = DUREE_SECOUSSE
 	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
 	if multiplayer.is_server() and get_instance_id() < autre.get_instance_id():
 		GameState.regles.choc_entre_lions(joueur, autre.joueur)
+
+
+## Entrées du dictionnaire des délais anti-rafale dont l'autre lion n'existe plus (déconnexion,
+## fin de manche) : nettoyées à la volée, jamais par une passe périodique dédiée.
+func _nettoyer_derniers_chocs() -> void:
+	for id in _derniers_chocs.keys():
+		if instance_from_id(id) == null:
+			_derniers_chocs.erase(id)
+
+
+## Vrai si la tête porte encore un barbouillage visible (couleur d'agresseur appliquée).
+## `get_shader_parameter` renvoie `null` tant que `_barbouiller` ne l'a jamais fixé.
+func _barbouillage_actif() -> bool:
+	var mat := sprite.material as ShaderMaterial
+	if mat == null:
+		return false
+	var force: Variant = mat.get_shader_parameter("barbouillage_force")
+	return force != null and force > 0.0
 
 
 ## Pendant le contact, un lion ne s'enfonce pas dans l'autre (la part de sa vitesse dirigée
@@ -275,7 +332,8 @@ func _bloquer_contre_les_lions(v: Vector2) -> Vector2:
 		if vers_autre > 0.0:
 			v += normale * vers_autre
 		var enfoncement := 2.0 * _rayon_choc - pare_chocs.global_position.distance_to(autre.pare_chocs.global_position)
-		v += normale * maxf(enfoncement, 0.0) * raideur_choc
+		var vitesse_ecartement: float = minf(maxf(enfoncement, 0.0) * raideur_choc, speed)
+		v += normale * vitesse_ecartement
 	return v
 
 

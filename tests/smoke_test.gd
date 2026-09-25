@@ -774,6 +774,7 @@ func _run() -> void:
 	lb.commandes.direction_voulue = Vector2.LEFT
 	await _frames(5)
 	_check(lb._vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
+	materiau_bleu.set_shader_parameter("barbouillage_force", 0.5)  # pour un check discriminant : un ennemi doit bien la remettre à 0
 	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
 	_check(j_bleu.est_etourdi() and lb._vitesse == Vector2.ZERO and lb._recul.x > 0.0 and lb.etoiles.visible,
 		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
@@ -824,9 +825,23 @@ func _run() -> void:
 	j_bleu.etourdi_restant = 0.0
 	j_bleu.invulnerable_restant = 0.0
 
+	# Auto-guérison des effets visuels : `Joueur.reinitialiser` n'émet aucun signal
+	# (contrairement à `Joueur.etourdir`) ; le lion doit s'en remettre tout seul au `_process` suivant
+	var couleurs_j_bleu := j_bleu.couleurs_debloquees.duplicate()
+	GS.regles.lion_touche_par_vomi(j_bleu, j_rouge, lb.global_position + lb.CENTRE + Vector2(0, -80))
+	await _frames(2)
+	_check(j_bleu.est_etourdi() and lb.etoiles.visible and materiau_bleu.get_shader_parameter("barbouillage_force") > 0.0,
+		"(pré-condition) le lion bleu est étourdi et barbouillé, étoiles visibles")
+	j_bleu.reinitialiser(3, couleurs_j_bleu)
+	await _frames(3)
+	_check(not lb.etoiles.visible and materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0,
+		"Joueur.reinitialiser en plein étourdissement n'émet rien : étoiles et barbouillage se corrigent tout seuls")
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
 	# Zones de contact : trois, le long de la parabole, jusqu'au point de chute
 	var zones: Array[Area2D] = lr.zones_contact
-	_check(zones.size() == 3 and zones[2].position == lr.gerbe_traceuse.position
+	_check(zones.size() == 3 and zones[2].position.is_equal_approx(lr.gerbe_traceuse.position)
 		and zones[0].position.y < zones[1].position.y and zones[1].position.y < zones[2].position.y
 		and zones.all(func(z: Area2D) -> bool: return z.collision_layer == 0 and not z.monitoring),
 		"trois zones de contact sur la parabole, la dernière au point de chute, inertes hors du vomi")
@@ -878,6 +893,28 @@ func _run() -> void:
 		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
 	_check(distance_min > 2 * 45.0 - 15.0 and j_rouge.chocs == 1,
 		"les lions ne s'enfoncent pas l'un dans l'autre (distance min %.0f px), un seul choc compté" % distance_min)
+
+	# Poussée continue de 2 s (120 ticks physiques) contre un lion immobile : avant cette
+	# correction, seul `_recul` s'opposait à `_vitesse` (qui ramenait aussitôt vers l'autre) et
+	# chaque re-contact comptait, jusqu'à 14 chocs en 2 s ; `_vitesse` doit maintenant se
+	# réaccélérer et le délai anti-rafale limiter le décompte.
+	lr._recul = Vector2.ZERO
+	lb._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	var chocs_rouge_avant: int = j_rouge.chocs
+	var chocs_bleu_avant: int = j_bleu.chocs
+	distance_min = 1e9
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	for i in range(120):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_rouge.chocs - chocs_rouge_avant <= 2 and j_bleu.chocs - chocs_bleu_avant <= 2,
+		"une poussée continue de 2 s ne rafale pas les chocs (%d, %d)" % [j_rouge.chocs - chocs_rouge_avant, j_bleu.chocs - chocs_bleu_avant])
+	_check(distance_min >= 75.0, "les deux lions restent à au moins 75 px l'un de l'autre pendant la poussée continue (min %.0f px)" % distance_min)
+
 	# Un lion étourdi peut être poussé
 	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
 	lb._recul = Vector2.ZERO
