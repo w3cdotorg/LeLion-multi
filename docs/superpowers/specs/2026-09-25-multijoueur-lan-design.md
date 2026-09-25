@@ -12,7 +12,8 @@ et se rentrent dedans façon auto-tamponneuses.
 Le **mode solo reste jouable** avec ses sensations actuelles (cœurs, arc-en-ciel, seuils 85/90/95 %,
 arcade, attract mode, records).
 
-Contexte d'usage : une petite LAN entre amis, tous sous Windows, en 16:9.
+Contexte d'usage : une petite LAN entre amis, tous sous Windows, en 16:9, **en Wi-Fi** (gigue
+et pertes de paquets à prévoir).
 
 ### Hors périmètre (YAGNI)
 
@@ -20,7 +21,9 @@ Contexte d'usage : une petite LAN entre amis, tous sous Windows, en 16:9.
   `MultiplayerPeer` laisse la porte ouverte à un relais WebSocket plus tard.
 - macOS et Linux pour le multi. Le code reste portable, seul le preset Windows est livré.
 - Bots IA, plusieurs joueurs sur un même PC, arrivée en cours de manche, migration d'hôte,
-  prédiction côté client, internet (hors LAN), commandes tactiles en multi.
+  internet (hors LAN), commandes tactiles en multi.
+- Rembobinage avec rejeu des commandes (le lion local est prédit avec une correction douce, voir
+  4.1) et prédiction des lions distants (ils sont interpolés).
 - Enchaînement de manches en « 3 manches gagnantes » (possible plus tard).
 
 ## 2. Décisions de jeu
@@ -53,7 +56,8 @@ de jeu.
 |---|---|---|
 | `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `immunite_restante`, `cellules`, stats (étourdissements infligés, cellules volées, chocs). En solo il porte aussi `couleurs_debloquees`, `vies`. | rien |
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
-| `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomit() -> bool`. Implémentations : `CommandesLocales` (actions InputMap existantes), `CommandesReseau` (dernier état reçu du client), `CommandesPilote` (attract mode, ex-`Pilote.gd`). | Input |
+| `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomit() -> bool`. Implémentations : `CommandesLocales` (actions InputMap existantes), `CommandesReseau` (commandes numérotées reçues du client, dédoublonnées), `CommandesPilote` (attract mode, ex-`Pilote.gd`). | Input |
+| `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne connaît ni les règles ni le réseau. | `Joueur`, `Commandes` |
 | `Regles` (Node) | Réagit aux événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression) et décide des effets. `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel) + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille). | rien |
@@ -62,19 +66,26 @@ de jeu.
 
 ### 3.2 Flux d'une frame (bataille)
 
-1. Chaque client envoie à l'hôte `(direction, vomit)` par RPC `unreliable_ordered` à chaque frame
+1. Chaque client applique ses commandes à son lion **immédiatement** (prédiction), puis les envoie
+   à l'hôte, numérotées, avec les 3 précédentes, par RPC `unreliable_ordered` à chaque frame
    physique. L'hôte les stocke dans la `CommandesReseau` du lion correspondant.
 2. L'hôte simule tous les lions (`move_and_slide`, collisions entre lions, ennemis, pastilles).
 3. Les traceuses de l'hôte détectent la ville et les autres lions. Les contacts remontent aux
    `Regles`.
 4. Les tampons de peinture sont appliqués sur l'hôte et **diffusés sous forme d'événements**.
-5. `MultiplayerSynchronizer` réplique position, orientation, état de vomi, étourdissement et
-   crans de chaque lion. Les clients interpolent.
+5. `MultiplayerSynchronizer` réplique position, vitesse, orientation, état de vomi,
+   étourdissement, crans et numéro de la dernière commande traitée de chaque lion. Les clients
+   interpolent les lions distants et recalent leur lion local (4.1).
 
 ## 4. Réseau et salon
 
 - **Transport** : `ENetMultiplayerPeer`, port UDP **7777**, 6 pairs maximum (hôte compris).
   Canal 0 : état et commandes. Canal 1 (fiable ordonné) : tampons de peinture.
+- **Redondance des commandes** : chaque paquet de commandes porte la commande courante et les 3
+  précédentes (numérotées). L'hôte ignore les numéros déjà vus : un paquet Wi-Fi perdu ne fait
+  pas sauter le lion.
+- **Interpolation** : les lions distants sont affichés avec un tampon d'environ 2 envois
+  (≈ 50 ms), pour lisser la gigue.
 - **Découverte** : l'hôte émet toutes les secondes une balise UDP broadcast sur le port **7778** :
   `LELION|<version>|<pseudo hôte>|<nb joueurs>|<id niveau>`. L'écran « Rejoindre » écoute et liste
   les parties (expiration après 3 s sans balise). Saisie d'IP en secours.
@@ -94,6 +105,27 @@ de jeu.
   - client perdu en salon : sa carte se libère ;
   - client perdu en manche : son lion disparaît, ses cellules restent, il reste au classement en
     grisé.
+
+### 4.1 Prédiction du lion local
+
+Objectif : pas de délai perceptible entre la touche et le mouvement de son propre lion, même avec
+une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 80 à 150 ms
+(aller-retour + tampon d'interpolation + gigue).
+
+- **Simulation locale** : le client déplace son lion avec ses commandes dès la frame courante, avec
+  exactement le même code de déplacement que l'hôte (`Lion`, accélération, bornes de l'écran).
+- **Correction douce** : à chaque état reçu, le client compare la position autoritaire à sa
+  position prédite. Écart inférieur à 4 px : rien. Au-delà : il rapproche son lion de la position
+  de l'hôte sur 100 à 150 ms. Au-delà de 200 px (téléportation, désynchronisation grave) :
+  recalage immédiat.
+- **Décisions de l'hôte** : étourdissement, recul d'un coup et fin de manche s'appliquent à
+  réception. Pendant un étourdissement, la prédiction est suspendue et le lion suit l'hôte.
+- **Chocs entre lions** : le client simule le choc de son lion contre la position affichée des
+  autres, pour un « boing » immédiat. L'hôte fait foi, la correction douce absorbe l'écart.
+- **Gerbe** : les particules du lion local partent dès l'appui (visuel seul). La peinture reste
+  décidée par l'hôte ; les 0,6 s de vol du jet masquent la latence.
+- **Simulateur de latence** (debug) : option de lancement `--latence=80 --gigue=40 --pertes=5`
+  qui retarde, mélange et jette des paquets dans notre couche d'envoi, pour tester en localhost.
 
 ## 5. Lion
 
@@ -186,6 +218,9 @@ de jeu.
 - **Tests unitaires headless** (`tests/unitaires.gd`) : charge et vol de cellule, seuil de
   possession, attribution et conflits de couleurs, refus de version, sérialisation des événements
   de tampon.
+- **Tests de prédiction** : un lion prédit sans pertes reste à moins de 4 px de l'hôte ; avec
+  80 ms de latence, 40 ms de gigue et 5 % de pertes, l'écart converge sous 4 px en 150 ms après
+  l'arrêt des commandes, et aucune commande n'est appliquée deux fois par l'hôte.
 - **Test réseau de bout en bout** (`tests/reseau/lancer.sh` + `tests/reseau/joueur.gd`) : 1 hôte +
   3 clients headless sur localhost, commandes scriptées. Vérifie à la fin : empreinte identique
   des propriétaires de cellules chez tous, scores identiques, même nombre de tampons reçus,
@@ -203,7 +238,8 @@ de jeu.
 - Pas de templates d'export sur le Mac de développement : l'`.exe` vient de la CI (ou d'une
   installation locale des templates si besoin).
 - README : section « Jouer en LAN » (ports 7777/7778 UDP, SmartScreen « Exécuter quand même »,
-  pare-feu Windows sur l'hôte en réseau Privé, repli par IP).
+  pare-feu Windows sur l'hôte en réseau Privé, repli par IP, hôte en Ethernet si possible, Wi-Fi
+  5 GHz).
 
 ## 12. Phases (le découpage exact viendra du plan)
 
@@ -213,14 +249,19 @@ Chaque phase touche 5 fichiers au plus, se termine par les tests verts, et atten
    allégé. Solo identique.
 2. Teinte du lion (masques, shader), gerbe mono-couleur, étourdissement, collisions.
 3. Autoload `Reseau`, écran Réseau, salon, viewport 16:9.
-4. `ReglesBataille`, grille de propriété, synchro des tampons et des scores, test réseau.
+4. `ReglesBataille`, grille de propriété, synchro des tampons et des scores, test réseau (sans
+   prédiction).
+4 bis. Prédiction du lion local, redondance des commandes, interpolation, simulateur de latence ;
+   le test réseau repasse sous latence simulée.
 5. HUD bataille, chrono, résultats, musique.
 6. Export Windows, CI, README.
 
 ## 13. Risques
 
-- **Sensation de latence** du lion local sans prédiction : négligeable en LAN filaire, à surveiller
-  en Wi-Fi. Parade : prédiction du seul lion local.
+- **Wi-Fi** : gigue et pertes. Parades : prédiction du lion local, redondance des commandes,
+  interpolation (4.1). Conseils le jour J (README) : l'hôte en Ethernet si possible, bande 5 GHz.
+- **Correction visible** si l'hôte et le client divergent souvent (chocs en chaîne) : la
+  correction douce peut donner un léger effet élastique. Accepté ; seuils réglables.
 - **Broadcast filtré** (réseau classé Public, Wi-Fi invité) : repli par IP, documenté.
 - **Coût du tamponnage** à 6 joueurs sur chaque machine (6 blits par frame + mise à jour de la
   texture) : à mesurer en phase 4. Parade : regrouper la mise à jour de texture par frame (déjà le
