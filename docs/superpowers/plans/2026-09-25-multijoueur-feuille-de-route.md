@@ -175,15 +175,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sont `null` si la partie se termine pendant l'intro (`SCRIPT ERROR` dans `tests/screenshots.gd`) ;
   et le coup de `tests/screenshots.gd` (vers la ligne 96) tombe pendant l'intro et n'a aucun effet.
   Relancer `tests/screenshots.gd` à la main après correction (la CI ne le lance pas) ;
-- **la prochaine phase qui touche `Regles.gd`, `ReglesSolo.gd` et `ReglesBataille.gd`** :
-  `ReglesBataille.etoile_ramassee` lit `ReglesSolo.DUREE_ETOILE` : les règles de
-  bataille ne devraient pas dépendre des règles du solo. Monter `DUREE_ETOILE` dans la base
-  `Regles`. De même, `ReglesSolo` répète en ligne le garde-fou
-  `partie.partie_en_cours and partie.pret` que `ReglesBataille._manche_en_cours()` a déjà nommé :
-  monter `_manche_en_cours()` dans la base `Regles` et le faire utiliser par les deux. Une fois que
-  `Scripts/Lion.gd` ne lira plus directement `GameState.DUREE_INVULNERABILITE` (pour le nombre de
-  clignotements), descendre cette constante de `GameState` vers `ReglesSolo`, seule règle qui s'en
-  sert encore ;
+- **phase 9 bis** : `Scripts/Lion.gd` ne lit plus `GameState.DUREE_INVULNERABILITE` (il clignote
+  sur `joueur.invulnerable_restant` depuis la phase 8 bis) : descendre cette constante de
+  `GameState` vers `ReglesSolo`, seule règle qui s'en sert encore (`DUREE_ETOILE` et
+  `_manche_en_cours()` sont dans la base `Regles` depuis la phase 9) ;
 - **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
   lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
   passer sous le lion près du bord ;
@@ -209,6 +204,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   9 bis), qui l'incrémentent pendant la manche. En bataille, les couleurs débloquées d'un joueur
   sont ses trois nuances (données par `Regles.couleurs_de_depart`) : c'est ce que reçoivent la
   traceuse et `Ville.peindre` ;
+- **phase 14** : quand un joueur quitte la manche, ses cellules restent au classement (spec §4)
+  mais `Territoire` n'a pas encore d'opération pour les libérer ou les geler : à décider avec la
+  gestion des déconnexions ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
@@ -232,7 +230,4 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
-  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
-- `Scripts/Regles.gd` : la docstring de `lion_touche_par_ennemi` (« `origine` = position de
-  l'ennemi ») doit renvoyer à `Ennemi.origine_du_coup` (le peintre donne x du peintre, y du lion)
-  — à faire par la prochaine phase qui touche `Regles.gd`.
+  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1).
