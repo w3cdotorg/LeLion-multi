@@ -293,8 +293,10 @@ func _tester_regles_solo() -> void:
 	local.activer_bonus(1.0)
 	_check(not r.etoile_peut_apparaitre(), "pas d'étoile pendant une gerbe XXL")
 	local.bonus_restant = 0.0
-	for i in range(2, gs.nb_couleurs_total()):
+	for i in range(2, gs.nb_couleurs_total() - 1):
 		local.debloquer_couleur(gs.couleur(i))
+	_check(r.pastille_a_offrir() == gs.nb_couleurs_total() - 1, "six couleurs : la dernière pastille (violet) est encore offerte")
+	local.debloquer_couleur(gs.couleur(gs.nb_couleurs_total() - 1))
 	_check(r.pastille_a_offrir() == -1, "toutes les couleurs débloquées : plus de pastille à offrir")
 	_check(r.coeurs_en_jeu() and not r.coeur_peut_apparaitre(), "en Facile, des cœurs, mais aucun tant que le joueur a toutes ses vies")
 	local.vies = 2
