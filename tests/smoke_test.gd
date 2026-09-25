@@ -538,6 +538,46 @@ func _run() -> void:
 	_check(lion_autre.est_en_train_de_vomir, "le lion vomit quand ses commandes manuelles le demandent")
 	lion_autre.commandes.vomir_voulu = false
 	await _frames(2)
+
+	# Ennemis et pastilles signalent le lion qu'ils touchent, pas le joueur local
+	var local: Joueur = GS.joueur_local()
+	var vies_local: int = local.vies
+	var couleurs_local: int = local.couleurs_debloquees.size()
+	var touches_locales: Array[Vector2] = []
+	var sur_touche_locale := func(o: Vector2) -> void: touches_locales.append(o)
+	GS.lion_touche.connect(sur_touche_locale)
+	GS.partie_en_cours = true  # la partie Hardcore est finie : les règles ignorent les coups hors partie
+	lion_autre.commandes.direction_voulue = Vector2.ZERO
+	lion_autre.global_position = Vector2(1400, 300)  # loin du lion local, resté dans la scène
+	await _frames(1)
+	autre.vies = 3  # deux coups à venir : jamais le coup fatal, qui terminerait la partie
+	autre.invulnerable_restant = 0.0
+	var centre_autre: Vector2 = lion_autre.global_position + Vector2(68, 66)
+	var coccinelle_autre: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_autre.position = centre_autre
+	root.add_child(coccinelle_autre)
+	await _frames(3)
+	_check(autre.vies == 2 and local.vies == vies_local and touches_locales.is_empty(),
+		"une coccinelle retire une vie au joueur du lion touché, pas au joueur local")
+	coccinelle_autre.queue_free()
+	autre.invulnerable_restant = 0.0
+	var soucoupe_autre: Node2D = load("res://Scenes/Soucoupe.tscn").instantiate()
+	soucoupe_autre.position = centre_autre
+	root.add_child(soucoupe_autre)
+	await _frames(3)
+	_check(autre.vies == 1 and local.vies == vies_local and touches_locales.is_empty(),
+		"une soucoupe retire une vie au joueur du lion touché, pas au joueur local")
+	soucoupe_autre.queue_free()
+	var pastille_autre: Node2D = load("res://Scenes/ColorPickup.tscn").instantiate()
+	pastille_autre.couleur_index = 4
+	pastille_autre.position = centre_autre
+	root.add_child(pastille_autre)
+	await _frames(3)
+	_check(not is_instance_valid(pastille_autre) and autre.couleurs_debloquees.has(GS.couleur(4))
+		and local.couleurs_debloquees.size() == couleurs_local,
+		"une pastille ramassée par un lion va à son joueur, pas au joueur local")
+	GS.lion_touche.disconnect(sur_touche_locale)
+	GS.partie_en_cours = false
 	lion_autre.free()
 	_check(autre.couleur_debloquee.get_connections().is_empty() and autre.touche.get_connections().is_empty(),
 		"le lion libéré se désabonne de son joueur")

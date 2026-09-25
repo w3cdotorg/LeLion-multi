@@ -52,12 +52,12 @@ func _physics_process(delta: float) -> void:
 	if etat != Etat.REPOS:
 		for body in get_overlapping_bodies():
 			if body.is_in_group("lion"):
-				GameState.toucher_lion(Vector2(global_position.x, body.global_position.y))
+				GameState.regles.lion_touche_par_ennemi(body.joueur, Vector2(global_position.x, body.global_position.y))
 
 
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("lion"):
-		GameState.toucher_lion(Vector2(global_position.x, body.global_position.y))
+		GameState.regles.lion_touche_par_ennemi(body.joueur, Vector2(global_position.x, body.global_position.y))
 
 
 ## Facteur appliqué aux durées : 1 au début, `acceleration_max` quand la ville est presque peinte.
