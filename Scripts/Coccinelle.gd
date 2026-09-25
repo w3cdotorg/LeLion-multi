@@ -37,6 +37,9 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 
+## Les contacts ne sont tranchés que par l'hôte (en solo, le poste est son propre hôte).
 func _on_body_entered(body: Node2D) -> void:
+	if not multiplayer.is_server():
+		return
 	if body.is_in_group("lion"):
-		GameState.toucher_lion(global_position)
+		GameState.regles.lion_touche_par_ennemi(body.joueur, global_position)
