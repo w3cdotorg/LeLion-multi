@@ -199,8 +199,19 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - activer `rendering/viewport/hdr_2d` changerait les valeurs lues par `Shaders/Lion.gdshader` et
   décalerait ses seuils de masque (valeur, saturation) : refaire alors la planche de contrôle de la
   phase 7 et régler les seuils ;
-- **phase 16** : chaque machine simule le choc de son lion (`Lion._on_pare_chocs_area_entered` :
-  recul, secousse), mais seul l'hôte le signale aux règles ; l'étourdissement, lui, ne vient que
+- **phase 14** : sur un client, seul le lion local se déplace (`move_and_slide`, `_recul`,
+  blocage entre lions par `_bloquer_contre_les_lions`) ; les lions distants ne reçoivent que les
+  réactions visuelles (secousse, étoiles, barbouillage, clignotement) et leur position répliquée.
+  `velocity` doit donc être répliquée : le calcul d'approche des chocs
+  (`Lion._on_pare_chocs_area_entered`) la lit ;
+- **avant la phase 16** : `Lion.gd` a grossi phase après phase (pare-chocs, présentation de
+  l'étourdissement, zones de contact de la gerbe) ; le découper en composants avant d'y ajouter la
+  prédiction, en une étape à part (≤ 5 fichiers : `Lion.gd`, `Scenes/Lion.tscn`, 2 à 3 nouveaux
+  scripts) ;
+- **phase 16** : seul le lion local simule son choc, par sa propre prédiction
+  (`Lion._on_pare_chocs_area_entered` : recul, secousse) ; un lion distant ne simule jamais de
+  choc localement (voir le point de la phase 14 ci-dessus), il ne fait que rejouer la réaction
+  visuelle reçue. Seul l'hôte signale le choc aux règles ; l'étourdissement, lui, ne vient que
   des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
