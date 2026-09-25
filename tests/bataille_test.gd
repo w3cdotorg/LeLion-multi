@@ -11,6 +11,12 @@ const NB_LIONS := 4
 const TAILLE_BATAILLE := Vector2(2000, 1125)
 const HAUTEURS_JET: Array[float] = [-233.0, -200.0, -270.0]  # y du lion sous le haut de la skyline, comme le pilote de la démo
 const DISTANCE_PASTILLE_TENTANTE := 900.0  # le pilote de la manche va chercher une pastille dans ce rayon
+## Réglage du territoire (spec §6) : sur une passe pleine vitesse, les cellules que le territoire
+## fait compter, rapportées à celles que compte la couverture du solo pour la même passe, restent
+## dans ces bornes ; et la même passe sur les cellules d'un adversaire lui en vole au moins cette
+## part.
+const CIBLE_RAPPORT_COUVERTURE := Vector2(0.7, 1.3)
+const CIBLE_PART_VOLEE := 0.4
 
 var _echecs := 0
 var GS: Node
@@ -43,6 +49,7 @@ func _run() -> void:
 	await _tester_scene()
 	await _tester_apparitions()
 	await _tester_peintre()
+	await _tester_reglage_territoire()
 	await _tester_manche()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
@@ -357,3 +364,77 @@ func _tester_manche() -> void:
 	_check(GS.joueurs.any(func(j: Joueur) -> bool: return j.crans > 1), "des pastilles sont ramassées en cours de manche")
 	_check(paused and main.get_node_or_null("GameOver") == null, "la fin de manche fige la bataille, sans le bilan du solo")
 	await _liberer(main)
+
+
+## Passe pleine vitesse d'un lion en vomissant, de la gauche vers x = 1700, à la hauteur de jet
+## médiane du pilote de la démo ; puis la gerbe en vol retombe.
+func _passe(lion: CharacterBody2D, haut: float) -> void:
+	lion.global_position = Vector2(0, haut + HAUTEURS_JET[1])
+	lion.commandes.direction_voulue = Vector2.RIGHT
+	await _frames(20)  # l'élan : pleine vitesse avant de vomir
+	lion.commandes.vomir_voulu = true
+	while lion.global_position.x < 1700.0:
+		await physics_frame
+	lion.commandes.vomir_voulu = false
+	lion.commandes.direction_voulue = Vector2.ZERO
+	await _frames(60)
+
+
+## Sur une ville vierge du niveau, au cran donné : x = cellules que la passe d'un premier lion
+## fait compter au territoire, rapportées à celles de la couverture du solo ; y = part de ces
+## cellules que la même passe d'un second lion lui vole. Scène propre : une ville, deux lions.
+func _mesurer_passe(niveau: int, crans: int) -> Vector2:
+	GS.niveau_courant = niveau
+	GS.configurer_bataille(2)
+	GS.nouvelle_partie()
+	GS.pret = true
+	var ville: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	root.add_child(ville)
+	ville.charger_skyline(load(GS.niveau().texture))
+	ville.position = Vector2(TAILLE_BATAILLE.x / 2.0, TAILLE_BATAILLE.y - ville.tex_size.y / 2.0)
+	var lions: Array[CharacterBody2D] = []
+	for j: Joueur in GS.joueurs:
+		for i in range(crans - 1):
+			j.gagner_cran()
+		var l: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+		l.joueur = j
+		l.commandes = Commandes.manuelles()
+		l.position = Vector2.ZERO  # en haut à gauche, loin de la bande peinte
+		root.add_child(l)
+		lions.append(l)
+	var haut: float = ville.position.y - ville.tex_size.y / 2.0
+	var t: Territoire = ville.territoire
+	await _passe(lions[0], haut)
+	ville.mesurer_progression()
+	var cellules_a := t.cellules_de(0)
+	var rapport := float(cellules_a) / maxi(ville.cellules_peintes, 1)
+	lions[0].global_position = Vector2.ZERO
+	await _passe(lions[1], haut)
+	var part_volee := float(GS.joueurs[1].cellules_volees) / maxi(cellules_a, 1)
+	print("  MESURE niveau %d, rayon %d : territoire %d / couverture %d = %.2f ; volées par une passe : %d (%.0f %%)"
+		% [niveau, int(lions[0].traceuse_shape.shape.radius), cellules_a, ville.cellules_peintes, rapport,
+			GS.joueurs[1].cellules_volees, 100.0 * part_volee])
+	for l in lions:
+		l.free()
+	ville.free()
+	return Vector2(rapport, part_volee)
+
+
+func _tester_reglage_territoire() -> void:
+	print("-- Réglage du territoire sur une passe pleine vitesse")
+	root.content_scale_size = Vector2i(TAILLE_BATAILLE)  # l'écran d'une bataille (sans Main dans cette section)
+	var rapport_min := INF
+	var rapport_max := 0.0
+	var part_volee_min := INF
+	for niveau in range(GS.NIVEAUX.size()):
+		for crans in [1, 2, 4, 7]:
+			var mesure := await _mesurer_passe(niveau, crans)
+			rapport_min = minf(rapport_min, mesure.x)
+			rapport_max = maxf(rapport_max, mesure.x)
+			part_volee_min = minf(part_volee_min, mesure.y)
+	_check(rapport_min >= CIBLE_RAPPORT_COUVERTURE.x and rapport_max <= CIBLE_RAPPORT_COUVERTURE.y,
+		"une passe fait compter au territoire à peu près les cellules que compterait la couverture du solo (%.2f à %.2f, cible %.1f à %.1f)"
+			% [rapport_min, rapport_max, CIBLE_RAPPORT_COUVERTURE.x, CIBLE_RAPPORT_COUVERTURE.y])
+	_check(part_volee_min >= CIBLE_PART_VOLEE,
+		"une passe pleine vitesse vole au moins %.0f %% des cellules d'un adversaire, dès le premier cran (%.0f %%)"
+			% [100.0 * CIBLE_PART_VOLEE, 100.0 * part_volee_min])
