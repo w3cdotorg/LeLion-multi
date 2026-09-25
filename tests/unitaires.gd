@@ -89,6 +89,58 @@ func _tester_joueur() -> void:
 	_check(j.vies == 1 and not j.bonus_actif() and j.couleurs_debloquees.is_empty() and j.coups_recus == 0,
 		"reinitialiser remet vies, bonus, couleurs et coups à l'état de départ")
 
+	# Crans de gerbe : de 1 à CRANS_MAX, signalés
+	var crans_recus: Array[int] = []
+	j.crans_changes.connect(func(c: int) -> void: crans_recus.append(c))
+	_check(j.crans == 1, "un joueur réinitialisé a un cran de gerbe")
+	for i in range(Joueur.CRANS_MAX - 1):
+		j.gagner_cran()
+	_check(j.crans == Joueur.CRANS_MAX and crans_recus == [2, 3, 4, 5, 6, 7], "chaque cran gagné est signalé, jusqu'à 7 (%s)" % [crans_recus])
+	_check(not j.gagner_cran() and j.crans == Joueur.CRANS_MAX and crans_recus.size() == 6, "au maximum, un cran de plus est refusé sans signal")
+
+	# Nuances de la gerbe de bataille
+	j.couleur = Color(0.16, 0.39, 0.95)
+	var n: Array[Color] = j.nuances()
+	_check(n.size() == 3 and n[1] == j.couleur and n[0].get_luminance() < n[1].get_luminance()
+		and n[2].get_luminance() > n[1].get_luminance() and n.all(func(c: Color) -> bool: return c.a == 1.0),
+		"trois nuances opaques : foncée, la couleur du joueur, claire")
+
+	# Étourdissement puis immunité : une seule minuterie de protection
+	var etourdissements: Array[String] = []
+	j.etourdi.connect(func(o: Vector2, b: Color) -> void: etourdissements.append("etourdi:%d,%d:%s" % [int(o.x), int(o.y), b.to_html()]))
+	j.etourdissement_fini.connect(func() -> void: etourdissements.append("fini"))
+	j.etourdir(1.5, 1.0, Vector2(5, 6), Color.RED)
+	_check(etourdissements == ["etourdi:5,6:%s" % Color.RED.to_html()], "etourdir signale l'origine et la couleur du barbouillage (%s)" % [etourdissements])
+	_check(j.est_etourdi() and is_equal_approx(j.etourdi_restant, 1.5) and j.est_invulnerable() and is_equal_approx(j.invulnerable_restant, 2.5),
+		"étourdi 1,5 s, et invulnérable pendant l'étourdissement puis 1 s d'immunité")
+	j.avancer(1.0)
+	_check(j.est_etourdi() and etourdissements.size() == 1, "l'étourdissement dure encore")
+	j.avancer(0.6)
+	_check(not j.est_etourdi() and j.etourdi_restant == 0.0 and etourdissements.back() == "fini",
+		"la fin de l'étourdissement est signalée, jamais en négatif")
+	_check(j.est_invulnerable() and is_equal_approx(j.invulnerable_restant, 0.9), "puis l'immunité continue seule (0,9 s restantes)")
+	j.avancer(1.0)
+	_check(not j.est_invulnerable() and etourdissements.size() == 2, "l'immunité s'arrête, la fin n'est signalée qu'une fois")
+
+	# Réinitialiser : crans, étourdissement et statistiques repartent de zéro, en silence
+	j.gagner_cran()
+	j.etourdir(1.5, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	j.etourdissements_infliges = 2
+	j.cellules_volees = 30
+	j.chocs = 4
+	crans_recus.clear()
+	etourdissements.clear()
+	j.reinitialiser(3)
+	_check(j.crans == 1 and not j.est_etourdi() and not j.est_invulnerable() and j.etourdissements_infliges == 0
+		and j.cellules_volees == 0 and j.chocs == 0 and crans_recus.is_empty() and etourdissements.is_empty(),
+		"reinitialiser remet crans, étourdissement et statistiques à zéro sans signal")
+	j.reinitialiser(3, j.nuances())
+	_check(j.couleurs_debloquees == j.nuances() and recues.is_empty(), "reinitialiser peut donner des couleurs de départ, sans les signaler")
+	var avant: Array[Color] = j.couleurs_debloquees
+	j.reinitialiser(3)
+	_check(j.couleurs_debloquees.is_empty() and is_same(avant, j.couleurs_debloquees),
+		"les couleurs sont remises à zéro en place (le tableau lu par le lion et le HUD reste le même)")
+
 
 func _tester_game_state() -> void:
 	print("-- GameState (état de partie)")
