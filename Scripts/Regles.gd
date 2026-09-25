@@ -5,6 +5,9 @@ extends RefCounted
 ## Sans effet par défaut ; chaque mode (solo, bataille) en dérive. Ne s'exécutent que sur
 ## l'hôte (en solo, le poste est son propre hôte).
 
+## Durée de la gerbe XXL donnée par une étoile, la même en solo et en bataille.
+const DUREE_ETOILE := 8.0
+
 ## État de la partie (l'autoload GameState, typé par sa classe EtatPartie), fourni à la
 ## construction : les règles ne dépendent pas d'un global, ce qui permet de les tester (un test
 ## `--script` est compilé avant l'enregistrement des autoloads).
@@ -20,9 +23,17 @@ func couleurs_de_depart(_joueur: Joueur) -> Array[Color]:
 	return []
 
 
-## Un ennemi (soucoupe, coccinelle, peintre) touche le lion du joueur. `origine` = position de
-## l'ennemi, pour le recul (Vector2.INF si inconnue). Le peintre le signale à chaque frame de
-## chevauchement : un joueur déjà frappé doit être ignoré.
+## Vrai si la partie se joue au territoire (bataille) : la ville tient alors, en plus de sa
+## mesure de couverture, une grille de propriété (`Territoire`) qui compte les cellules de
+## chaque joueur. Lu par la ville quand elle charge sa skyline.
+func compte_le_territoire() -> bool:
+	return false
+
+
+## Un ennemi (soucoupe, coccinelle, peintre) touche le lion du joueur. `origine` vient de
+## `Ennemi.origine_du_coup` (le peintre donne x du peintre, y du lion), pour le recul
+## (Vector2.INF si inconnue). Le peintre le signale à chaque frame de chevauchement : un
+## joueur déjà frappé doit être ignoré.
 func lion_touche_par_ennemi(_joueur: Joueur, _origine: Vector2) -> void:
 	pass
 
@@ -58,3 +69,15 @@ func coeur_ramasse(_joueur: Joueur) -> bool:
 ## La ville vient de mesurer la part peinte (0 à 1).
 func progression_mesuree(_ratio: float) -> void:
 	pass
+
+
+## Un tampon du lion de `voleur` vient de lui faire posséder `nb` cellules (au moins une) qui
+## comptaient en dernier pour d'autres joueurs (territoire, bataille). Signalé par la ville de
+## l'hôte, une fois par tampon.
+func vol_de_cellules(_voleur: Joueur, _nb: int) -> void:
+	pass
+
+
+## Vrai pendant le jeu proprement dit : partie en cours et intro « Prêt ? Vomissez ! » finie.
+func _manche_en_cours() -> bool:
+	return partie.partie_en_cours and partie.pret

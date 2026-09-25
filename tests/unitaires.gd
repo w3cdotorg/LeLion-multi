@@ -27,6 +27,7 @@ func _run() -> void:
 	_tester_delegation_regles()
 	_tester_modes()
 	_tester_facade_retiree()
+	_tester_territoire()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -241,9 +242,12 @@ func _tester_regles_solo() -> void:
 	autre.reinitialiser(3)
 	base.lion_touche_par_vomi(j, autre, Vector2.ZERO)
 	base.choc_entre_lions(j, autre)
+	base.vol_de_cellules(j, 4)
 	_check(base.couleurs_de_depart(j).is_empty() and not j.est_etourdi() and not j.est_invulnerable()
-		and autre.etourdissements_infliges == 0 and j.chocs == 0 and autre.chocs == 0,
-		"sans règles de mode, ni couleur de départ, ni effet du vomi ou des chocs")
+		and autre.etourdissements_infliges == 0 and j.chocs == 0 and autre.chocs == 0 and j.cellules_volees == 0,
+		"sans règles de mode, ni couleur de départ, ni effet du vomi, des chocs ou des vols")
+	_check(not base.compte_le_territoire() and not ReglesSolo.new(gs).compte_le_territoire(),
+		"ni les règles de base ni celles du solo ne se jouent au territoire")
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)
@@ -276,7 +280,7 @@ func _tester_regles_solo() -> void:
 	_check(toutes.couleurs_debloquees.size() == 7 and toutes.crans == Joueur.CRANS_MAX,
 		"les sept couleurs débloquées, la gerbe plafonne à son dernier cran (7)")
 	r.etoile_ramassee(j)
-	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
+	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, Regles.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
 	_check(r.coeur_ramasse(j) and j.vies == 3, "un cœur rend une vie")
 	_check(not r.coeur_ramasse(j) and j.vies == gs.VIES_MAX, "un cœur ne dépasse pas le maximum de vies")
 
@@ -393,11 +397,21 @@ func _tester_regles_bataille() -> void:
 		r.pastille_ramassee(rouge, 0)
 	_check(rouge.crans == Joueur.CRANS_MAX and not r.pastille_ramassee(rouge, 0), "les crans plafonnent à 7")
 	r.etoile_ramassee(bleu)
-	_check(bleu.bonus_actif() and is_equal_approx(bleu.bonus_restant, ReglesSolo.DUREE_ETOILE), "l'étoile XXL est celle du solo")
+	_check(bleu.bonus_actif() and is_equal_approx(bleu.bonus_restant, Regles.DUREE_ETOILE), "l'étoile XXL est celle du solo (même durée, constante de la base)")
 	bleu.vies = 2
 	_check(not r.coeur_ramasse(bleu) and bleu.vies == 2, "aucun cœur en bataille")
 	r.progression_mesuree(1.0)
 	_check(fins.is_empty() and gs.partie_en_cours, "peindre toute la ville ne termine pas la manche (elle finit au chrono)")
+
+	# Territoire : la bataille s'y joue, les vols comptent pour « Le voleur »
+	_check(r.compte_le_territoire(), "la bataille se joue au territoire")
+	r.vol_de_cellules(rouge, 5)
+	r.vol_de_cellules(rouge, 0)
+	_check(rouge.cellules_volees == 5 and bleu.cellules_volees == 0, "les cellules volées comptent pour le voleur seul (%d)" % rouge.cellules_volees)
+	gs.pret = false
+	r.vol_de_cellules(rouge, 2)
+	_check(rouge.cellules_volees == 5, "un vol pendant l'intro ne compte pas")
+	gs.pret = true
 	gs.terminer_partie(false)
 	bleu.invulnerable_restant = 0.0
 	bleu.etourdi_restant = 0.0
@@ -405,8 +419,10 @@ func _tester_regles_bataille() -> void:
 	r.lion_touche_par_ennemi(bleu, Vector2.ZERO)
 	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
 	r.choc_entre_lions(rouge, bleu)
-	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant,
-		"après la fin de manche, plus d'étourdissement (ennemi ou vomi) ni de choc compté")
+	r.vol_de_cellules(rouge, 3)
+	_check(not bleu.est_etourdi() and bleu.chocs == 1 and rouge.etourdissements_infliges == etourdissements_avant
+		and rouge.cellules_volees == 5,
+		"après la fin de manche, plus d'étourdissement (ennemi ou vomi), de choc ni de vol compté")
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()
@@ -490,3 +506,183 @@ func _tester_facade_retiree() -> void:
 		if gs.has_signal(nom):
 			restes.append("signal " + nom)
 	_check(restes.is_empty(), "GameState n'expose plus l'état par joueur (restes : %s)" % [restes])
+
+
+func _tester_territoire() -> void:
+	print("-- Territoire")
+	# Grille de 4 × 3 cellules de 8 px, rangée par rangée ; la cellule 11 (colonne 3, rangée 2)
+	# n'est pas peignable. La cellule 5 (colonne 1, rangée 1) a son centre en (12, 12) : un tampon
+	# de 5 px qui y est centré ne touche qu'elle (le centre de ses voisines est à 8 px).
+	var peignables := PackedByteArray([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0])
+	var centre_5 := Vector2i(12, 12)
+	var n_prise := ceili(float(Territoire.SEUIL_POSSESSION) / Territoire.GAIN)
+	var n_vider := ceili(float(Territoire.CHARGE_MAX) / Territoire.GAIN)
+	_check(n_prise == 3 and n_vider == 3,
+		"réglages : 3 tampons pour posséder une cellule vierge, 3 pour vider une cellule qui compte déjà (CHARGE_MAX = SEUIL_POSSESSION) (%d, %d)" % [n_prise, n_vider])
+	var t := Territoire.new(Vector2i(4, 3), peignables)
+	_check(t.nb_peignables == 11 and t.cellules_de(0) == 0 and t.cellules_de(Territoire.PERSONNE) == 11
+		and t.proprietaire(5) == Territoire.PERSONNE and t.extraire_changements().is_empty(),
+		"un territoire neuf est vierge : 11 cellules peignables, qui ne comptent pour personne")
+
+	# Peindre une cellule vierge : chargée au premier tampon, comptée au troisième
+	_check(t.tamponner(0, centre_5, 5) == 0 and t.proprietaire(5) == 0 and t.charge(5) == Territoire.GAIN
+		and t.cellules_de(0) == 0 and t.proprietaire_compte(5) == Territoire.PERSONNE,
+		"un tampon sur une cellule vierge la charge pour le peintre, sans la faire compter encore")
+	_check(range(12).all(func(i: int) -> bool: return i == 5 or t.charge(i) == 0),
+		"le tampon ne touche que les cellules dont le centre est à moins de son rayon")
+	for i in range(n_prise - 1):
+		t.tamponner(0, centre_5, 5)
+	_check(t.cellules_de(0) == 1 and t.proprietaire_compte(5) == 0 and t.cellules_de(Territoire.PERSONNE) == 10,
+		"au troisième tampon, la cellule compte pour le peintre")
+	_check(t.extraire_changements() == PackedInt32Array([5]) and t.extraire_changements().is_empty(),
+		"la cellule qui se met à compter est listée une fois, et la liste se vide à la lecture")
+	for i in range(10):
+		t.tamponner(0, centre_5, 5)
+	_check(t.charge(5) == Territoire.CHARGE_MAX and t.cellules_de(0) == 1 and t.extraire_changements().is_empty(),
+		"repeinte par son propriétaire, la charge reste à son plafond (déjà atteint dès le seuil de possession), sans nouveau changement")
+
+	# Vol : l'adversaire vide la cellule, la prend, puis la possède
+	var vols := 0
+	for i in range(n_vider - 1):
+		vols += t.tamponner(1, centre_5, 5)
+	_check(t.proprietaire(5) == 0 and t.proprietaire_compte(5) == Territoire.PERSONNE and t.cellules_de(0) == 0
+		and t.cellules_de(1) == 0 and vols == 0,
+		"un adversaire décharge la cellule : sous le seuil, elle ne compte plus pour personne, mais reste au premier peintre")
+	vols += t.tamponner(1, centre_5, 5)
+	_check(t.proprietaire(5) == 1 and t.charge(5) == 0 and vols == 0, "vidée, la cellule passe à l'adversaire, sans charge et sans vol encore")
+	for i in range(n_prise):
+		vols += t.tamponner(1, centre_5, 5)
+	_check(t.cellules_de(1) == 1 and t.proprietaire_compte(5) == 1 and vols == 1,
+		"dès qu'elle compte pour lui, c'est un vol, compté une fois (%d)" % vols)
+	_check(t.extraire_changements() == PackedInt32Array([5]), "la cellule volée est listée une fois, même passée par « personne »")
+	for i in range(n_vider + n_prise):
+		vols += t.tamponner(0, centre_5, 5)
+	_check(t.proprietaire_compte(5) == 0 and vols == 2, "la reprendre à son voleur est aussi un vol")
+
+	# Vol à trois : A possède, B décharge sans prendre, C prend : le vol est crédité à C, pas à B.
+	var t2 := Territoire.new(Vector2i(4, 3), peignables)
+	for i in range(n_prise):
+		t2.tamponner(0, centre_5, 5)  # A prend la cellule
+	for i in range(n_vider - 1):
+		t2.tamponner(1, centre_5, 5)  # B la décharge sous le seuil, sans la faire compter pour lui
+	_check(t2.proprietaire(5) == 0 and t2.proprietaire_compte(5) == Territoire.PERSONNE,
+		"B décharge la cellule d'A sous le seuil sans la lui prendre")
+	var vols_c := 0
+	for i in range(1 + n_prise):
+		vols_c += t2.tamponner(2, centre_5, 5)  # C la prend et la fait compter
+	_check(t2.proprietaire_compte(5) == 2 and vols_c == 1,
+		"le vol est crédité à C, qui fait compter la cellule, pas à B, qui l'avait seulement déchargée")
+
+	# Reprise sans vol : B prend la cellule brute d'A (sous le seuil), puis A la reprend : comme la
+	# cellule n'a jamais compté pour B, la reprise d'A n'est pas un vol.
+	var t3 := Territoire.new(Vector2i(4, 3), peignables)
+	for i in range(n_prise):
+		t3.tamponner(0, centre_5, 5)  # A prend et fait compter la cellule
+	for i in range(n_vider):
+		t3.tamponner(1, centre_5, 5)  # B la vide et se la fait attribuer, sans atteindre le seuil
+	_check(t3.proprietaire(5) == 1 and t3.proprietaire_compte(5) == Territoire.PERSONNE,
+		"la cellule vidée passe à B sans compter pour lui")
+	var vols_retour := 0
+	for i in range(n_prise):
+		vols_retour += t3.tamponner(0, centre_5, 5)  # A la reprend et la refait compter
+	_check(t3.proprietaire_compte(5) == 0 and vols_retour == 0,
+		"A reprend une cellule que B n'a jamais fait compter : ce n'est pas un vol")
+
+	# Réglage (fiche de correction du 25/09) : depuis CHARGE_MAX = SEUIL_POSSESSION, une passe pleine
+	# vitesse d'un adversaire vole des cellules au lieu de seulement les effacer. On reprend la forme
+	# de sonde du plan de la phase 9 : 60 tampons par seconde à 350 px/s, rayons 16 puis 21 (les deux
+	# premiers crans de gerbe).
+	for rayon_b in [16, 21]:
+		var largeur := 60
+		var hauteur := 4
+		var taille_cellule_bande := 8
+		var bande := PackedByteArray()
+		bande.resize(largeur * hauteur)
+		bande.fill(1)
+		var v := Territoire.new(Vector2i(largeur, hauteur), bande, taille_cellule_bande)
+		for i in range(n_prise):
+			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)  # A possède toute la bande
+		var avant_a := v.cellules_de(0)
+		var x := 0.0
+		while x < largeur * taille_cellule_bande:
+			v.tamponner(1, Vector2i(int(x), hauteur * taille_cellule_bande / 2), rayon_b)  # B traverse à 350 px/s, 60 tampons/s
+			x += 350.0 / 60.0
+		_check(v.cellules_de(1) > 0 and v.cellules_de(0) < avant_a,
+			"une passe pleine vitesse de B (rayon %d) sur la bande d'A lui vole des cellules (B : %d, A : %d → %d)"
+				% [rayon_b, v.cellules_de(1), avant_a, v.cellules_de(0)])
+
+	# Deux peintres qui se disputent une cellule vierge tampon après tampon
+	var u := Territoire.new(Vector2i(4, 3), peignables)
+	var vols_disputes := 0
+	for i in range(20):
+		vols_disputes += u.tamponner(0, centre_5, 5)
+		vols_disputes += u.tamponner(1, centre_5, 5)
+	_check(vols_disputes == 0 and u.cellules_de(0) == 0 and u.cellules_de(1) == 0,
+		"deux peintres qui se disputent une cellule que personne n'a possédée ne se volent rien")
+
+	# Bords et cellules non peignables
+	u.tamponner(2, Vector2i(16, 12), 40)  # couvre toute la grille
+	_check(u.charge(11) == 0 and u.proprietaire(11) == Territoire.PERSONNE and u.proprietaire(0) == 2,
+		"une cellule non peignable ne change jamais")
+	var w := Territoire.new(Vector2i(4, 3), peignables)
+	w.tamponner(0, Vector2i(-2, 12), 8)
+	_check(w.charge(4) == Territoire.GAIN and range(12).all(func(i: int) -> bool: return i == 4 or w.charge(i) == 0),
+		"un tampon débordant à gauche ne touche que la première colonne, jamais la fin de la rangée précédente")
+	_check(w.tamponner(3, Vector2i(5000, -5000), 46) == 0 and range(12).all(func(i: int) -> bool: return i == 4 or w.charge(i) == 0),
+		"un tampon hors de la grille ne touche rien")
+	w.reinitialiser()
+	_check(w.charge(4) == 0 and w.proprietaire(4) == Territoire.PERSONNE and w.cellules_de(Territoire.PERSONNE) == 11
+		and w.extraire_changements().is_empty(), "reinitialiser rend toute la ville vierge")
+
+	# Index de joueur hors plage : la garde d'exécution (pas seulement l'assert de debug, retirée
+	# à l'export release) refuse le tampon sans rien changer.
+	_check(w.tamponner(-1, centre_5, 5) == 0 and w.tamponner(EtatPartie.NB_JOUEURS_MAX, centre_5, 5) == 0
+		and w.charge(5) == 0 and w.proprietaire(5) == Territoire.PERSONNE
+		and w.cellules_de(Territoire.PERSONNE) == 11 and w.extraire_changements().is_empty(),
+		"un index de joueur hors plage (négatif ou ≥ NB_JOUEURS_MAX) ne touche aucune cellule")
+
+	# Déterminisme et scores, sur une suite de tampons pseudo-aléatoire à trois joueurs
+	var grande := PackedByteArray()
+	grande.resize(40 * 20)
+	for i in range(grande.size()):
+		grande[i] = 0 if i % 7 == 0 else 1
+	var a := Territoire.new(Vector2i(40, 20), grande)
+	var b := Territoire.new(Vector2i(40, 20), grande)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2026
+	for i in range(600):
+		var joueur := rng.randi_range(0, 2)
+		var centre := Vector2i(rng.randi_range(-20, 340), rng.randi_range(-20, 180))
+		var rayon := rng.randi_range(8, 46)
+		a.tamponner(joueur, centre, rayon)
+		b.tamponner(joueur, centre, rayon)
+	var identiques := true
+	var recompte := [0, 0, 0]
+	for i in range(grande.size()):
+		if a.proprietaire(i) != b.proprietaire(i) or a.charge(i) != b.charge(i):
+			identiques = false
+		var p := a.proprietaire_compte(i)
+		if p != Territoire.PERSONNE:
+			recompte[p] += 1
+	_check(identiques, "mêmes tampons dans le même ordre, même territoire (calcul entier, déterministe)")
+	_check(recompte == [a.cellules_de(0), a.cellules_de(1), a.cellules_de(2)] and recompte.all(func(n: int) -> bool: return n > 0)
+		and a.cellules_de(Territoire.PERSONNE) + recompte[0] + recompte[1] + recompte[2] == a.nb_peignables,
+		"les scores tenus tampon après tampon égalent un recompte complet (%s)" % [recompte])
+	var liste := a.extraire_changements()
+	var listees := {}
+	for i in liste:
+		listees[i] = true
+	_check(listees.size() == liste.size()
+		and range(grande.size()).all(func(i: int) -> bool: return a.proprietaire_compte(i) == Territoire.PERSONNE or listees.has(i)),
+		"chaque cellule qui compte figure dans la liste des changements, une seule fois (%d)" % liste.size())
+
+	# Coût : une seconde de bataille à 6 lions (60 tampons par lion) sur une grille de 250 × 81
+	var pleine := PackedByteArray()
+	pleine.resize(250 * 81)
+	pleine.fill(1)
+	var c := Territoire.new(Vector2i(250, 81), pleine)
+	var debut := Time.get_ticks_usec()
+	for i in range(360):
+		c.tamponner(i % 6, Vector2i(rng.randi_range(0, 2000), rng.randi_range(0, 648)), 46)
+	var ms := (Time.get_ticks_usec() - debut) / 1000.0
+	_check(ms < 60.0, "360 tampons de 46 px (une seconde à 6 lions) coûtent %.1f ms au territoire (moins de 60 ms)" % ms)
