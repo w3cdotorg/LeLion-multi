@@ -554,6 +554,12 @@ func _run() -> void:
 	var touches_locales: Array[Vector2] = []
 	var sur_touche_locale := func(o: Vector2) -> void: touches_locales.append(o)
 	GS.lion_touche.connect(sur_touche_locale)
+	# La coccinelle qui a infligé la défaite Hardcore n'a jamais été libérée : elle continue de
+	# zigzaguer vers la gauche et peut retraverser le lion local, désormais de nouveau touchable
+	# ci-dessus, ce qui rendait ce test instable. On libère tout ennemi encore en jeu avant de
+	# continuer.
+	for ennemi in get_nodes_in_group("ennemi"):
+		ennemi.free()
 	GS.partie_en_cours = true  # la partie Hardcore est finie : les règles ignorent les coups hors partie
 	lion_autre.commandes.direction_voulue = Vector2.ZERO
 	lion_autre.global_position = Vector2(1400, 300)  # loin du lion local, resté dans la scène
