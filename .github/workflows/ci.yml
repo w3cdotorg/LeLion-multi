@@ -33,14 +33,23 @@ jobs:
         run: godot --headless --import . || true
 
       - name: Tests unitaires
-        run: godot --headless --script tests/unitaires.gd
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 300 godot --headless --script tests/unitaires.gd 2>&1 | tee unitaires.log
+          if grep -nE "SCRIPT ERROR|SHADER ERROR" unitaires.log; then echo "::error::erreur de script dans les tests unitaires"; exit 1; fi
 
       - name: Smoke test
-        run: godot --headless --script tests/smoke_test.gd
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 300 godot --headless --script tests/smoke_test.gd 2>&1 | tee smoke_test.log
+          if grep -nE "SCRIPT ERROR|SHADER ERROR" smoke_test.log; then echo "::error::erreur de script dans le smoke test"; exit 1; fi
 
       - name: Exporter en Web
+        shell: bash
         run: |
           mkdir -p export/web
-          godot --headless --export-release Web export/web/index.html
+          timeout 600 godot --headless --export-release Web export/web/index.html
           test -f export/web/index.html
 

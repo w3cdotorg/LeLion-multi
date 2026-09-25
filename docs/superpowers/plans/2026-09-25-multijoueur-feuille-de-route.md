@@ -95,10 +95,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Phases 10 et 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et
   `commandes` avant `add_child` (en phase 14 via la `spawn_function` du `MultiplayerSpawner`) ;
   sinon il prend en silence le joueur local et le clavier de ce poste.
-- Prochaine phase qui touche `.github/workflows/ci.yml` : envelopper chaque lancement godot dans
-  `timeout` (une erreur de script bloque le processus headless) et faire échouer le job si la
-  sortie contient `SCRIPT ERROR` ou `SHADER ERROR` (une erreur dans un callback de signal, ou dans
-  une fonction appelée, ne change pas le code de sortie).
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick).
@@ -134,6 +130,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   8 ter, vérifié par le smoke test sur un sous-arbre dont le pair est un client ENet jamais
   connecté : `SceneTree.set_multiplayer(api, chemin)`, technique réutilisable pour les pastilles
   et la ville) ;
+- **phase 14** : les ennemis ne doivent pas tourner côté client (`Coccinelle` tire des valeurs
+  aléatoires dans `_ready`, la soucoupe et la coccinelle bougent et se libèrent localement, le
+  peintre lance ses tweens et `Audio.jouer("boss")`) : `Ennemi` est l'endroit naturel pour cette
+  garde, mais en Godot 4 le `_ready` / `_physics_process` d'une sous-classe n'appelle pas celui du
+  parent — utiliser `_notification(NOTIFICATION_READY)` (appelé pour chaque script de la chaîne)
+  ou des appels `super()` explicites ;
+- **prochaine phase qui touche `tests/smoke_test.gd`** : petits durcissements issus de la revue de
+  la phase 8 ter : vérifier que `create_client` renvoie `OK` avant le test de la garde hôte ;
+  donner à l'intrus du groupe « lion » un script avec un champ `joueur` pour que la vérification
+  échoue d'elle-même sous l'ancien typage ; vérifier la direction du recul (horizontale) après le
+  contact continu du peintre au lieu d'appeler `origine_du_coup` directement ; remettre le peintre
+  au repos après sa vérification ;
 - **phase 9 (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
   couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
   tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
@@ -222,3 +230,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
+- `Scripts/Regles.gd` : la docstring de `lion_touche_par_ennemi` (« `origine` = position de
+  l'ennemi ») doit renvoyer à `Ennemi.origine_du_coup` (le peintre donne x du peintre, y du lion)
+  — à faire par la prochaine phase qui touche `Regles.gd`.
