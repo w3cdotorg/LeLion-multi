@@ -86,3 +86,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   bataille (1 s) plutôt que d'ajouter un mécanisme parallèle.
 - Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
   choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.
+- Phases 10 et 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et
+  `commandes` avant `add_child` (en phase 14 via la `spawn_function` du `MultiplayerSpawner`) ;
+  sinon il prend en silence le joueur local et le clavier de ce poste.
+- Prochaine phase qui touche `.github/workflows/ci.yml` : envelopper chaque lancement godot dans
+  `timeout` (une erreur de script bloque le processus headless) et faire échouer le job si la
+  sortie contient `SCRIPT ERROR` (une erreur dans un callback de signal ne change pas le code de
+  sortie).
+- Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
+  commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
+  vomir échantillonnés au même tick).
+- Phases 14 et 16 : sans paquet d'un client depuis N ms, l'hôte remet à zéro les commandes
+  manuelles de son lion.
+- Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
+  les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
+  avec la traceuse du lion).
