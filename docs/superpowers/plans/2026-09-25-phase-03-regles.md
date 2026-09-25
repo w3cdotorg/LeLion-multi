@@ -14,6 +14,7 @@
 - `Regles` est un `RefCounted` détenu par `GameState`, pas un `Node` instancié par `Main`. Les règles n'ont besoin ni de l'arbre ni de `_process` aujourd'hui ; le chrono de bataille (phase 17) passera par une méthode `avancer(delta)` appelée par `GameState._process`, ajoutée à ce moment-là. Les tests unitaires peuvent ainsi les exercer sans scène.
 - `Main.gd` n'est pas modifié : tant qu'il n'existe qu'un mode, le `ReglesSolo` par défaut suffit. Le choix des règles selon le mode arrivera avec la bataille (phase 8 ou 10).
 - `VIES_MAX`, `DUREE_INVULNERABILITE` et `seuil_victoire()` restent dans `GameState` : d'autres scripts les lisent (HUD, Spawner, Lion). Ils migreront avec leurs lecteurs.
+- **Décision d'exécution (Task 1)** : les règles reçoivent l'état de partie par injection, `Regles.new(partie)` / `ReglesSolo.new(partie)`, et l'utilisent via `partie.` au lieu du global `GameState`. Raison : un test lancé par `--script` est compilé avant l'enregistrement des autoloads, donc un script qui nomme `GameState` ne compile pas depuis un test unitaire. Bonus : plus de dépendance circulaire GameState ↔ ReglesSolo. `GameState` construit ses règles dans `_init()` avec `ReglesSolo.new(self)`.
 
 ## Global Constraints
 
@@ -282,7 +283,7 @@ func _tester_delegation_regles() -> void:
 	gs.partie_terminee.connect(sur_fin)
 
 	# Des règles sans effet : la façade ne fait plus rien
-	gs.regles = Regles.new()
+	gs.regles = Regles.new(gs)
 	gs.toucher_lion(Vector2.ZERO)
 	_check(j.vies == 3 and not gs.debloquer_couleur(0) and j.couleurs_debloquees.is_empty() and not gs.gagner_vie(),
 		"avec d'autres règles, toucher_lion, debloquer_couleur et gagner_vie suivent ces règles")
@@ -313,7 +314,14 @@ Expected : erreur sur la propriété `regles` inexistante de `GameState` (les se
 
 ```gdscript
 ## Règles de la partie : celles du solo par défaut ; la bataille branchera les siennes.
-var regles: Regles = ReglesSolo.new()
+var regles: Regles
+```
+
+et, juste avant `func _ready() -> void:`, ajouter :
+
+```gdscript
+func _init() -> void:
+	regles = ReglesSolo.new(self)
 ```
 
 3b. Remplacer :
