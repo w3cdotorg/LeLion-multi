@@ -248,6 +248,8 @@ func _tester_regles_solo() -> void:
 		"sans règles de mode, ni couleur de départ, ni effet du vomi, des chocs ou des vols")
 	_check(not base.compte_le_territoire() and not ReglesSolo.new(gs).compte_le_territoire(),
 		"ni les règles de base ni celles du solo ne se jouent au territoire")
+	_check(base.has_method("manche_en_cours") and not base.has_method("_manche_en_cours"),
+		"manche_en_cours() est publique : la ville la lit")
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)

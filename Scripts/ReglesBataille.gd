@@ -45,7 +45,7 @@ func lion_touche_par_vomi(victime: Joueur, agresseur: Joueur, origine: Vector2) 
 
 ## Un choc n'étourdit jamais (spec §5) ; il compte pour le titre « L'auto-tamponneur ».
 func choc_entre_lions(a: Joueur, b: Joueur) -> void:
-	if a == b or not _manche_en_cours():
+	if a == b or not manche_en_cours():
 		return
 	a.chocs += 1
 	b.chocs += 1
@@ -62,7 +62,7 @@ func etoile_ramassee(joueur: Joueur) -> void:
 
 ## Les cellules volées comptent pour le titre « Le voleur » (écran Résultats), pendant la manche.
 func vol_de_cellules(voleur: Joueur, nb: int) -> void:
-	if nb > 0 and _manche_en_cours():
+	if nb > 0 and manche_en_cours():
 		voleur.cellules_volees += nb
 
 
@@ -73,4 +73,4 @@ func vol_de_cellules(voleur: Joueur, nb: int) -> void:
 ## Un joueur déjà étourdi ou encore immunisé est ignoré : le peintre et la gerbe signalent leur
 ## contact à chaque frame, l'étourdissement ne doit pas redémarrer sans fin.
 func _peut_etre_etourdi(joueur: Joueur) -> bool:
-	return _manche_en_cours() and not joueur.est_etourdi() and not joueur.est_invulnerable()
+	return manche_en_cours() and not joueur.est_etourdi() and not joueur.est_invulnerable()

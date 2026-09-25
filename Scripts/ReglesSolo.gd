@@ -14,7 +14,7 @@ func _init(partie_: EtatPartie) -> void:
 
 
 func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:
-	if not _manche_en_cours() or joueur.est_invulnerable():
+	if not manche_en_cours() or joueur.est_invulnerable():
 		return
 	if joueur.encaisser_coup(origine, DUREE_INVULNERABILITE) <= 0:
 		partie.terminer_partie(false)

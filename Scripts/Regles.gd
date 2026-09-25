@@ -79,5 +79,6 @@ func vol_de_cellules(_voleur: Joueur, _nb: int) -> void:
 
 
 ## Vrai pendant le jeu proprement dit : partie en cours et intro « Prêt ? Vomissez ! » finie.
-func _manche_en_cours() -> bool:
+## Lu aussi par la ville, qui ne tamponne le territoire que pendant la manche.
+func manche_en_cours() -> bool:
 	return partie.partie_en_cours and partie.pret
