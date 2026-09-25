@@ -32,7 +32,7 @@ et pertes de paquets à prévoir).
 |---|---|
 | Vomi qui touche un autre lion | **Étourdit 1,5 s** : immobile, ne vomit plus, recul, tête barbouillée de la couleur de l'agresseur, étoiles. Puis **1 s d'immunité** (clignotement). |
 | Couleurs de vomi | **Une couleur par joueur**, rendue en 3 nuances (foncée, pure, claire). |
-| Pastilles de couleur | Donnent **+1 cran de gerbe** (1 à 7 crans, rayon 16 à 46 px, formule actuelle). Départ à 1 cran. Premier arrivé, premier servi. |
+| Pastilles de couleur | Donnent **+1 cran de gerbe** (1 à 7 crans ; rayon de peinture de 16 px au premier cran, 5 px de plus par cran, 46 px au septième). Départ à 1 cran. Premier arrivé, premier servi. En solo, chaque couleur débloquée donne aussi un cran : les rayons du solo ne changent pas. |
 | Étoile XXL | Inchangée, par joueur (gerbe × 2 pendant 8 s). |
 | Cœurs | Aucun en multi. |
 | Ennemis (soucoupe, coccinelle, peintre) | Étourdissent **2,5 s** (sans barbouillage), puis 1 s d'immunité. |
@@ -54,12 +54,12 @@ de jeu.
 
 | Unité | Rôle | Dépend de |
 |---|---|---|
-| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `immunite_restante`, `cellules`, stats (étourdissements infligés, cellules volées, chocs). En solo il porte aussi `couleurs_debloquees`, `vies`, et sa `couleur` reste transparente (pas de teinte). | rien |
+| `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `invulnerable_restant` (l'immunité : une seule minuterie pour le solo et la bataille, voir §5), `cellules`, stats (`etourdissements_infliges`, `cellules_volees`, `chocs`). En solo il porte aussi `couleurs_debloquees`, `vies`, et sa `couleur` reste transparente (pas de teinte). | rien |
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
 | `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, et côté hôte les commandes reçues d'un client, numérotées et dédoublonnées en phase 16). | Input |
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
-| `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne connaît ni les règles ni le réseau. | `Joueur`, `Commandes` |
-| `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
+| `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. | `Joueur`, `Commandes` |
+| `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille). `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel) + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille). | rien |
 | `Reseau` (autoload) | Pair ENet, découverte UDP, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
 | `Main` | Instancie N lions via `MultiplayerSpawner`, branche les `Regles` du mode dans `GameState` (à partir de la bataille), relaie tampons et scores. | tout le reste |
@@ -137,19 +137,27 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   le masque (la crinière est sombre : sans gain, elle noircit). Paramètres `barbouillage_couleur`
   et `barbouillage_force` pour l'étourdissement. Un joueur sans couleur (alpha 0, le solo) laisse
   le sprite sans matériau. **Repli** si le masque est laid : rotation de teinte de toute la tête.
-- **Pseudo** affiché au-dessus du lion, dans sa couleur, en multi uniquement.
-- **Gerbe** : 3 émetteurs (nuances du joueur) en éventail en bataille, un émetteur par couleur
-  débloquée en solo.
+- **Pseudo** affiché au-dessus du lion, dans sa couleur, pour un joueur qui a une couleur et un
+  pseudo : en multi seulement, puisque le joueur du solo n'a pas de couleur.
+- **Gerbe** : un émetteur par couleur débloquée, en éventail. En bataille, les règles donnent à
+  chaque joueur, au départ de la partie, ses trois nuances (foncée, pure, claire) comme couleurs
+  débloquées : 3 émetteurs, et la traceuse peint dans ces nuances. Le rayon de peinture suit les
+  crans (§2).
 - **Traceuses** : la traceuse de peinture reste au point de chute. En bataille, **3 zones de
-  contact** supplémentaires le long de la parabole (même physique que les particules) détectent
-  les autres lions.
+  contact** le long de la parabole (même physique que les particules, à 0,2, 0,4 et 0,6 s de vol :
+  la dernière au point de chute) détectent le corps des autres lions (63 px) pendant le vomi.
 - **Étourdissement** : commandes ignorées, recul, barbouillage, étoiles qui tournent. L'immunité
-  réutilise le clignotement actuel.
-- **Collisions** : les lions partagent une couche de collision dédiée. Forme de contact entre lions
-  réduite (rayon ≈ 45 px au lieu de 63). Au contact, impulsion `recul` des deux côtés
-  proportionnelle à la vitesse relative, son « boing », petite secousse du sprite (pas de secousse
-  d'écran en multi). Un choc ne cause pas d'étourdissement. Un ennemi ne ré-étourdit pas un lion
-  immunisé.
+  réutilise le clignotement actuel. Étourdissement et immunité partagent la minuterie
+  d'invulnérabilité du solo : `Joueur.etourdir` la règle sur la durée de l'étourdissement plus
+  1 s, et les règles ignorent un joueur étourdi ou invulnérable (le peintre et la gerbe signalent
+  leur contact à chaque frame).
+- **Collisions** : les lions partagent une couche de collision dédiée (couche 5) : un pare-chocs
+  (`Area2D`) de 45 px au lieu des 63 px du corps. Le corps reste sur la couche 1, où ennemis et
+  pastilles le détectent, et ne heurte plus rien (masque 0). Au premier contact, impulsion `recul`
+  des deux côtés proportionnelle à la vitesse d'approche relative, son « boing », petite secousse
+  du sprite (pas de secousse d'écran en multi) ; pendant le contact, la part de la vitesse dirigée
+  vers l'autre lion est annulée. Un choc ne cause pas d'étourdissement. Un ennemi ne ré-étourdit
+  pas un lion immunisé.
 - **Apparition** : positions de départ réparties sur la largeur, en haut du ciel.
 
 ## 6. Peinture, territoire et synchronisation
