@@ -149,7 +149,7 @@ func peindre(position_globale: Vector2, rayon: int, peintre: Joueur) -> void:
 	_dirty = true
 	# Le territoire ne bouge que pendant la manche : après terminer_partie, pret reste vrai et un
 	# lion peut encore peindre ; le tampon se dessine, le score reste figé.
-	if territoire != null and multiplayer.is_server() and GameState.regles._manche_en_cours():
+	if territoire != null and multiplayer.is_server() and GameState.regles.manche_en_cours():
 		var volees := territoire.tamponner(peintre.index, Vector2i(px, py), rayon)
 		if volees > 0:
 			GameState.regles.vol_de_cellules(peintre, volees)

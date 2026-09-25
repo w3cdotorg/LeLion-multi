@@ -154,14 +154,6 @@ func _tester_game_state() -> void:
 	var j: Joueur = gs.joueur_local()
 	_check(j.vies == 3, "nouvelle_partie donne au joueur les vies de la difficulté")
 
-	# Prochaine couleur à offrir (lue par le Spawner)
-	_check(gs.prochain_index_couleur() == 0, "sans couleur, la prochaine pastille est la première")
-	j.debloquer_couleur(gs.couleur(0))
-	_check(gs.prochain_index_couleur() == 1, "prochain_index_couleur suit les couleurs du joueur local")
-	for i in range(1, gs.nb_couleurs_total()):
-		j.debloquer_couleur(gs.couleur(i))
-	_check(gs.prochain_index_couleur() == -1, "toutes les couleurs débloquées : plus de pastille à offrir")
-
 	# Les minuteries du joueur ne tournent qu'en partie, une fois prêt
 	j.bonus_restant = 0.5
 	j.invulnerable_restant = 0.25
@@ -248,6 +240,11 @@ func _tester_regles_solo() -> void:
 		"sans règles de mode, ni couleur de départ, ni effet du vomi, des chocs ou des vols")
 	_check(not base.compte_le_territoire() and not ReglesSolo.new(gs).compte_le_territoire(),
 		"ni les règles de base ni celles du solo ne se jouent au territoire")
+	_check(base.pastille_a_offrir() == -1 and not base.etoile_peut_apparaitre() and not base.coeurs_en_jeu()
+		and not base.coeur_peut_apparaitre() and base.avancement() == 0.0 and base.taille_ecran() == Regles.TAILLE_ECRAN_SOLO,
+		"les règles de base ne font rien apparaître, rien n'accélère, l'écran est celui du solo (2000×648)")
+	_check(base.has_method("manche_en_cours") and not base.has_method("_manche_en_cours"),
+		"manche_en_cours() est publique : la ville la lit")
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)
@@ -283,6 +280,39 @@ func _tester_regles_solo() -> void:
 	_check(j.bonus_actif() and is_equal_approx(j.bonus_restant, Regles.DUREE_ETOILE), "l'étoile active la gerbe XXL pour DUREE_ETOILE secondes")
 	_check(r.coeur_ramasse(j) and j.vies == 3, "un cœur rend une vie")
 	_check(not r.coeur_ramasse(j) and j.vies == gs.VIES_MAX, "un cœur ne dépasse pas le maximum de vies")
+
+	# Apparitions du solo : elles suivent le joueur local, l'unique joueur (lues par le Spawner)
+	local.reinitialiser(3)
+	_check(r.pastille_a_offrir() == 0 and not r.etoile_peut_apparaitre(),
+		"sans couleur, la prochaine pastille est la première de l'arc-en-ciel ; pas d'étoile")
+	local.debloquer_couleur(gs.couleur(0))
+	_check(r.pastille_a_offrir() == 1 and not r.etoile_peut_apparaitre(),
+		"une couleur : la pastille suivante est la deuxième, toujours pas d'étoile")
+	local.debloquer_couleur(gs.couleur(1))
+	_check(r.pastille_a_offrir() == 2 and r.etoile_peut_apparaitre(), "dès deux couleurs, l'étoile peut apparaître")
+	local.activer_bonus(1.0)
+	_check(not r.etoile_peut_apparaitre(), "pas d'étoile pendant une gerbe XXL")
+	local.bonus_restant = 0.0
+	for i in range(2, gs.nb_couleurs_total() - 1):
+		local.debloquer_couleur(gs.couleur(i))
+	_check(r.pastille_a_offrir() == gs.nb_couleurs_total() - 1, "six couleurs : la dernière pastille (violet) est encore offerte")
+	local.debloquer_couleur(gs.couleur(gs.nb_couleurs_total() - 1))
+	_check(r.pastille_a_offrir() == -1, "toutes les couleurs débloquées : plus de pastille à offrir")
+	_check(r.coeurs_en_jeu() and not r.coeur_peut_apparaitre(), "en Facile, des cœurs, mais aucun tant que le joueur a toutes ses vies")
+	local.vies = 2
+	_check(r.coeur_peut_apparaitre(), "un cœur peut apparaître dès qu'une vie manque")
+	gs.difficulte_courante = 1
+	var sans_coeur_moyen := not r.coeurs_en_jeu()
+	gs.difficulte_courante = 2
+	_check(sans_coeur_moyen and not r.coeurs_en_jeu(), "ni en Moyen ni en Hardcore")
+	gs.difficulte_courante = 0
+	local.reinitialiser(3)
+	gs.progression = 0.425
+	_check(is_equal_approx(r.avancement(), 0.5), "l'avancement du solo est la ville peinte rapportée au seuil (0,425 / 0,85)")
+	gs.progression = 0.9
+	_check(r.avancement() > 1.0, "au-delà du seuil, l'avancement dépasse 1 (les appelants le bornent)")
+	gs.progression = 0.0
+	_check(r.taille_ecran() == Vector2i(2000, 648), "l'écran du solo reste en 2000×648")
 
 	# Progression : victoire au seuil, une seule fois
 	r.progression_mesuree(gs.seuil_victoire() - 0.01)
@@ -412,6 +442,29 @@ func _tester_regles_bataille() -> void:
 	r.vol_de_cellules(rouge, 2)
 	_check(rouge.cellules_volees == 5, "un vol pendant l'intro ne compte pas")
 	gs.pret = true
+
+	# Apparitions et écran de la bataille : rien ne dépend du joueur local
+	var indices_valides := true
+	for i in range(50):
+		var k := r.pastille_a_offrir()
+		if k < 0 or k >= gs.nb_couleurs_total():
+			indices_valides = false
+	_check(indices_valides, "une pastille est toujours offerte, d'une couleur valide de l'arc-en-ciel (pour l'œil)")
+	var local: Joueur = gs.joueur_local()
+	local.reinitialiser(1)
+	local.activer_bonus(1.0)
+	_check(r.etoile_peut_apparaitre(), "l'étoile peut toujours apparaître, même si le joueur local n'a pas de couleur ou est en gerbe XXL")
+	_check(gs.difficulte_courante == 0 and not r.coeurs_en_jeu() and not r.coeur_peut_apparaitre(),
+		"aucun cœur en bataille, même en Facile et même quand le joueur local a perdu des vies")
+	local.reinitialiser(3)
+	gs.temps_ecoule = 45.0
+	gs.progression = 1.0
+	_check(is_equal_approx(r.avancement(), 0.5) and is_equal_approx(ReglesBataille.DUREE_MANCHE, 90.0),
+		"l'avancement de la bataille est le temps de la manche (45 s sur 90), pas la ville peinte")
+	gs.temps_ecoule = 0.0
+	gs.progression = 0.0
+	_check(r.avancement() == 0.0, "au départ de la manche, l'avancement est nul")
+	_check(r.taille_ecran() == Vector2i(2000, 1125), "l'écran de la bataille est en 16:9 (2000×1125)")
 	gs.terminer_partie(false)
 	bleu.invulnerable_restant = 0.0
 	bleu.etourdi_restant = 0.0
@@ -592,6 +645,7 @@ func _tester_territoire() -> void:
 	# vitesse d'un adversaire vole des cellules au lieu de seulement les effacer. On reprend la forme
 	# de sonde du plan de la phase 9 : 60 tampons par seconde à 350 px/s, rayons 16 puis 21 (les deux
 	# premiers crans de gerbe).
+	var n_saturer := ceili(float(Territoire.CHARGE_MAX) / Territoire.GAIN)
 	for rayon_b in [16, 21]:
 		var largeur := 60
 		var hauteur := 4
@@ -600,9 +654,14 @@ func _tester_territoire() -> void:
 		bande.resize(largeur * hauteur)
 		bande.fill(1)
 		var v := Territoire.new(Vector2i(largeur, hauteur), bande, taille_cellule_bande)
-		for i in range(n_prise):
-			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)  # A possède toute la bande
+		# A charge sa bande au maximum, comme une passe pleine vitesse (5 à 7 tampons par cellule) :
+		# chargée au seul seuil (n_prise tampons), la vérification passait aussi avec l'ancien
+		# CHARGE_MAX = 24, qu'elle doit refuser.
+		for i in range(n_saturer):
+			v.tamponner(0, Vector2i(largeur * taille_cellule_bande / 2, hauteur * taille_cellule_bande / 2), 400)
 		var avant_a := v.cellules_de(0)
+		_check(v.charge(0) == Territoire.CHARGE_MAX and avant_a == largeur * hauteur,
+			"(pré-condition) A possède toute la bande, chargée au maximum (%d)" % v.charge(0))
 		var x := 0.0
 		while x < largeur * taille_cellule_bande:
 			v.tamponner(1, Vector2i(int(x), hauteur * taille_cellule_bande / 2), rayon_b)  # B traverse à 350 px/s, 60 tampons/s
