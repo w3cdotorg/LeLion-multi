@@ -397,6 +397,23 @@ func _run() -> void:
 	_check((boss.cote > 0 and x_max_poly > 200.0) or (boss.cote < 0 and x_max_poly < 200.0),
 		"la collision du boss est en miroir avec le sprite (x max %.0f, côté %d)" % [x_max_poly, boss.cote])
 	_check(JL.vies < vies_avant, "le boss blesse le lion au passage (%d → %d)" % [vies_avant, JL.vies])
+	# Les deux chemins de contact du peintre : body_entered, puis le contact continu hors repos.
+	# Un lion resté à son contact est frappé dès la fin de son invulnérabilité, sans nouveau
+	# body_entered ; le coup part de la verticale du peintre, à la hauteur du lion.
+	_check(boss.origine_du_coup(lion) == Vector2(boss.global_position.x, lion.global_position.y),
+		"le coup du peintre part de sa verticale, à la hauteur du lion")
+	boss._arreter()
+	boss.etat = boss.Etat.PAUSE
+	boss.position.x = 1000.0
+	lion.global_position = Vector2(1000 - 68, boss.position.y - 66)
+	JL.vies = 3
+	JL.invulnerable_restant = 0.3
+	await _frames(3)
+	_check(boss.get_overlapping_bodies().has(lion) and JL.vies == 3,
+		"(pré-condition) le lion, invulnérable, est au contact du peintre et n'a rien perdu")
+	await create_timer(0.4).timeout
+	await _frames(2)
+	_check(JL.vies == 2, "un lion resté au contact du peintre est frappé dès la fin de son invulnérabilité (contact continu)")
 	GS.niveau_courant = 0
 
 	# Arcade : neuf stages, Facile → Moyen → Hardcore
@@ -617,6 +634,52 @@ func _run() -> void:
 	_check(autre.vies == 2 and local.vies == 2, "premier arrivé, premier servi : un seul lion profite d'un cœur touché par deux lions")
 	await _frames(1)
 	_check(not is_instance_valid(coeur_autre), "le cœur ramassé disparaît")
+
+	# Base commune des ennemis : seul un lion compte (`body is Lion`, pas le groupe « lion »), et
+	# seul l'hôte tranche un contact
+	var bases: Array = ["Soucoupe", "Coccinelle", "Boss"].map(func(nom: String) -> String:
+		var base: Script = load("res://Scripts/%s.gd" % nom).get_base_script()
+		return "" if base == null else base.resource_path)
+	_check(bases.all(func(p: String) -> bool: return p == "res://Scripts/Ennemi.gd"),
+		"soucoupe, coccinelle et peintre dérivent de la base Ennemi (%s)" % [bases])
+	var intrus := CharacterBody2D.new()  # sur la couche 1 et dans le groupe « lion », mais pas un lion
+	intrus.add_to_group("lion")
+	var forme_intrus := CollisionShape2D.new()
+	forme_intrus.shape = CircleShape2D.new()
+	forme_intrus.shape.radius = 30.0
+	intrus.add_child(forme_intrus)
+	intrus.position = Vector2(300, -400)  # hors de l'écran, loin des lions
+	root.add_child(intrus)
+	var soucoupe_intrus: Node2D = load("res://Scenes/Soucoupe.tscn").instantiate()
+	soucoupe_intrus.position = intrus.position
+	root.add_child(soucoupe_intrus)
+	await _frames(3)
+	_check(soucoupe_intrus.get_overlapping_bodies().has(intrus) and autre.vies == 2 and local.vies == 2,
+		"un ennemi ignore un corps qui n'est pas un lion, même dans le groupe « lion »")
+	soucoupe_intrus.free()
+	intrus.free()
+	autre.invulnerable_restant = 0.0
+	lion_autre._recul = Vector2.ZERO  # le recul des coups précédents l'éloigne encore
+	lion_autre.global_position = Vector2(1400, 300)
+	await _frames(1)
+	var poste_client := Node2D.new()  # sous-arbre dont le pair multijoueur est un client
+	poste_client.name = "PosteClient"
+	root.add_child(poste_client)
+	var api_client := SceneMultiplayer.new()
+	var pair_client := ENetMultiplayerPeer.new()
+	pair_client.create_client("127.0.0.1", 7779)  # jamais connecté : un client qui attend l'hôte
+	api_client.multiplayer_peer = pair_client
+	set_multiplayer(api_client, poste_client.get_path())
+	var coccinelle_client: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_client.position = lion_autre.global_position + Vector2(68, 66)
+	poste_client.add_child(coccinelle_client)
+	await _frames(3)
+	_check(not coccinelle_client.multiplayer.is_server() and coccinelle_client.get_overlapping_bodies().has(lion_autre)
+		and autre.vies == 2 and not autre.est_invulnerable(),
+		"sur un client, un ennemi au contact d'un lion ne le signale pas aux règles (seul l'hôte tranche)")
+	set_multiplayer(null, poste_client.get_path())
+	pair_client.close()
+	poste_client.free()
 
 	# La traceuse d'un lion peint avec les couleurs de son propre joueur
 	var ville_hc: Node = main.get_node("Ville")

@@ -49,7 +49,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 7 | **Teinte de la crinière** : masque déduit du sprite par le shader (teinte, valeur, saturation), uniformes de barbouillage prêts, pseudo au-dessus du lion ; le lion d'un joueur sans couleur (solo) n'a aucun matériau. Repli par rotation de teinte si le masque est laid. | ➕ `Shaders/Lion.gdshader` ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `tests/smoke_test.gd` | ◉ 6 lions teintés |
 | 8 | **Règles et état de bataille** : `ReglesBataille` (étourdissement 1,5 s par le vomi, 2,5 s par un ennemi, puis 1 s d'immunité ; crans ; chocs comptés ; ni vies ni cœurs), `Joueur` (crans, étourdissement, nuances, statistiques ; l'immunité est l'invulnérabilité du solo), événements de vomi et de choc dans `Regles`, `GameState.configurer_solo()` / `configurer_bataille(n)`. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/Regles.gd` ➕ `Scripts/ReglesBataille.gd` ✏️ `Scripts/GameState.gd` ✏️ `tests/unitaires.gd` | tests verts |
 | 8 bis | **Lion de bataille** : rayon selon les crans (le solo gagne un cran par couleur), gerbe en 3 nuances, étourdissement (commandes ignorées, recul, barbouillage, étoiles, clignotement de l'immunité), 3 zones de contact sur la parabole, auto-tamponneuses, `class_name Lion`. | ✏️ `Scripts/ReglesSolo.gd` ✏️ `tests/unitaires.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `tests/smoke_test.gd` | tests verts, ◉ lions étourdis |
-| 8 ter | **Ennemis vers `body is Lion`** : base commune des gestionnaires de contact des ennemis (garde hôte, `body is Lion`, origine du coup). | ➕ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
+| 8 ter | **Ennemis vers `body is Lion`** : base commune `Ennemi` des gestionnaires de contact des ennemis (garde hôte, `body is Lion`, origine du coup redéfinissable) ; le peintre garde ses deux chemins de contact (`body_entered` et contact continu hors repos). | ➕ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 9 | **Territoire** : logique pure de charge et de vol, grille de propriété dans la ville, tampons en cache par jeu de couleurs. | ➕ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` | tests verts |
 | 10 | **Scène de bataille locale en 16:9** : N lions, ciel et caméra calculés, apparitions relatives au viewport, taille du peintre. Test à 4 lions pilotés dans un seul processus. | ✏️ `Scripts/Main.gd` ✏️ `Scripts/Spawner.gd` ✏️ `Scripts/Boss.gd` ➕ `tests/bataille_test.gd` | ◉ manche à 4 |
 
@@ -120,14 +120,20 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
   jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
   ses lecteurs dans `_exit_tree` ;
-- **phases 8 ter (ennemis) et 14 bis (pastilles)** : `class_name Lion` existe depuis la phase
-  8 bis ; tester `body is Lion` dans les gestionnaires de contact au lieu de supposer
-  `body.joueur`. Les tests `--script` (compilés avant les autoloads) continuent de typer les lions
-  en `Node` / `CharacterBody2D`, jamais `Lion` : `Lion.gd` nomme `GameState` et `Audio` ;
+- **phase 14 bis (pastilles)** : comme la base `Ennemi` de la phase 8 ter (`Scripts/Ennemi.gd`),
+  tester `body is Lion` dans le gestionnaire de contact commun au lieu de supposer `body.joueur`.
+  Les tests `--script` (compilés avant les autoloads) continuent de typer les lions en `Node` /
+  `CharacterBody2D`, et ne nomment ni `Lion`, ni `Ennemi`, ni `Pastille` : ces scripts nomment
+  `GameState` (`Lion.gd` aussi `Audio`). Le smoke test vérifie l'héritage d'un script par
+  `load(...).get_base_script().resource_path`. Le groupe « lion » ne sert alors plus qu'au
+  Spawner ;
 - phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
-  (`multiplayer.is_server()`, phase 4) ;
+  (`multiplayer.is_server()`, phase 4 ; pour les ennemis, dans la base `Ennemi` depuis la phase
+  8 ter, vérifié par le smoke test sur un sous-arbre dont le pair est un client ENet jamais
+  connecté : `SceneTree.set_multiplayer(api, chemin)`, technique réutilisable pour les pastilles
+  et la ville) ;
 - **phase 9 (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
   couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
   tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
