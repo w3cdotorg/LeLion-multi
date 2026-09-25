@@ -13,6 +13,9 @@ const COULURES_MAX := 40
 const VITESSE_COULURE := 70.0  # px/s
 const INTERVALLE_MESURE := 0.2  # s
 const COUVERTURE_CELLULE := 0.4
+## Jeux de tampons gardés au plus (un jeu par rayon et jeu de couleurs) ; au-delà, le cache est
+## vidé. 6 joueurs × 7 crans × 2 (étoile XXL) en demandent 84 au pire.
+const TAMPONS_EN_CACHE_MAX := 96
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var zone_shape: CollisionShape2D = $PeintureZone/CollisionShape2D
@@ -30,9 +33,9 @@ var _temps_mesure := 0.0
 
 var _dirty := false
 var coulures: Array[Dictionary] = []
-var _tampons: Array[Image] = []
-var _tampons_rayon := -1
-var _tampons_nb_couleurs := -1
+## Tampons par rayon et jeu de couleurs (clé : `_cle_tampons`) : deux lions qui ont autant de
+## couleurs et le même rayon peignent chacun avec les leurs.
+var _tampons: Dictionary[String, Array] = {}
 
 
 func _ready() -> void:
@@ -46,7 +49,7 @@ func charger_skyline(nouvelle: Texture2D) -> void:
 	cellules_peignables = 0
 	cellules_peintes = 0
 	coulures.clear()
-	_tampons_rayon = -1
+	_tampons.clear()
 	_calculer_cellules_peignables()
 
 	image = Image.create(tex_size.x, tex_size.y, false, Image.FORMAT_RGBA8)
@@ -123,8 +126,8 @@ func peindre(position_globale: Vector2, rayon: int, couleurs: Array[Color]) -> v
 	if px < -rayon or py < -rayon or px >= tex_size.x + rayon or py >= tex_size.y + rayon:
 		return
 
-	_assurer_tampons(rayon, couleurs)
-	var tampon := _tampons[randi() % _tampons.size()]
+	var tampons := _tampons_pour(rayon, couleurs)
+	var tampon: Image = tampons[randi() % tampons.size()]
 	var taille := tampon.get_width()
 	image.blit_rect_mask(tampon, tampon, Rect2i(0, 0, taille, taille), Vector2i(px - rayon, py - rayon))
 	if coulures.size() < COULURES_MAX and randf() < CHANCE_COULURE:
@@ -157,14 +160,29 @@ func _avancer_coulures(delta: float) -> void:
 	_dirty = true
 
 
+## Les NB_TAMPONS tampons de ce rayon et de ce jeu de couleurs : générés au premier usage, puis
+## gardés en cache (TAMPONS_EN_CACHE_MAX jeux au plus).
+func _tampons_pour(rayon: int, couleurs: Array[Color]) -> Array:
+	var cle := _cle_tampons(rayon, couleurs)
+	if not _tampons.has(cle):
+		if _tampons.size() >= TAMPONS_EN_CACHE_MAX:
+			_tampons.clear()
+		_tampons[cle] = _generer_tampons(rayon, couleurs)
+	return _tampons[cle]
 
-## Régénère les tampons quand le rayon ou le nombre de couleurs change.
-func _assurer_tampons(rayon: int, couleurs: Array[Color]) -> void:
-	if rayon == _tampons_rayon and couleurs.size() == _tampons_nb_couleurs:
-		return
-	_tampons_rayon = rayon
-	_tampons_nb_couleurs = couleurs.size()
-	_tampons.clear()
+
+## Le rayon puis chaque couleur en RGBA 8 bits, dans l'ordre : deux jeux qui ne diffèrent que par
+## une couleur ont des clés différentes.
+static func _cle_tampons(rayon: int, couleurs: Array[Color]) -> String:
+	var cle := str(rayon)
+	for c in couleurs:
+		cle += ":%08x" % c.to_rgba32()
+	return cle
+
+
+## Tampons denses au centre, épars sur les bords, dont chaque pixel prend une des couleurs.
+func _generer_tampons(rayon: int, couleurs: Array[Color]) -> Array[Image]:
+	var tampons: Array[Image] = []
 	var taille := rayon * 2 + 1
 	for t in range(NB_TAMPONS):
 		var tampon := Image.create(taille, taille, false, Image.FORMAT_RGBA8)
@@ -181,4 +199,5 @@ func _assurer_tampons(rayon: int, couleurs: Array[Color]) -> void:
 					var c := couleurs[randi() % couleurs.size()]
 					c.a = 1.0
 					tampon.set_pixel(x, y, c)
-		_tampons.append(tampon)
+		tampons.append(tampon)
+	return tampons

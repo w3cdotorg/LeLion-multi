@@ -25,6 +25,26 @@ func _frames(n: int) -> void:
 		await physics_frame
 
 
+## Couleurs présentes sur une image (pixels non transparents), en clés `to_rgba32()`. À comparer
+## à `_rgba8(couleur)`, pas à `couleur.to_rgba32()` : une image RGBA8 tronque chaque composante
+## sur 8 bits (les nuances d'un joueur de bataille ne sont pas exactement représentables).
+func _couleurs_peintes(image: Image) -> Dictionary:
+	var couleurs := {}
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			var c: Color = image.get_pixel(x, y)
+			if c.a > 0.0:
+				couleurs[c.to_rgba32()] = true
+	return couleurs
+
+
+## La couleur telle qu'une image RGBA8 la stocke, en `to_rgba32()`.
+func _rgba8(c: Color) -> int:
+	var pixel := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	pixel.set_pixel(0, 0, c)
+	return pixel.get_pixel(0, 0).to_rgba32()
+
+
 func _run() -> void:
 	print("== smoke test LeLion ==")
 	GS = root.get_node("GameState")
@@ -681,33 +701,34 @@ func _run() -> void:
 	pair_client.close()
 	poste_client.free()
 
-	# La traceuse d'un lion peint avec les couleurs de son propre joueur
+	# La traceuse d'un lion peint avec les couleurs de son propre joueur. Le lion local peint
+	# d'abord, avec autant de couleurs et le même rayon que l'autre lion : la ville garde ses
+	# tampons par jeu de couleurs, l'autre lion ne doit donc pas reprendre ceux du lion local.
 	var ville_hc: Node = main.get_node("Ville")
-	_check(local.couleurs_debloquees.any(func(c: Color) -> bool: return not autre.couleurs_debloquees.has(c)),
-		"(pré-condition) le joueur local a une couleur que l'autre joueur n'a pas")
+	GS.regles.pastille_ramassee(local, 5)  # le joueur local : vert et bleu, 3 crans
+	autre.gagner_cran()  # l'autre joueur : rouge et cyan, 3 crans
+	autre.avancer(Regles.DUREE_ETOILE)  # fin de la gerbe XXL de l'étoile ramassée plus haut (autre n'est pas dans GS.joueurs)
+	_check(local.couleurs_debloquees.size() == autre.couleurs_debloquees.size()
+		and lion.traceuse_shape.shape.radius == lion_autre.traceuse_shape.shape.radius
+		and not local.couleurs_debloquees.any(func(c: Color) -> bool: return autre.couleurs_debloquees.has(c)),
+		"(pré-condition) les deux lions ont autant de couleurs, le même rayon (%.0f px) et aucune couleur commune" % lion.traceuse_shape.shape.radius)
+	lion.global_position = Vector2(600, ville_hc.position.y - 300)
+	Input.action_press("vomir")
+	await _frames(20)
+	Input.action_release("vomir")
+	await _frames(2)
+	_check(not _couleurs_peintes(ville_hc.image).is_empty(), "(pré-condition) le lion local a peint la ville le premier")
+	ville_hc.image.fill(Color(0, 0, 0, 0))
+	ville_hc.coulures.clear()  # celles du lion local couleraient encore dans ses couleurs
 	lion_autre.commandes.vomir_voulu = true
 	await _frames(20)
 	lion_autre.commandes.vomir_voulu = false
 	await _frames(2)
-	# Comparaison par to_rgba32() : une couleur relue depuis une image RGBA8 n'est égale à la
-	# couleur d'origine (Color, float) que si celle-ci est exactement représentable en 8 bits.
-	# Limite connue : Ville.gd met ses tampons en cache par (rayon, nombre de couleurs), pas par
-	# jeu de couleurs, donc deux lions ayant le même nombre de couleurs peindraient avec les
-	# tampons du premier peintre ; cette vérification ne discrimine que parce que le lion local
-	# ne peint pas dans cette ville et que les comptes diffèrent (1 couleur ici vs 2 pour l'autre
-	# joueur) ; le cache sera corrigé en phase 9, qui fera peindre ce test par le lion local en
-	# premier à nombre de couleurs égal.
-	var couleurs_peintes := {}
-	var image_ville: Image = ville_hc.image
-	for y in range(image_ville.get_height()):
-		for x in range(image_ville.get_width()):
-			var c: Color = image_ville.get_pixel(x, y)
-			if c.a > 0.0:
-				couleurs_peintes[c.to_rgba32()] = true
-	var rgba32_autre: Array = autre.couleurs_debloquees.map(func(c: Color) -> int: return c.to_rgba32())
+	var couleurs_peintes := _couleurs_peintes(ville_hc.image)
+	var rgba32_autre: Array = autre.couleurs_debloquees.map(_rgba8)
 	_check(not couleurs_peintes.is_empty()
 		and couleurs_peintes.keys().all(func(k: int) -> bool: return rgba32_autre.has(k)),
-		"la traceuse d'un lion peint avec les couleurs de son joueur (%d couleur(s) sur la ville)" % couleurs_peintes.size())
+		"la traceuse d'un lion peint avec les couleurs de son joueur, même après un lion qui en a autant (%d couleur(s) sur la ville)" % couleurs_peintes.size())
 	JL.touche.disconnect(sur_touche_locale)
 	GS.partie_en_cours = false
 	local.vies = vies_local_avant  # on restaure l'état d'avant la section, mort Hardcore compris
