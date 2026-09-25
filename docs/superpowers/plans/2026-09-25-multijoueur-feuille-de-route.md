@@ -143,21 +143,32 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   échoue d'elle-même sous l'ancien typage ; vérifier la direction du recul (horizontale) après le
   contact continu du peintre au lieu d'appeler `origine_du_coup` directement ; remettre le peintre
   au repos après sa vérification ;
-- **phase 9 bis (obligatoire)** : `Scripts/Ville.gd` met en cache ses tampons par (rayon, nombre de
-  couleurs) et non par jeu de couleurs : deux lions ayant autant de couleurs peignent avec les
-  tampons du premier (prouvé en revue de phase 6 ; en bataille, chacun a 3 nuances). Mettre les
-  tampons en cache par jeu de couleurs (clé rayon + `to_rgba32` de chaque couleur, plusieurs
-  entrées), et durcir la vérification du smoke test « la traceuse d'un lion peint avec les
-  couleurs de son joueur » en faisant peindre d'abord le lion local avec autant de couleurs que
-  l'autre ;
-- **phase 9 bis** : tamponner le territoire à 60 Hz fixe (depuis `_physics_process` ou un
-  accumulateur de temps), pas une fois par frame d'affichage, sinon le réglage (fiche de correction
-  du 25/09) et le trafic des tampons changent avec le taux de rafraîchissement de l'hôte (30 à
-  144 Hz) ; documenter `GAIN` comme un tampon par 1/60 s ;
-- **phase 9 bis** : `Ville.peindre` n'appelle `Territoire.tamponner` que si
-  `GameState.regles._manche_en_cours()` (après `terminer_partie`, `pret` reste vrai et les lions
-  peuvent encore peindre) ;
+- **phase 14** : sur un client, la ville a aussi un territoire (les règles de bataille y sont
+  branchées) mais `Ville.peindre` n'y touche pas (`multiplayer.is_server()`, phase 9 bis) : lui
+  appliquer la liste des cellules reçue de l'hôte (`Territoire.extraire_changements()` chez
+  l'hôte, index u16 + propriétaire u8) par une méthode d'affichage à ajouter à `Territoire`
+  (propriétaire compté posé tel quel, sans charge), d'où les mêmes scores chez tous ; ne jamais y
+  rejouer `tamponner`. La traceuse ne peint que sur l'hôte (`multiplayer.is_server()` dans
+  `GerbeTraceuse._physics_process`, ou appel depuis le relais de `Main`) : sinon le
+  `MultiplayerSynchronizer` qui réplique le vomi met `monitoring = true` sur chaque réplique et
+  chaque client peindrait localement un premier tampon avec ses propres tirages, en double de
+  celui diffusé par l'hôte. Les clients peignent seulement les tampons reçus
+  (`Ville.peindre(position, rayon, GameState.joueurs[index])`). Le tampon diffusé porte l'index du
+  joueur : `Ville.peindre(position, rayon, peintre)` prend déjà un `Joueur`. Le motif et les
+  coulures d'un tampon viennent encore du hasard global (`randi`, `randf`), ce qui ne suffit pas
+  avec le cache (chaque machine génère ses `NB_TAMPONS` variantes séparément au premier usage) :
+  amorcer `_generer_tampons` avec un `RandomNumberGenerator` dont la graine est dérivée de
+  `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
+  tampon (spec §6) ;
 - **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
+- **phase 10** : chaque nouveau jeu de tampons (`Ville._generer_tampons`) est généré en GDScript,
+  dans le tick physique de l'hôte, au premier usage d'un rayon et d'un jeu de couleurs : coût
+  mesuré de 3,7 ms (46 px) à 14,5 ms (92 px, étoile XXL) sur la machine du plan. À 6 joueurs, 84
+  jeux possibles au pire, donc des à-coups visibles si plusieurs étoiles sont ramassées dans la
+  même seconde. Pré-générer les jeux de chaque joueur pendant l'intro « Prêt ? Vomissez ! » (ses
+  nuances, les 7 rayons, x2), ou les générer au premier cran atteint, ou mesurer d'abord sur la
+  manche à 4 lions avant de décider. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs (et
+  non 12 Mo comme l'annonce le commentaire de `Ville.gd`, sans conséquence) ;
 - **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
@@ -183,10 +194,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sont `null` si la partie se termine pendant l'intro (`SCRIPT ERROR` dans `tests/screenshots.gd`) ;
   et le coup de `tests/screenshots.gd` (vers la ligne 96) tombe pendant l'intro et n'a aucun effet.
   Relancer `tests/screenshots.gd` à la main après correction (la CI ne le lance pas) ;
-- **phase 9 bis** : `Scripts/Lion.gd` ne lit plus `GameState.DUREE_INVULNERABILITE` (il clignote
-  sur `joueur.invulnerable_restant` depuis la phase 8 bis) : descendre cette constante de
-  `GameState` vers `ReglesSolo`, seule règle qui s'en sert encore (`DUREE_ETOILE` et
-  `_manche_en_cours()` sont dans la base `Regles` depuis la phase 9) ;
+- les tests `--script` peuvent nommer `Territoire` (logique pure, phase 9) et les règles, jamais
+  la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
+  se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
+  tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
 - **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
   lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
   passer sous le lion près du bord ;
@@ -206,15 +217,24 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   clair, par exemple) et compter aussi sur le pseudo et les vignettes du HUD. Attribuer la couleur
   **avant** l'ajout du lion à l'arbre, ou rappeler `Lion.appliquer_apparence()` (aperçu du salon en
   phase 13) ;
-- **phases 9 et 9 bis** : `Joueur.cellules_volees` existe depuis la phase 8 (remis à zéro par
-  `reinitialiser`, jamais incrémenté) : `Territoire.tamponner` renvoie les cellules que vole un
-  tampon (phase 9), la ville de l'hôte les signale aux règles (`Regles.vol_de_cellules`, phase
-  9 bis), qui l'incrémentent pendant la manche. En bataille, les couleurs débloquées d'un joueur
-  sont ses trois nuances (données par `Regles.couleurs_de_depart`) : c'est ce que reçoivent la
-  traceuse et `Ville.peindre` ;
+- **phases 10 et 17** : le score d'un joueur se lit sur le territoire de la ville
+  (`ville.territoire.cellules_de(joueur.index)`, sur `ville.territoire.nb_peignables` pour un
+  pourcentage) ; il n'y a pas de `Joueur.cellules` (spec §3.1). La ville crée son territoire dans
+  `charger_skyline` d'après les règles branchées (`compte_le_territoire()`) : c'est une raison de
+  plus d'appeler `configurer_bataille(n)` avant la scène de bataille. La couverture du solo reste
+  mesurée en bataille (`GameState.progression`, lue par `Audio`, `Boss.facteur_vitesse` et le
+  HUD) : décider de ce que la bataille en garde (phase 10 pour le peintre, 17 pour la musique et
+  le HUD). Les réglages du territoire (`GAIN`, `SEUIL_POSSESSION`, `CHARGE_MAX`) sont à revoir
+  sur une vraie manche ;
 - **phase 14** : quand un joueur quitte la manche, ses cellules restent au classement (spec §4)
   mais `Territoire` n'a pas encore d'opération pour les libérer ou les geler : à décider avec la
   gestion des déconnexions ;
+- **phase 18** : le territoire de la ville ne se remet à zéro que dans `charger_skyline` ; si
+  « Revanche » ou « Niveau suivant » relance une manche sur la même ville sans y repasser, les
+  scores et les tampons dessinés de la manche précédente restent. Chaque nouvelle manche doit donc
+  soit repasser par `charger_skyline`, soit appeler `ville.territoire.reinitialiser()` après avoir
+  vidé `extraire_changements()` (contrainte déjà notée dans `Territoire.gd:64-66`). Coordonner
+  l'ordre de ce message avec la diffusion des scores de la phase 14 ;
 - **phases 13 et 14** : `Lion.appliquer_apparence()` se rappelle à la main quand la couleur ou le
   pseudo d'un joueur change. Quand ces changements viendront du réseau (salon, synchronisation),
   donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent un signal
@@ -238,4 +258,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
-  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1).
+  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
+- **prochaine phase qui touche `Scripts/Regles.gd`** : `Regles._manche_en_cours()` est maintenant
+  appelée de l'extérieur des règles, depuis `Scripts/Ville.gd` (phase 9 bis) : la renommer en
+  `manche_en_cours()` publique. Chercher tous les appelants (`Regles`, `ReglesSolo`,
+  `ReglesBataille`, `Ville`, les tests) ;
+- la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
+  couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
+  Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.

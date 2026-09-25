@@ -3,18 +3,23 @@ extends Area2D
 ## Le rayon de peinture est celui de sa forme de collision (réglé par le lion).
 
 @onready var forme: CollisionShape2D = $CollisionShape2D
-## Le lion qui porte cette zone : on peint avec les couleurs de son joueur.
+## Le lion qui porte cette zone : on peint pour son joueur (ses couleurs ; en bataille, son
+## territoire).
 @onready var lion: Node = get_parent()
 
 
-func _process(_delta: float) -> void:
+## Tampon au tick physique (60 Hz), pas au rendu : le territoire (`Territoire.GAIN`) est réglé sur
+## un gain par tampon, donc par 1/60 s ; peindre au rythme de l'affichage ferait dépendre le trafic
+## de tampons et le rééquilibrage du territoire du taux de rafraîchissement de l'hôte (30 à 144 Hz).
+## En solo, à 60 Hz, rien ne change.
+func _physics_process(_delta: float) -> void:
 	if not monitoring:
 		return
-	var couleurs: Array[Color] = lion.joueur.couleurs_debloquees
-	if couleurs.is_empty():
+	var peintre: Joueur = lion.joueur
+	if peintre.couleurs_debloquees.is_empty():
 		return
 	var rayon := int((forme.shape as CircleShape2D).radius)
 	for area in get_overlapping_areas():
 		var ville: Node = area.get_parent()
 		if ville != null and ville.has_method("peindre"):
-			ville.peindre(global_position, rayon, couleurs)
+			ville.peindre(global_position, rayon, peintre)

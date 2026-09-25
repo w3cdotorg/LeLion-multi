@@ -14,6 +14,8 @@ extends RefCounted
 ## spec §6).
 
 ## Charge qu'un tampon donne à une cellule vierge ou du peintre, et retire à une cellule adverse.
+## Un tampon par tick physique (60 Hz) : GAIN est donc un gain par 1/60 s, indépendant du taux de
+## rafraîchissement de l'hôte : la traceuse tamponne dans `_physics_process`.
 const GAIN := 4
 ## Charge à partir de laquelle une cellule compte pour son propriétaire : 3 tampons sur une
 ## cellule vierge, ce qui suit la mesure de couverture du solo pour une gerbe en mouvement.
