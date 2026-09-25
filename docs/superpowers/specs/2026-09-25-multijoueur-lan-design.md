@@ -56,7 +56,7 @@ de jeu.
 |---|---|---|
 | `Joueur` (Resource) | État d'un lion : `id_reseau`, `index` (0-5), `pseudo`, `couleur`, `crans`, `bonus_restant`, `etourdi_restant`, `immunite_restante`, `cellules`, stats (étourdissements infligés, cellules volées, chocs). En solo il porte aussi `couleurs_debloquees`, `vies`. | rien |
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
-| `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomit() -> bool`. Implémentations : `CommandesLocales` (actions InputMap existantes), `CommandesReseau` (commandes numérotées reçues du client, dédoublonnées), `CommandesPilote` (attract mode, ex-`Pilote.gd`). | Input |
+| `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, et côté hôte les commandes reçues d'un client, numérotées et dédoublonnées en phase 16). | Input |
 | `PredictionLocale` (Node) | Sur un client, simule le lion local sans attendre l'hôte et le recale en douceur sur l'état autoritaire (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Reseau` |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne connaît ni les règles ni le réseau. | `Joueur`, `Commandes` |
 | `Regles` (Node) | Réagit aux événements (lion touché par ennemi, par vomi, pastille ramassée, choc, fin de chrono, progression) et décide des effets. `ReglesSolo` / `ReglesBataille`. S'exécute **sur l'hôte uniquement**. | `GameState`, `Joueur` |
@@ -68,7 +68,7 @@ de jeu.
 
 1. Chaque client applique ses commandes à son lion **immédiatement** (prédiction), puis les envoie
    à l'hôte, numérotées, avec les 3 précédentes, par RPC `unreliable_ordered` à chaque frame
-   physique. L'hôte les stocke dans la `CommandesReseau` du lion correspondant.
+   physique. L'hôte les écrit dans les commandes manuelles du lion correspondant.
 2. L'hôte simule tous les lions (`move_and_slide`, collisions entre lions, ennemis, pastilles).
 3. Les traceuses de l'hôte détectent la ville et les autres lions. Les contacts remontent aux
    `Regles`.

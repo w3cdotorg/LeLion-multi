@@ -33,11 +33,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
 | 1 | **Joueur** : l'état par joueur (couleurs, vies, invulnérabilité, bonus) quitte `GameState` pour une ressource `Joueur`. `GameState` garde une façade transitoire. CI : tests unitaires, déploiement Pages retiré. | ➕ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ➕ `tests/unitaires.gd` ✏️ `.github/workflows/ci.yml` ✏️ `tests/smoke_test.gd` (Step 0) | tests verts, CI verte |
-| 2 | **Commandes et lion** : le lion lit un `Joueur` et une `Commandes` (`Commandes.Locales`, `Commandes.Manuelles`). Le pilote de démo écrit dans une `Commandes.Manuelles`. La traceuse lit le joueur de son lion. | ➕ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Pilote.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
+| 2 | **Commandes et lion** : le lion lit un `Joueur` et une `Commandes` (sources `LOCALES` et `MANUELLES`). Le pilote de démo écrit dans des commandes manuelles. | ➕ `Scripts/Commandes.gd` ✏️ `tests/unitaires.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/Pilote.gd` ✏️ `tests/smoke_test.gd` | tests verts |
 | 3 | **Règles** : `Regles` (base) et `ReglesSolo` portent coup, vie, seuil de victoire, pastilles. `Main` instancie les règles. `GameState` relaie encore. | ➕ `Scripts/Regles.gd` ➕ `Scripts/ReglesSolo.gd` ✏️ `Scripts/Main.gd` ✏️ `Scripts/GameState.gd` ✏️ `tests/unitaires.gd` | tests verts |
 | 4 | **Ennemis et pastilles vers les règles** : chacun signale le lion concerné (`body`) aux règles. | ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` | smoke vert |
 | 5 | **Abonnés** : ils lisent le joueur local et ses signaux. | ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Spawner.gd` ✏️ `Scripts/HUD.gd` ✏️ `Scripts/GameOver.gd` ✏️ `Scripts/Audio.gd` | smoke vert |
-| 6 | **Fin de la façade** : `GameState` ne contient plus que l'état de partie. | ✏️ `Scripts/GameState.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/unitaires.gd` | tests verts |
+| 6 | **Fin de la façade** : `GameState` ne contient plus que l'état de partie ; la traceuse lit le joueur de son lion. | ✏️ `Scripts/GameState.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/unitaires.gd` | tests verts |
 
 ### B. Bataille, d'abord hors réseau
 
@@ -86,3 +86,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   bataille (1 s) plutôt que d'ajouter un mécanisme parallèle.
 - Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
   choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.
+- Phases 10 et 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et
+  `commandes` avant `add_child` (en phase 14 via la `spawn_function` du `MultiplayerSpawner`) ;
+  sinon il prend en silence le joueur local et le clavier de ce poste.
+- Prochaine phase qui touche `.github/workflows/ci.yml` : envelopper chaque lancement godot dans
+  `timeout` (une erreur de script bloque le processus headless) et faire échouer le job si la
+  sortie contient `SCRIPT ERROR` (une erreur dans un callback de signal ne change pas le code de
+  sortie).
+- Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
+  commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
+  vomir échantillonnés au même tick).
+- Phases 14 et 16 : sans paquet d'un client depuis N ms, l'hôte remet à zéro les commandes
+  manuelles de son lion.
+- Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
+  les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
+  avec la traceuse du lion).
