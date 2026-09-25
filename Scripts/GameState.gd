@@ -1,16 +1,11 @@
 class_name EtatPartie
 extends Node
-## État global d'une partie : joueurs, progression de la peinture, chrono, fin de partie.
-## L'état propre à chaque lion vit dans `Joueur` ; les propriétés et méthodes marquées
-## « façade » délèguent au joueur local le temps que les appelants migrent (phases 2 à 6).
+## État global d'une partie : joueurs, règles, progression de la peinture, chrono, fin de partie.
+## L'état propre à chaque lion vit dans `Joueur` ; les effets du jeu sont décidés par `regles`.
 
-signal couleur_debloquee(couleur: Color)
 signal progression_changee(ratio: float)
 signal partie_terminee(victoire: bool)
-signal bonus_change(actif: bool)
-signal vies_changees(vies: int)
 signal partie_prete()
-signal lion_touche(origine: Vector2)
 
 const COULEURS_ARC_EN_CIEL: Array[Color] = [
 	Color.RED, Color.ORANGE, Color.YELLOW, Color.GREEN,
@@ -31,8 +26,9 @@ const NIVEAUX: Array[Dictionary] = [
 ]
 
 ## Le tableau doit être rempli ou réinitialisé en place (append, resize, etc.) et jamais
-## réassigné : les relais de signaux de la façade sont liés à `joueurs[0]` dans `_ready`
-## (jusqu'à la phase 6), et une réassignation les rendrait muets sans erreur.
+## réassigné : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`),
+## une réassignation rendrait son son de pastille muet sans erreur (voir la phase 11 de la
+## feuille de route).
 var joueurs: Array[Joueur] = [Joueur.new()]
 ## Règles de la partie : celles du solo par défaut ; la bataille branchera les siennes.
 var regles: Regles
@@ -47,45 +43,9 @@ var demo := false  # attract mode : le jeu se joue tout seul
 var etape_arcade := 0
 var temps_arcade := 0.0  # somme des temps des stages gagnés
 
-# Façade : état du joueur local (supprimée en phase 6).
-var couleurs_debloquees: Array[Color]:
-	get:
-		return joueur_local().couleurs_debloquees
-	set(_valeur):
-		push_error("GameState.couleurs_debloquees est en lecture seule : passer par debloquer_couleur()")
-var vies: int:
-	get:
-		return joueur_local().vies
-	set(valeur):
-		joueur_local().vies = valeur
-var coups_recus: int:
-	get:
-		return joueur_local().coups_recus
-	set(valeur):
-		joueur_local().coups_recus = valeur
-var invulnerable_restant: float:
-	get:
-		return joueur_local().invulnerable_restant
-	set(valeur):
-		joueur_local().invulnerable_restant = valeur
-var bonus_restant: float:
-	get:
-		return joueur_local().bonus_restant
-	set(valeur):
-		joueur_local().bonus_restant = valeur
-
 
 func _init() -> void:
 	regles = ReglesSolo.new(self)
-
-
-func _ready() -> void:
-	assert(joueurs.size() == 1, "GameState._ready suppose un seul joueur (solo) pour lier les relais de signaux")
-	var j := joueur_local()
-	j.couleur_debloquee.connect(func(c: Color) -> void: couleur_debloquee.emit(c))
-	j.bonus_change.connect(func(actif: bool) -> void: bonus_change.emit(actif))
-	j.vies_changees.connect(func(nb: int) -> void: vies_changees.emit(nb))
-	j.touche.connect(func(origine: Vector2) -> void: lion_touche.emit(origine))
 
 
 ## Le joueur de ce poste. En solo, le seul joueur.
@@ -169,19 +129,6 @@ func cle_score() -> String:
 	return "%s/%s" % [niveau().id, difficulte().id]
 
 
-func est_invulnerable() -> bool:
-	return joueur_local().est_invulnerable()
-
-
-## Façade : un ennemi touche le lion du joueur local (voir Regles.lion_touche_par_ennemi).
-func toucher_lion(origine: Vector2 = Vector2.INF) -> void:
-	regles.lion_touche_par_ennemi(joueur_local(), origine)
-
-
-func gagner_vie() -> bool:
-	return regles.coeur_ramasse(joueur_local())
-
-
 func niveau() -> Dictionary:
 	return NIVEAUX[niveau_courant]
 
@@ -203,22 +150,11 @@ func nb_couleurs_total() -> int:
 	return COULEURS_ARC_EN_CIEL.size()
 
 
-func debloquer_couleur(index: int) -> bool:
-	return regles.pastille_ramassee(joueur_local(), index)
-
-
+## Prochaine couleur de l'arc-en-ciel à offrir au joueur local (-1 si toutes sont débloquées).
+## Règle du solo, lue par le Spawner (en bataille, les apparitions passeront par les règles).
 func prochain_index_couleur() -> int:
-	var i := couleurs_debloquees.size()
+	var i := joueur_local().couleurs_debloquees.size()
 	return i if i < COULEURS_ARC_EN_CIEL.size() else -1
-
-
-func bonus_actif() -> bool:
-	return joueur_local().bonus_actif()
-
-
-## Active (ou prolonge) la gerbe XXL pour `duree` secondes.
-func activer_bonus(duree: float) -> void:
-	joueur_local().activer_bonus(duree)
 
 
 func signaler_progression(ratio: float) -> void:

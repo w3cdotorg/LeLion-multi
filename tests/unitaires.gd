@@ -20,10 +20,11 @@ func _check(cond: bool, msg: String) -> void:
 func _run() -> void:
 	print("== tests unitaires LeLion ==")
 	_tester_joueur()
-	_tester_facade_game_state()
+	_tester_game_state()
 	_tester_commandes()
 	_tester_regles_solo()
 	_tester_delegation_regles()
+	_tester_facade_retiree()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -89,72 +90,44 @@ func _tester_joueur() -> void:
 		"reinitialiser remet vies, bonus, couleurs et coups à l'état de départ")
 
 
-func _tester_facade_game_state() -> void:
-	print("-- GameState (façade vers le joueur local)")
+func _tester_game_state() -> void:
+	print("-- GameState (état de partie)")
 	var gs: Node = root.get_node("GameState")
 	gs.difficulte_courante = 0
 	gs.nouvelle_partie()
 	_check(gs.joueurs.size() == 1 and gs.joueur_local() == gs.joueurs[0], "en solo, un seul joueur, qui est le joueur local")
 	var j: Joueur = gs.joueur_local()
-	_check(j.vies == 3 and gs.vies == 3, "nouvelle_partie donne au joueur les vies de la difficulté")
+	_check(j.vies == 3, "nouvelle_partie donne au joueur les vies de la difficulté")
 
-	# Relais des signaux et bornes
-	var relaye: Array[Color] = []
-	var relais := func(c: Color) -> void: relaye.append(c)
-	gs.couleur_debloquee.connect(relais)
-	_check(gs.debloquer_couleur(0) and j.couleurs_debloquees == [gs.couleur(0)], "debloquer_couleur écrit dans le joueur local")
-	_check(relaye == [gs.couleur(0)], "le signal couleur_debloquee de GameState relaie celui du joueur")
-	_check(not gs.debloquer_couleur(-1) and not gs.debloquer_couleur(gs.nb_couleurs_total()) and relaye.size() == 1,
-		"un index hors bornes est refusé sans signal")
-	_check(gs.prochain_index_couleur() == 1, "prochain_index_couleur suit les couleurs du joueur")
-	gs.couleur_debloquee.disconnect(relais)
+	# Prochaine couleur à offrir (lue par le Spawner)
+	_check(gs.prochain_index_couleur() == 0, "sans couleur, la prochaine pastille est la première")
+	j.debloquer_couleur(gs.couleur(0))
+	_check(gs.prochain_index_couleur() == 1, "prochain_index_couleur suit les couleurs du joueur local")
+	for i in range(1, gs.nb_couleurs_total()):
+		j.debloquer_couleur(gs.couleur(i))
+	_check(gs.prochain_index_couleur() == -1, "toutes les couleurs débloquées : plus de pastille à offrir")
 
-	# Setters de la façade (utilisés par le smoke test)
-	gs.vies = 1
-	gs.bonus_restant = 0.5
-	gs.invulnerable_restant = 0.25
-	_check(j.vies == 1 and is_equal_approx(j.bonus_restant, 0.5) and is_equal_approx(j.invulnerable_restant, 0.25),
-		"les setters vies / bonus_restant / invulnerable_restant écrivent dans le joueur")
-	gs.coups_recus = 2
-	_check(j.coups_recus == 2, "le setter coups_recus écrit dans le joueur")
-	gs.coups_recus = 0
-
-	# Les minuteries ne tournent qu'en partie, une fois prêt
+	# Les minuteries du joueur ne tournent qu'en partie, une fois prêt
+	j.bonus_restant = 0.5
+	j.invulnerable_restant = 0.25
 	gs.pret = false
 	gs._process(0.2)
 	_check(is_equal_approx(j.invulnerable_restant, 0.25) and is_equal_approx(j.bonus_restant, 0.5), "pendant l'intro, les minuteries ne décomptent pas")
 	gs.pret = true
 	gs._process(0.2)
 	_check(is_equal_approx(j.invulnerable_restant, 0.05) and is_equal_approx(j.bonus_restant, 0.3), "une fois prêt, GameState fait avancer le joueur")
-
-	# Coup via la façade : relais de lion_touche, puis défaite au dernier coup
-	gs.invulnerable_restant = 0.0
-	gs.vies = 2
-	var touches: Array[Vector2] = []
-	var sur_touche := func(o: Vector2) -> void: touches.append(o)
-	gs.lion_touche.connect(sur_touche)
-	gs.toucher_lion(Vector2(5, 5))
-	_check(gs.vies == 1 and touches == [Vector2(5, 5)] and gs.est_invulnerable(), "toucher_lion retire une vie et relaie lion_touche")
-	gs.toucher_lion(Vector2(6, 6))
-	_check(gs.vies == 1, "pas de coup pendant l'invulnérabilité")
-	gs.invulnerable_restant = 0.0
-	var fins: Array[bool] = []
-	var sur_fin := func(v: bool) -> void: fins.append(v)
-	gs.partie_terminee.connect(sur_fin)
-	gs.toucher_lion(Vector2(7, 7))
-	_check(fins == [false] and not gs.partie_en_cours and touches.size() == 1, "le dernier coup termine la partie en défaite, sans lion_touche")
-	gs.invulnerable_restant = 0.4
-	gs.bonus_restant = 0.6
+	gs.terminer_partie(false)
+	j.invulnerable_restant = 0.4
+	j.bonus_restant = 0.6
 	gs._process(0.2)
 	_check(is_equal_approx(j.invulnerable_restant, 0.4) and is_equal_approx(j.bonus_restant, 0.6),
 		"après la fin de partie, les minuteries ne décomptent plus")
-	gs.lion_touche.disconnect(sur_touche)
-	gs.partie_terminee.disconnect(sur_fin)
 
 	# Nouvelle partie : repart de zéro
-	gs.activer_bonus(8.0)
+	j.activer_bonus(8.0)
+	j.coups_recus = 2
 	gs.nouvelle_partie()
-	_check(gs.couleurs_debloquees.is_empty() and gs.vies == 3 and gs.coups_recus == 0 and not gs.bonus_actif(),
+	_check(j.couleurs_debloquees.is_empty() and j.vies == 3 and j.coups_recus == 0 and not j.bonus_actif(),
 		"nouvelle_partie remet le joueur local à zéro")
 	gs.partie_en_cours = false
 	gs.pret = false
@@ -216,11 +189,11 @@ func _tester_regles_solo() -> void:
 	var local: Joueur = gs.joueur_local()
 	var touches_locales: Array[Vector2] = []
 	var sur_touche_locale := func(o: Vector2) -> void: touches_locales.append(o)
-	gs.lion_touche.connect(sur_touche_locale)
+	local.touche.connect(sur_touche_locale)
 	r.lion_touche_par_ennemi(j, Vector2(3, 4))
 	_check(j.vies == 2 and j.est_invulnerable() and local.vies == 3 and touches_locales.is_empty(),
-		"un coup d'ennemi touche le joueur reçu, pas le joueur local, sans déclencher son relai lion_touche")
-	gs.lion_touche.disconnect(sur_touche_locale)
+		"un coup d'ennemi touche le joueur reçu, pas le joueur local, et ne lui signale aucun coup")
+	local.touche.disconnect(sur_touche_locale)
 	r.lion_touche_par_ennemi(j, Vector2(3, 4))
 	_check(j.vies == 2, "pas de coup pendant l'invulnérabilité")
 	j.invulnerable_restant = 0.0
@@ -271,30 +244,38 @@ func _tester_delegation_regles() -> void:
 	gs.difficulte_courante = 0
 	gs.nouvelle_partie()
 	gs.pret = true
-	var j: Joueur = gs.joueur_local()
 	var fins: Array[bool] = []
 	var sur_fin := func(v: bool) -> void: fins.append(v)
 	gs.partie_terminee.connect(sur_fin)
 
-	# Des règles sans effet : la façade ne fait plus rien
+	# Des règles sans effet : la victoire ne vient plus de GameState
 	gs.regles = Regles.new(gs)
-	gs.toucher_lion(Vector2.ZERO)
-	_check(j.vies == 3 and not gs.debloquer_couleur(0) and j.couleurs_debloquees.is_empty(),
-		"avec d'autres règles, toucher_lion et debloquer_couleur suivent ces règles")
-	j.vies = 2
-	_check(not gs.gagner_vie() and j.vies == 2, "avec d'autres règles, gagner_vie suit aussi ces règles")
 	gs.signaler_progression(1.0)
 	_check(fins.is_empty() and gs.partie_en_cours and is_equal_approx(gs.progression, 1.0),
-		"signaler_progression enregistre toujours la progression mais laisse la victoire aux règles")
+		"signaler_progression enregistre toujours la progression mais laisse la victoire aux règles branchées")
 
-	# Retour aux règles du solo
+	# Retour aux règles du solo : la même progression gagne la partie
 	gs.regles = solo
-	_check(gs.gagner_vie() and j.vies == 3, "avec les règles du solo, gagner_vie rend une vie")
-	gs.signaler_progression(0.0)
-	gs.toucher_lion(Vector2.ZERO)
-	_check(j.vies == 2, "avec les règles du solo, toucher_lion retire une vie")
+	gs.signaler_progression(1.0)
+	_check(fins == [true] and not gs.partie_en_cours, "avec les règles du solo, la même progression gagne la partie")
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()
 	gs.partie_en_cours = false
 	gs.pret = false
+
+
+func _tester_facade_retiree() -> void:
+	print("-- GameState sans façade")
+	var gs: Node = root.get_node("GameState")
+	var restes: Array[String] = []
+	for nom in ["couleurs_debloquees", "vies", "coups_recus", "invulnerable_restant", "bonus_restant"]:
+		if nom in gs:
+			restes.append(nom)
+	for nom in ["est_invulnerable", "toucher_lion", "gagner_vie", "debloquer_couleur", "bonus_actif", "activer_bonus"]:
+		if gs.has_method(nom):
+			restes.append(nom + "()")
+	for nom in ["couleur_debloquee", "bonus_change", "vies_changees", "lion_touche"]:
+		if gs.has_signal(nom):
+			restes.append("signal " + nom)
+	_check(restes.is_empty(), "GameState n'expose plus l'état par joueur (restes : %s)" % [restes])
