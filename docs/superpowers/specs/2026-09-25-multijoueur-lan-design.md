@@ -173,7 +173,10 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   - cellule au peintre ou vierge : `charge += GAIN` (plafonnée) et propriétaire = peintre ;
   - cellule adverse : `charge -= GAIN`. Si `charge <= 0`, la cellule passe au peintre avec
     `charge = -charge`.
-  - une cellule compte dans le score si `charge >= SEUIL_POSSESSION`.
+  - une cellule compte dans le score si `charge >= SEUIL_POSSESSION` ; une cellule disputée peut ne
+    compter pour personne (deux lions qui tamponnent le même point se déchargent l'un l'autre en
+    boucle ; trois lions ou plus sur un terrain vierge peuvent la laisser sans compte) : le HUD et
+    les résultats ne comptent que les cellules au-dessus du seuil.
   - **vol** (statistique `cellules_volees`, comptée par les règles pendant la manche) : une
     cellule qui se met à compter pour le peintre alors qu'elle comptait en dernier pour un autre
     joueur. Deux lions qui se disputent une cellule que personne n'a encore possédée ne se volent
@@ -181,9 +184,10 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   Les valeurs de `GAIN`, `CHARGE_MAX` et `SEUIL_POSSESSION` sont réglées pour qu'il faille à peu
   près autant de temps pour peindre une cellule qu'aujourd'hui en solo : `GAIN = 4` et
   `SEUIL_POSSESSION = 12`, soit 3 tampons sur une cellule vierge, ce qui suit la mesure du solo
-  pour une gerbe en mouvement (16 à 46 px de rayon) ; `CHARGE_MAX = 24` : une cellule que son
-  propriétaire repeint se renforce, et se vide alors en 6 tampons adverses. Calcul entier et
-  déterministe (`Territoire`, phase 9).
+  pour une gerbe en mouvement (16 à 46 px de rayon) ; `CHARGE_MAX = SEUIL_POSSESSION` (12, fiche de
+  correction du 25/09) : voler une cellule déjà possédée coûte alors 6 tampons (3 pour la vider,
+  3 pour la prendre), contre 3 en terrain vierge. Calcul entier et déterministe (`Territoire`,
+  phase 9).
 - **Visuel** : masque RGBA et `Ville.gdshader` inchangés. Chaque tampon est dessiné dans les
   nuances du peintre et recouvre ce qui est dessous. Les zones disputées apparaissent bigarrées.
 - **Synchro des tampons** : l'hôte diffuse chaque tampon `(index joueur u8, x u16, y u16,

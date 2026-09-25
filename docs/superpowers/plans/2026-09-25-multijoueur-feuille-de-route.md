@@ -150,6 +150,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   entrées), et durcir la vérification du smoke test « la traceuse d'un lion peint avec les
   couleurs de son joueur » en faisant peindre d'abord le lion local avec autant de couleurs que
   l'autre ;
+- **phase 9 bis** : tamponner le territoire à 60 Hz fixe (depuis `_physics_process` ou un
+  accumulateur de temps), pas une fois par frame d'affichage, sinon le réglage (fiche de correction
+  du 25/09) et le trafic des tampons changent avec le taux de rafraîchissement de l'hôte (30 à
+  144 Hz) ; documenter `GAIN` comme un tampon par 1/60 s ;
+- **phase 9 bis** : `Ville.peindre` n'appelle `Territoire.tamponner` que si
+  `GameState.regles._manche_en_cours()` (après `terminer_partie`, `pret` reste vrai et les lions
+  peuvent encore peindre) ;
+- **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
 - **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
