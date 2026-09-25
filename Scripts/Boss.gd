@@ -49,13 +49,16 @@ func _physics_process(delta: float) -> void:
 	if etat == Etat.ANNONCE:
 		_temps_annonce += delta
 		position.y = y_sol - _demi_hauteur + sin(_temps_annonce * 40.0) * 3.0
-	if etat != Etat.REPOS:
+	if etat != Etat.REPOS and multiplayer.is_server():
 		for body in get_overlapping_bodies():
 			if body.is_in_group("lion"):
 				GameState.regles.lion_touche_par_ennemi(body.joueur, Vector2(global_position.x, body.global_position.y))
 
 
+## Les contacts ne sont tranchés que par l'hôte (en solo, le poste est son propre hôte).
 func _on_body_entered(body: Node2D) -> void:
+	if not multiplayer.is_server():
+		return
 	if body.is_in_group("lion"):
 		GameState.regles.lion_touche_par_ennemi(body.joueur, Vector2(global_position.x, body.global_position.y))
 

@@ -541,6 +541,14 @@ func _run() -> void:
 
 	# Ennemis et pastilles signalent le lion qu'ils touchent, pas le joueur local
 	var local: Joueur = GS.joueur_local()
+	var vies_local_avant: int = local.vies
+	# La partie Hardcore vient de se terminer : le joueur local est à 0 vie, or
+	# `Joueur.encaisser_coup` n'émet `touche` que si `vies > 0` après le coup, donc un coup
+	# mal routé vers le joueur local ne déclencherait jamais `touches_locales` et la moitié
+	# « pas de retour local » des vérifications ci-dessous serait toujours vraie à tort.
+	# On le remet à 3 vies, invulnérabilité coupée, pour qu'il soit de nouveau touchable.
+	local.vies = 3
+	local.invulnerable_restant = 0.0
 	var vies_local: int = local.vies
 	var couleurs_local: int = local.couleurs_debloquees.size()
 	var touches_locales: Array[Vector2] = []
@@ -569,7 +577,7 @@ func _run() -> void:
 		"une soucoupe retire une vie au joueur du lion touché, pas au joueur local")
 	soucoupe_autre.queue_free()
 	var pastille_autre: Node2D = load("res://Scenes/ColorPickup.tscn").instantiate()
-	pastille_autre.couleur_index = 4
+	pastille_autre.couleur_index = 4  # autre n'a que le rouge
 	pastille_autre.position = centre_autre
 	root.add_child(pastille_autre)
 	await _frames(3)
@@ -578,6 +586,7 @@ func _run() -> void:
 		"une pastille ramassée par un lion va à son joueur, pas au joueur local")
 	GS.lion_touche.disconnect(sur_touche_locale)
 	GS.partie_en_cours = false
+	local.vies = vies_local_avant  # on restaure l'état d'avant la section, mort Hardcore compris
 	lion_autre.free()
 	_check(autre.couleur_debloquee.get_connections().is_empty() and autre.touche.get_connections().is_empty(),
 		"le lion libéré se désabonne de son joueur")
