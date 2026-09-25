@@ -3,8 +3,7 @@ extends Regles
 ## Règles du jeu solo : des cœurs, l'arc-en-ciel à débloquer pastille par pastille, et la
 ## victoire quand la ville est peinte au seuil de la difficulté.
 
-## `BonusPickup` applique encore ses propres 8 secondes via `GameState.activer_bonus`, en plus de
-## celles-ci : ce doublon ne sera retiré qu'en phase 4.
+## Durée de la gerbe XXL donnée par une étoile.
 const DUREE_ETOILE := 8.0
 
 

@@ -584,6 +584,26 @@ func _run() -> void:
 	_check(not is_instance_valid(pastille_autre) and autre.couleurs_debloquees.has(GS.couleur(4))
 		and local.couleurs_debloquees.size() == couleurs_local,
 		"une pastille ramassée par un lion va à son joueur, pas au joueur local")
+	var bonus_local: bool = local.bonus_actif()
+	autre.bonus_restant = 0.0
+	var etoile_autre: Node2D = load("res://Scenes/BonusPickup.tscn").instantiate()
+	etoile_autre.position = centre_autre
+	root.add_child(etoile_autre)
+	await _frames(3)
+	_check(not is_instance_valid(etoile_autre) and autre.bonus_actif()
+		and is_equal_approx(autre.bonus_restant, ReglesSolo.DUREE_ETOILE) and local.bonus_actif() == bonus_local,
+		"une étoile ramassée par un lion active la gerbe XXL de son joueur, pas celle du joueur local")
+	var coeur_autre: Node2D = load("res://Scenes/CoeurPickup.tscn").instantiate()
+	coeur_autre.position = Vector2(-500, -500)  # hors d'atteinte : les contacts sont simulés à la main
+	root.add_child(coeur_autre)
+	await _frames(1)
+	autre.vies = 1
+	local.vies = 2
+	coeur_autre._on_body_entered(lion_autre)
+	coeur_autre._on_body_entered(main.get_node("Lion"))  # le lion local touche le même cœur dans la même frame
+	_check(autre.vies == 2 and local.vies == 2, "premier arrivé, premier servi : un seul lion profite d'un cœur touché par deux lions")
+	await _frames(1)
+	_check(not is_instance_valid(coeur_autre), "le cœur ramassé disparaît")
 	GS.lion_touche.disconnect(sur_touche_locale)
 	GS.partie_en_cours = false
 	local.vies = vies_local_avant  # on restaure l'état d'avant la section, mort Hardcore compris
