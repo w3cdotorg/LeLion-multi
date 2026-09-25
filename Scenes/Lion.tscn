@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://dmayuumv4a1gh"]
+[gd_scene load_steps=13 format=3 uid="uid://dmayuumv4a1gh"]
 
 [ext_resource type="Script" uid="uid://dh0gkc6tf8etc" path="res://Scripts/Lion.gd" id="1_3r2l0"]
 [ext_resource type="Texture2D" uid="uid://cmjsa80060vyw" path="res://Assets/Sprites/LionHead.png" id="1_kx51r"]
@@ -64,7 +64,11 @@ radius = 63.1981
 [sub_resource type="CircleShape2D" id="CircleShape2D_03dqy"]
 radius = 62.0725
 
+[sub_resource type="CircleShape2D" id="CircleShape2D_choc"]
+radius = 45.0
+
 [node name="Lion" type="CharacterBody2D" groups=["lion"]]
+collision_mask = 0
 script = ExtResource("1_3r2l0")
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
@@ -131,3 +135,11 @@ texture = ExtResource("10_etoile")
 modulate = Color(1, 0.9, 0.3, 1)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("10_etoile")
+
+[node name="PareChocs" type="Area2D" parent="."]
+position = Vector2(68, 66)
+collision_layer = 16
+collision_mask = 16
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="PareChocs"]
+shape = SubResource("CircleShape2D_choc")

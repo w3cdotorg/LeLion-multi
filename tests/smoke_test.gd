@@ -853,6 +853,49 @@ func _run() -> void:
 	j_bleu.etourdi_restant = 0.0
 	j_bleu.invulnerable_restant = 0.0
 
+	# Auto-tamponneuses : pare-chocs réduit, recul proportionnel à la vitesse d'approche
+	_check(lr.collision_mask == 0 and lr.pare_chocs.collision_layer == 16 and lr.pare_chocs.collision_mask == 16
+		and is_equal_approx(lr._rayon_choc, 45.0) and lr.get_node("CollisionShape2D").shape.radius > 60.0,
+		"les lions se heurtent sur leur couche dédiée, à 45 px ; le corps (63 px) reste celui que touchent ennemis et pastilles")
+	lr._recul = Vector2.ZERO
+	lb._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	for i in range(90):
+		await _frames(1)
+		if j_rouge.chocs > 0:
+			break
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
+	_check(lr._recul.x < 0.0 and lb._recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
+		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
+	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")
+	var distance_min := 1e9
+	for i in range(30):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	_check(distance_min > 2 * 45.0 - 15.0 and j_rouge.chocs == 1,
+		"les lions ne s'enfoncent pas l'un dans l'autre (distance min %.0f px), un seul choc compté" % distance_min)
+	# Un lion étourdi peut être poussé
+	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
+	lb._recul = Vector2.ZERO
+	lr._recul = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
+	lb.global_position = Vector2(800, 300)
+	await _frames(2)
+	var x_bleu: float = lb.global_position.x
+	lr.commandes.direction_voulue = Vector2.RIGHT
+	distance_min = 1e9
+	for i in range(40):
+		await _frames(1)
+		distance_min = minf(distance_min, lr.pare_chocs.global_position.distance_to(lb.pare_chocs.global_position))
+	lr.commandes.direction_voulue = Vector2.ZERO
+	_check(j_bleu.est_etourdi() and lb.global_position.x > x_bleu + 10.0 and j_rouge.chocs >= 2,
+		"un lion étourdi est poussé par celui qui le percute (%.0f px)" % (lb.global_position.x - x_bleu))
+	_check(distance_min > 2 * 45.0 - 15.0, "même en poussant sans relâche, un lion ne s'enfonce pas dans l'autre (distance min %.0f px)" % distance_min)
+
 	for l in lions_bataille:
 		l.free()
 	GS.configurer_solo()

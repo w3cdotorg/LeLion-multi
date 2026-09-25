@@ -1,11 +1,12 @@
 class_name Lion
 extends CharacterBody2D
 ## Le lion : déplacement, gerbe de vomi multicolore, traceuse de peinture ; en bataille,
-## crinière à la couleur de son joueur, pseudo au-dessus de la tête et étourdissement.
+## crinière à la couleur de son joueur, pseudo au-dessus de la tête, étourdissement et
+## auto-tamponneuses.
 ## La gerbe part de la bouche à 45° vers le bas ; la traceuse est placée au point de chute et
 ## les zones de contact le long de la parabole, avec la même physique que les particules.
 ## Le lion ne décide de rien : sur l'hôte, il signale aux règles les autres lions que touche
-## sa gerbe, comme le font les ennemis et les pastilles.
+## sa gerbe et ceux qu'il percute, comme le font les ennemis et les pastilles.
 
 const ANGLE_GERBE_DEG := 45.0
 const ECART_EVENTAIL_DEG := 24.0
@@ -27,11 +28,17 @@ const CENTRE := Vector2(68, 66)  # centre du corps, dans le repère du lion
 const FORCE_BARBOUILLAGE := 0.7
 const RAYON_ETOILES := Vector2(40, 12)
 const VITESSE_ETOILES := 5.0  # radians par seconde
+const DUREE_SECOUSSE := 0.25
+const AMPLITUDE_SECOUSSE := 6.0
 
 @export var speed: float = 350.0
 @export var acceleration: float = 2400.0
 @export var force_recul: float = 700.0
 @export var inclinaison_max: float = 0.14  # radians
+## Auto-tamponneuses : recul de chaque lion = vitesse d'approche relative × facteur_choc.
+@export var facteur_choc: float = 1.2
+## Vitesse d'écartement de deux lions qui se chevauchent, par pixel d'enfoncement.
+@export var raideur_choc: float = 8.0
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var anim: AnimationPlayer = $AnimationPlayer
@@ -41,6 +48,8 @@ const VITESSE_ETOILES := 5.0  # radians par seconde
 @onready var bouche: Marker2D = $Bouche
 @onready var etiquette_pseudo: Label = $Pseudo
 @onready var etoiles: Node2D = $Etoiles
+@onready var pare_chocs: Area2D = $PareChocs
+@onready var _rayon_choc: float = ($PareChocs/CollisionShape2D.shape as CircleShape2D).radius
 
 var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
@@ -62,6 +71,7 @@ var _vitesse := Vector2.ZERO
 var _recul := Vector2.ZERO
 var _temps := 0.0
 var _clignotement: Tween
+var _secousse_restante := 0.0
 
 
 func _ready() -> void:
@@ -78,6 +88,7 @@ func _ready() -> void:
 	joueur.crans_changes.connect(_on_crans_changes)
 	joueur.etourdi.connect(_on_etourdi)
 	joueur.etourdissement_fini.connect(_on_etourdissement_fini)
+	pare_chocs.area_entered.connect(_on_pare_chocs_area_entered)
 	_creer_zones_contact()
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
@@ -96,7 +107,7 @@ func _physics_process(delta: float) -> void:
 
 	_vitesse = _vitesse.move_toward(input_vector * speed, acceleration * delta)
 	_recul = _recul.move_toward(Vector2.ZERO, acceleration * 1.5 * delta)
-	velocity = _vitesse + _recul
+	velocity = _bloquer_contre_les_lions(_vitesse + _recul)
 	move_and_slide()
 	_animer_deplacement(delta)
 
@@ -107,7 +118,7 @@ func _physics_process(delta: float) -> void:
 	_signaler_vomi_sur_les_lions()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _veut_vomir():
 		if not est_en_train_de_vomir:
 			demarrer_vomi()
@@ -115,6 +126,10 @@ func _process(_delta: float) -> void:
 		arreter_vomi()
 	if etoiles.visible:
 		_tourner_etoiles()
+	if _secousse_restante > 0.0:
+		_secousse_restante = max(0.0, _secousse_restante - delta)
+		var amplitude := AMPLITUDE_SECOUSSE * _secousse_restante / DUREE_SECOUSSE
+		sprite.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * amplitude
 
 
 ## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
@@ -231,6 +246,46 @@ func _tourner_etoiles() -> void:
 	for i in range(nb):
 		var angle := _temps * VITESSE_ETOILES + TAU * i / nb
 		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)
+
+
+## Auto-tamponneuses, au premier contact : chaque lion recule en proportion de la vitesse à
+## laquelle les deux se rapprochaient (un lion étourdi est donc poussé), et son sprite tremble.
+func _on_pare_chocs_area_entered(zone: Area2D) -> void:
+	var autre := zone.get_parent() as Lion
+	if autre == null or autre == self:
+		return
+	var normale := _normale_de_choc(autre)
+	var approche := (velocity - autre.velocity).dot(-normale)
+	_recul += normale * maxf(approche, 0.0) * facteur_choc
+	_secousse_restante = DUREE_SECOUSSE
+	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
+	if multiplayer.is_server() and get_instance_id() < autre.get_instance_id():
+		GameState.regles.choc_entre_lions(joueur, autre.joueur)
+
+
+## Pendant le contact, un lion ne s'enfonce pas dans l'autre (la part de sa vitesse dirigée
+## vers lui est annulée), et deux lions qui se chevauchent s'écartent.
+func _bloquer_contre_les_lions(v: Vector2) -> Vector2:
+	for zone in pare_chocs.get_overlapping_areas():
+		var autre := zone.get_parent() as Lion
+		if autre == null or autre == self:
+			continue
+		var normale := _normale_de_choc(autre)
+		var vers_autre := v.dot(-normale)
+		if vers_autre > 0.0:
+			v += normale * vers_autre
+		var enfoncement := 2.0 * _rayon_choc - pare_chocs.global_position.distance_to(autre.pare_chocs.global_position)
+		v += normale * maxf(enfoncement, 0.0) * raideur_choc
+	return v
+
+
+## Direction de l'autre lion vers celui-ci ; deux lions superposés s'écartent quand même,
+## chacun de son côté.
+func _normale_de_choc(autre: Lion) -> Vector2:
+	var ecart := pare_chocs.global_position - autre.pare_chocs.global_position
+	if ecart.length() > 0.01:
+		return ecart.normalized()
+	return Vector2.LEFT if get_instance_id() < autre.get_instance_id() else Vector2.RIGHT
 
 
 func _on_crans_changes(_crans: int) -> void:
