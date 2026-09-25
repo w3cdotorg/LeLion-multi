@@ -24,6 +24,7 @@ func _run() -> void:
 	_tester_commandes()
 	_tester_regles_solo()
 	_tester_delegation_regles()
+	_tester_facade_retiree()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -262,3 +263,19 @@ func _tester_delegation_regles() -> void:
 	gs.nouvelle_partie()
 	gs.partie_en_cours = false
 	gs.pret = false
+
+
+func _tester_facade_retiree() -> void:
+	print("-- GameState sans façade")
+	var gs: Node = root.get_node("GameState")
+	var restes: Array[String] = []
+	for nom in ["couleurs_debloquees", "vies", "coups_recus", "invulnerable_restant", "bonus_restant"]:
+		if nom in gs:
+			restes.append(nom)
+	for nom in ["est_invulnerable", "toucher_lion", "gagner_vie", "debloquer_couleur", "bonus_actif", "activer_bonus"]:
+		if gs.has_method(nom):
+			restes.append(nom + "()")
+	for nom in ["couleur_debloquee", "bonus_change", "vies_changees", "lion_touche"]:
+		if gs.has_signal(nom):
+			restes.append("signal " + nom)
+	_check(restes.is_empty(), "GameState n'expose plus l'état par joueur (restes : %s)" % [restes])

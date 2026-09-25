@@ -32,7 +32,7 @@ func _ready() -> void:
 	Audio.demarrer_musique("boss" if GameState.niveau().get("boss", false) else "ville", 0)
 	GameState.progression_changee.connect(_on_progression_changee)
 	GameState.partie_terminee.connect(_on_partie_terminee)
-	GameState.lion_touche.connect(func(_o: Vector2) -> void: trembler())
+	GameState.joueur_local().touche.connect(_on_lion_touche)
 	ville.charger_skyline(load(GameState.niveau().texture))
 	_placer_ville()
 	if GameState.demo:
@@ -110,6 +110,11 @@ func _on_progression_changee(ratio: float) -> void:
 
 func trembler() -> void:
 	_tremblement_restant = duree_tremblement
+
+
+## Le lion du joueur local est touché : l'écran tremble.
+func _on_lion_touche(_origine: Vector2) -> void:
+	trembler()
 
 
 func _on_partie_terminee(victoire: bool) -> void:

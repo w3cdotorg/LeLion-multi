@@ -43,7 +43,7 @@ func _run() -> void:
 	var spawner: Node = main.get_node("Spawner")
 	var ville: Node2D = main.get_node("Ville")
 	for i in range(3):
-		GS.debloquer_couleur(i)
+		GS.regles.pastille_ramassee(GS.joueur_local(), i)
 	await _attendre(0.1)
 	lion.global_position = Vector2(500, ville.position.y - 330)
 	Input.action_press("vomir")
@@ -55,7 +55,7 @@ func _run() -> void:
 	Input.action_release("vomir")
 	await _attendre(0.1)
 	for i in range(3, 7):
-		GS.debloquer_couleur(i)
+		GS.regles.pastille_ramassee(GS.joueur_local(), i)
 	Input.action_press("deplacer_gauche")
 	await _attendre(0.1)
 	Input.action_press("vomir")
@@ -65,9 +65,9 @@ func _run() -> void:
 	spawner.spawn_coccinelle(250)
 	spawner.spawn_bonus(Vector2(1300, 220))
 	spawner.spawn_coeur(Vector2(1600, 300))
-	GS.activer_bonus(8.0)
-	GS.toucher_lion()
-	GS.invulnerable_restant = 0.0
+	GS.joueur_local().activer_bonus(8.0)
+	GS.regles.lion_touche_par_ennemi(GS.joueur_local(), Vector2.INF)
+	GS.joueur_local().invulnerable_restant = 0.0
 	await _attendre(0.75)
 	await _shot("03_vomi_gauche_7_couleurs_ennemis")
 	Input.action_release("vomir")
@@ -91,9 +91,9 @@ func _run() -> void:
 	current_scene = main
 	await _attendre(0.2)
 	for i in range(7):
-		GS.debloquer_couleur(i)
+		GS.regles.pastille_ramassee(GS.joueur_local(), i)
 	GS.temps_ecoule = 71.0
-	GS.toucher_lion(Vector2.INF)
+	GS.regles.lion_touche_par_ennemi(GS.joueur_local(), Vector2.INF)
 	GS.signaler_progression(0.91)
 	await _attendre(1.2)
 	await _shot("04b_victoire_animation")
@@ -111,7 +111,7 @@ func _run() -> void:
 	await _attendre(0.2)
 	var boss: Node = get_first_node_in_group("boss")
 	for i in range(7):
-		GS.debloquer_couleur(i)
+		GS.regles.pastille_ramassee(GS.joueur_local(), i)
 	main.get_node("Lion").global_position = Vector2(1500, 150)
 	boss.cote = 1
 	boss._changer_etat(boss.Etat.ENTREE)
