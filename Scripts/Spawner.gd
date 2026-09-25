@@ -36,7 +36,8 @@ var _facteur_ennemis := 1.0
 
 
 func _ready() -> void:
-	GameState.couleur_debloquee.connect(_on_couleur_debloquee)
+	# En solo, les apparitions suivent l'unique joueur, le joueur local (plusieurs lions : phase 10).
+	GameState.joueur_local().couleur_debloquee.connect(_on_couleur_debloquee)
 	GameState.partie_terminee.connect(_on_partie_terminee)
 	if GameState.niveau().get("boss", false):
 		_facteur_ennemis = facteur_ennemis_avec_boss
@@ -97,7 +98,8 @@ func _on_timer_coccinelle() -> void:
 
 
 func _on_timer_bonus() -> void:
-	if GameState.couleurs_debloquees.size() >= couleurs_requises_bonus and not GameState.bonus_actif():
+	var joueur := GameState.joueur_local()
+	if joueur.couleurs_debloquees.size() >= couleurs_requises_bonus and not joueur.bonus_actif():
 		spawn_bonus(_position_pickup_aleatoire())
 		_timer_bonus.start(randf_range(intervalle_bonus.x, intervalle_bonus.y))
 	else:
@@ -105,7 +107,7 @@ func _on_timer_bonus() -> void:
 
 
 func _on_timer_coeur() -> void:
-	if GameState.vies < GameState.VIES_MAX and get_tree().get_first_node_in_group("coeur_pickup") == null:
+	if GameState.joueur_local().vies < GameState.VIES_MAX and get_tree().get_first_node_in_group("coeur_pickup") == null:
 		spawn_coeur(_position_pickup_aleatoire())
 		_timer_coeur.start(randf_range(intervalle_coeur.x, intervalle_coeur.y))
 	else:
