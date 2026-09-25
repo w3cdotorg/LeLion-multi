@@ -28,6 +28,7 @@ const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 @onready var gerbe_traceuse: Area2D = $GerbeTraceuse
 @onready var traceuse_shape: CollisionShape2D = $GerbeTraceuse/CollisionShape2D
 @onready var bouche: Marker2D = $Bouche
+@onready var etiquette_pseudo: Label = $Pseudo
 
 var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
@@ -110,6 +111,9 @@ func _on_couleur_debloquee(_couleur: Color) -> void:
 ## à rappeler si la couleur ou le pseudo du joueur change ensuite (aperçu du salon, phase 13).
 func appliquer_apparence() -> void:
 	_appliquer_teinte()
+	etiquette_pseudo.text = joueur.pseudo
+	etiquette_pseudo.add_theme_color_override("font_color", joueur.couleur)
+	etiquette_pseudo.visible = joueur.a_une_couleur() and not joueur.pseudo.is_empty()
 
 
 ## Un joueur sans couleur (le solo) laisse le sprite sans matériau : le lion s'affiche

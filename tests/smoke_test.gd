@@ -133,8 +133,8 @@ func _run() -> void:
 	_check(GS.partie_en_cours, "partie en cours après Main._ready")
 	_check(lion.joueur == GS.joueur_local() and lion.commandes.source == Commandes.Source.LOCALES,
 		"hors démo, le lion porte le joueur local et lit les commandes de ce poste")
-	_check(not JL.a_une_couleur() and lion.sprite.material == null,
-		"en solo, le joueur n'a pas de couleur de lion : le sprite reste sans matériau (rendu d'origine)")
+	_check(not JL.a_une_couleur() and lion.sprite.material == null and not lion.etiquette_pseudo.visible,
+		"en solo, le joueur n'a pas de couleur de lion : sprite sans matériau (rendu d'origine), pas de pseudo")
 
 	# Intro « Prêt ? Vomissez ! » : le jeu attend
 	_check(not GS.pret and main.get_node_or_null("Intro") != null, "l'intro s'affiche et le jeu n'est pas encore prêt")
@@ -681,7 +681,8 @@ func _run() -> void:
 		"le lion d'un joueur coloré porte le shader de teinte, à la couleur de son joueur")
 	_check(mat_bleu != null and mat_bleu != mat_rouge and mat_bleu.get_shader_parameter("couleur_joueur") == bleu.couleur,
 		"deux lions ont chacun leur matériau, chacun à la couleur de son joueur")
-	_check(lions_teintes[2].sprite.material == null, "un joueur sans couleur garde le rendu d'origine")
+	_check(lions_teintes[2].sprite.material == null and not lions_teintes[2].etiquette_pseudo.visible,
+		"un joueur sans couleur garde le rendu d'origine et n'affiche pas son pseudo, même s'il en a un")
 	bleu.couleur = Color(0.10, 0.85, 0.90)
 	lions_teintes[1].appliquer_apparence()
 	_check(mat_bleu.get_shader_parameter("couleur_joueur") == bleu.couleur and mat_rouge.get_shader_parameter("couleur_joueur") == rouge.couleur,
@@ -689,6 +690,13 @@ func _run() -> void:
 	bleu.couleur = Color.TRANSPARENT
 	lions_teintes[1].appliquer_apparence()
 	_check(lions_teintes[1].sprite.material == null, "un joueur redevenu sans couleur rend au lion son rendu d'origine")
+	var etiquette: Label = lions_teintes[0].etiquette_pseudo
+	var haut_sprite: float = lions_teintes[0].sprite.position.y - lions_teintes[0].sprite.texture.get_height() / 2.0
+	_check(etiquette.visible and etiquette.text == "Alice" and etiquette.get_theme_color("font_color") == rouge.couleur,
+		"le pseudo du joueur s'affiche dans sa couleur")
+	_check(etiquette.get_rect().end.y <= haut_sprite and absf(etiquette.get_rect().get_center().x - lions_teintes[0].sprite.position.x) < 1.0,
+		"le pseudo est au-dessus de la tête du lion, centré")
+	_check(not lions_teintes[1].etiquette_pseudo.visible, "un joueur sans pseudo n'affiche pas d'étiquette")
 	rouge.debloquer_couleur(Color.RED)
 	GS.pret = true
 	lions_teintes[0].commandes.vomir_voulu = true
