@@ -122,10 +122,11 @@ func _afficher_bilan() -> void:
 			couleur_temps = COULEUR_MIEUX if ecart < 0.0 else COULEUR_MOINS_BIEN
 	_ajouter_ligne(tr("STAT_TEMPS"), int(temps), "temps", commentaire_temps, couleur_temps)
 	var max_vies: int = GameState.difficulte().vies
-	var sans_egratignure := victoire and GameState.coups_recus == 0
-	_ajouter_ligne(tr("STAT_COEURS_PERDUS"), GameState.coups_recus, "%d / " + str(max_vies),
+	var joueur := GameState.joueur_local()
+	var sans_egratignure := victoire and joueur.coups_recus == 0
+	_ajouter_ligne(tr("STAT_COEURS_PERDUS"), joueur.coups_recus, "%d / " + str(max_vies),
 		tr("SANS_EGRATIGNURE") if sans_egratignure else "", COULEUR_MIEUX)
-	_ajouter_ligne(tr("STAT_COULEURS"), GameState.couleurs_debloquees.size(), "%d / " + str(GameState.nb_couleurs_total()))
+	_ajouter_ligne(tr("STAT_COULEURS"), joueur.couleurs_debloquees.size(), "%d / " + str(GameState.nb_couleurs_total()))
 	if victoire and record_precedent >= 0.0:
 		_ajouter_ligne(tr("STAT_RECORD_PRECEDENT"), int(record_precedent), "temps")
 	if fin_arcade:

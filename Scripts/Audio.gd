@@ -59,7 +59,9 @@ func _ready() -> void:
 	Parametres.volumes_changes.connect(appliquer_volumes)
 	demarrer_musique("ville", 1)
 
-	GameState.couleur_debloquee.connect(func(_c: Color) -> void: jouer("pickup"))
+	# Son de pastille : le joueur local vient de débloquer une couleur. Le Joueur vit aussi
+	# longtemps que GameState, l'abonnement est pris une fois pour toute la session.
+	GameState.joueur_local().couleur_debloquee.connect(func(_c: Color) -> void: jouer("pickup"))
 	GameState.partie_terminee.connect(_on_partie_terminee)
 
 
