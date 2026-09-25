@@ -12,6 +12,13 @@ const COULEURS_ARC_EN_CIEL: Array[Color] = [
 	Color.CYAN, Color.BLUE, Color.VIOLET,
 ]
 const VIES_MAX := 3
+const NB_JOUEURS_MAX := 6
+## Palette de bataille, attribuée par index de joueur (planche de la phase 7). Provisoire : la
+## phase 11 en fait l'attribution du salon et règle les luminosités (deutéranopie).
+const PALETTE_BATAILLE: Array[Color] = [
+	Color(0.90, 0.16, 0.16), Color(0.16, 0.39, 0.95), Color(0.98, 0.82, 0.10),
+	Color(0.18, 0.78, 0.25), Color(0.90, 0.20, 0.85), Color(0.10, 0.85, 0.90),
+]
 const NB_ETAPES_ARCADE := 9  # 3 niveaux × 3 difficultés
 const DUREE_INVULNERABILITE := 1.5
 const DIFFICULTES: Array[Dictionary] = [
@@ -30,7 +37,8 @@ const NIVEAUX: Array[Dictionary] = [
 ## une réassignation rendrait son son de pastille muet sans erreur (voir la phase 11 de la
 ## feuille de route).
 var joueurs: Array[Joueur] = [Joueur.new()]
-## Règles de la partie : celles du solo par défaut ; la bataille branchera les siennes.
+## Règles de la partie : celles du solo par défaut ; `configurer_solo` et `configurer_bataille`
+## les changent.
 var regles: Regles
 var progression := 0.0
 var temps_ecoule := 0.0
@@ -53,6 +61,30 @@ func joueur_local() -> Joueur:
 	return joueurs[0]
 
 
+## Prépare une partie solo : règles du solo, un seul joueur, sans couleur (son lion garde son
+## rendu d'origine). Comme `configurer_bataille`, à appeler AVANT de charger la scène de jeu :
+## `Main._enter_tree` appelle `nouvelle_partie()`, puis Lion, Spawner, HUD et Main s'abonnent à
+## `joueur_local()` dans leur `_ready`.
+func configurer_solo() -> void:
+	regles = ReglesSolo.new(self)
+	joueurs.resize(1)  # en place : joueurs[0] reste le même objet
+	joueur_local().couleur = Color.TRANSPARENT
+
+
+## Prépare une bataille à `nb_joueurs` (2 à NB_JOUEURS_MAX) : règles de bataille, joueurs
+## ajoutés ou retirés en place, index et couleur de la palette. Les pseudos ne changent pas.
+func configurer_bataille(nb_joueurs: int) -> void:
+	assert(nb_joueurs >= 2 and nb_joueurs <= NB_JOUEURS_MAX, "une bataille se joue de 2 à %d" % NB_JOUEURS_MAX)
+	regles = ReglesBataille.new(self)
+	var nb_avant := joueurs.size()
+	joueurs.resize(nb_joueurs)
+	for i in range(nb_joueurs):
+		if i >= nb_avant:
+			joueurs[i] = Joueur.new()
+		joueurs[i].index = i
+		joueurs[i].couleur = PALETTE_BATAILLE[i]
+
+
 func _process(delta: float) -> void:
 	if not partie_en_cours or not pret:
 		return
@@ -63,7 +95,7 @@ func _process(delta: float) -> void:
 
 func nouvelle_partie() -> void:
 	for j in joueurs:
-		j.reinitialiser(difficulte().vies)
+		j.reinitialiser(difficulte().vies, regles.couleurs_de_depart(j))
 	progression = 0.0
 	temps_ecoule = 0.0
 	pret = false

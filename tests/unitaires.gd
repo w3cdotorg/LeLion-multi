@@ -25,6 +25,7 @@ func _run() -> void:
 	_tester_regles_solo()
 	_tester_regles_bataille()
 	_tester_delegation_regles()
+	_tester_modes()
 	_tester_facade_retiree()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
@@ -415,6 +416,39 @@ func _tester_delegation_regles() -> void:
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+
+func _tester_modes() -> void:
+	print("-- Mise en place des modes")
+	var gs: Node = root.get_node("GameState")
+	var tableau: Array[Joueur] = gs.joueurs
+	var local: Joueur = gs.joueur_local()
+	gs.configurer_bataille(4)
+	_check(gs.regles is ReglesBataille and gs.joueurs.size() == 4, "configurer_bataille(4) branche les règles de bataille pour 4 joueurs")
+	_check(is_same(tableau, gs.joueurs) and gs.joueur_local() == local,
+		"les joueurs sont ajoutés en place : même tableau, joueur local inchangé (Audio y est abonné)")
+	var indices: Array = gs.joueurs.map(func(j: Joueur) -> int: return j.index)
+	var couleurs: Array = gs.joueurs.map(func(j: Joueur) -> Color: return j.couleur)
+	_check(indices == [0, 1, 2, 3] and couleurs == gs.PALETTE_BATAILLE.slice(0, 4),
+		"chaque joueur a son index et sa couleur de la palette (%s)" % [indices])
+	var troisieme: Joueur = gs.joueurs[2]
+	gs.nouvelle_partie()
+	_check(gs.joueurs.all(func(j: Joueur) -> bool: return j.crans == 1 and j.couleurs_debloquees == j.nuances()),
+		"une nouvelle partie de bataille donne à chacun un cran et ses trois nuances")
+	gs.pret = true
+	troisieme.etourdir(1.0, 1.0, Vector2.ZERO, Color.TRANSPARENT)
+	gs._process(0.4)
+	_check(is_equal_approx(troisieme.etourdi_restant, 0.6), "GameState fait avancer tous les joueurs, pas seulement le joueur local")
+	gs.configurer_bataille(2)
+	_check(gs.joueurs.size() == 2 and is_same(tableau, gs.joueurs) and gs.joueur_local() == local, "moins de joueurs : retirés en place")
+	gs.configurer_solo()
+	_check(gs.regles is ReglesSolo and gs.joueurs.size() == 1 and gs.joueur_local() == local and is_same(tableau, gs.joueurs),
+		"bataille puis solo : règles du solo et un seul joueur, le même")
+	gs.nouvelle_partie()
+	_check(not local.a_une_couleur() and local.couleurs_debloquees.is_empty() and local.crans == 1,
+		"le joueur du solo n'a plus de couleur (son lion retrouve son rendu d'origine) et repart sans couleur débloquée")
 	gs.partie_en_cours = false
 	gs.pret = false
 
