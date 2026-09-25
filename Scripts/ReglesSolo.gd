@@ -4,7 +4,7 @@ extends Regles
 ## victoire quand la ville est peinte au seuil de la difficulté.
 
 ## `BonusPickup` applique encore ses propres 8 secondes via `GameState.activer_bonus`, en plus de
-## celles-ci : ce doublon ne sera retiré qu'en phase 4.
+## celles-ci : ce doublon ne sera retiré qu'en phase 5.
 const DUREE_ETOILE := 8.0
 
 

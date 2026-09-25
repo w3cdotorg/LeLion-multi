@@ -2,7 +2,7 @@ class_name EtatPartie
 extends Node
 ## État global d'une partie : joueurs, progression de la peinture, chrono, fin de partie.
 ## L'état propre à chaque lion vit dans `Joueur` ; les propriétés et méthodes marquées
-## « façade » délèguent au joueur local le temps que les appelants migrent (phases 2 à 6).
+## « façade » délèguent au joueur local le temps que les appelants migrent (phases 2 à 6 bis).
 
 signal couleur_debloquee(couleur: Color)
 signal progression_changee(ratio: float)
@@ -32,7 +32,7 @@ const NIVEAUX: Array[Dictionary] = [
 
 ## Le tableau doit être rempli ou réinitialisé en place (append, resize, etc.) et jamais
 ## réassigné : les relais de signaux de la façade sont liés à `joueurs[0]` dans `_ready`
-## (jusqu'à la phase 6), et une réassignation les rendrait muets sans erreur.
+## (jusqu'à la phase 6 bis), et une réassignation les rendrait muets sans erreur.
 var joueurs: Array[Joueur] = [Joueur.new()]
 ## Règles de la partie : celles du solo par défaut ; la bataille branchera les siennes.
 var regles: Regles
@@ -47,7 +47,7 @@ var demo := false  # attract mode : le jeu se joue tout seul
 var etape_arcade := 0
 var temps_arcade := 0.0  # somme des temps des stages gagnés
 
-# Façade : état du joueur local (supprimée en phase 6).
+# Façade : état du joueur local (supprimée en phase 6 bis).
 var couleurs_debloquees: Array[Color]:
 	get:
 		return joueur_local().couleurs_debloquees

@@ -6,8 +6,7 @@ Le spec couvre plusieurs sous-systèmes (socle, bataille locale, réseau, prédi
 livraison). Règle du projet (`CLAUDE.md`) : **une phase touche au plus 5 fichiers**, se termine
 par les vérifications vertes et attend une validation explicite avant la suivante. Chaque phase a
 donc son propre plan détaillé, écrit juste avant son exécution, contre le code réellement produit
-par la phase précédente. Seule la phase 1 est détaillée pour l'instant :
-`docs/superpowers/plans/2026-09-25-phase-01-joueur.md`.
+par la phase précédente : `docs/superpowers/plans/2026-09-25-phase-NN-<objet>.md`.
 
 ## Vérification commune à toutes les phases
 
@@ -38,7 +37,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 4 | **Ennemis et pastille de couleur vers les règles** : chacun signale le joueur du lion touché (`body.joueur`) aux règles. | ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 5 | **Pastilles restantes et apparitions** : étoile et cœur passent par les règles (doublon `DUREE_BONUS` / `DUREE_ETOILE` retiré), le Spawner lit le joueur local. | ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/ReglesSolo.gd` ✏️ `Scripts/Spawner.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
 | 6 | **Abonnés** : HUD, écran de fin, audio et traceuse lisent le joueur local ou celui de leur lion, et ses signaux. | ✏️ `Scripts/HUD.gd` ✏️ `Scripts/GameOver.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
-| 6 bis | **Fin de la façade** : `GameState` ne contient plus que l'état de partie. | ✏️ `Scripts/GameState.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/unitaires.gd` | tests verts |
+| 6 bis | **Fin de la façade** : `GameState` ne contient plus que l'état de partie. | ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Main.gd` ✏️ `tests/screenshots.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/unitaires.gd` | tests verts |
 
 ### B. Bataille, d'abord hors réseau
 
@@ -74,8 +73,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   avant les tests, sinon le cache des classes globales ne connaît pas encore la classe.
 - Traductions : tout nouveau texte visible passe par `Assets/Traductions/traductions.csv` (FR + EN).
 - Identifiants et commentaires en français, comme le reste du code.
-- Les numéros de phase 11 à 19 peuvent être rééquilibrés dans leurs propres plans si le code des
-  phases précédentes change la répartition des fichiers (toujours 5 au plus).
+- Toute phase pas encore commencée peut être rééquilibrée dans son propre plan si le code des
+  phases précédentes change la répartition des fichiers (toujours 5 au plus), comme cela a été
+  fait pour les phases 5, 6 et 6 bis.
 - Les fichiers `.uid` générés par Godot à côté des nouveaux scripts sont committés avec eux et ne
   comptent pas dans le plafond de 5 fichiers d'une phase.
 - `OfflineMultiplayerPeer` est le pair multijoueur par défaut de Godot 4 : le solo tourne déjà
@@ -102,3 +102,16 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
+- phase 5 : `BonusPickup` reçoit le même drapeau « déjà ramassée » que `ColorPickup` (premier
+  arrivé, premier servi) ;
+- phase 8 : `ReglesBataille.lion_touche_par_ennemi` ignore un joueur déjà étourdi ou immunisé (le
+  peintre signale le contact à chaque frame de chevauchement ; sinon l'étourdissement de 2,5 s
+  redémarrerait sans fin) ;
+- phase 7 ou 8 : ajouter `class_name Lion` et tester `body is Lion` dans les gestionnaires de
+  contact au lieu de supposer `body.joueur` ;
+- phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
+  (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
+  aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
+  (`multiplayer.is_server()`, phase 4) ;
+- références de phase périmées à corriger au passage : `Scripts/ReglesSolo.gd:7` (« phase 4 » →
+  phase 5), `Scripts/GameState.gd` lignes 5, 35 et 50 (« phase 6 » → 6 bis).
