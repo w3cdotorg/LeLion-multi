@@ -137,6 +137,11 @@ func _tester_facade_game_state() -> void:
 	gs.partie_terminee.connect(sur_fin)
 	gs.toucher_lion(Vector2(7, 7))
 	_check(fins == [false] and not gs.partie_en_cours and touches.size() == 1, "le dernier coup termine la partie en défaite, sans lion_touche")
+	gs.invulnerable_restant = 0.4
+	gs.bonus_restant = 0.6
+	gs._process(0.2)
+	_check(is_equal_approx(j.invulnerable_restant, 0.4) and is_equal_approx(j.bonus_restant, 0.6),
+		"après la fin de partie, les minuteries ne décomptent plus")
 	gs.lion_touche.disconnect(sur_touche)
 	gs.partie_terminee.disconnect(sur_fin)
 
