@@ -133,6 +133,8 @@ func _run() -> void:
 	_check(GS.partie_en_cours, "partie en cours après Main._ready")
 	_check(lion.joueur == GS.joueur_local() and lion.commandes.source == Commandes.Source.LOCALES,
 		"hors démo, le lion porte le joueur local et lit les commandes de ce poste")
+	_check(not JL.a_une_couleur() and lion.sprite.material == null,
+		"en solo, le joueur n'a pas de couleur de lion : le sprite reste sans matériau (rendu d'origine)")
 
 	# Intro « Prêt ? Vomissez ! » : le jeu attend
 	_check(not GS.pret and main.get_node_or_null("Intro") != null, "l'intro s'affiche et le jeu n'est pas encore prêt")
@@ -650,6 +652,55 @@ func _run() -> void:
 		"le lion libéré se désabonne de son joueur")
 	autre.debloquer_couleur(Color.BLUE)
 	autre = null
+
+	# Bataille : crinière à la couleur du joueur, pseudo au-dessus du lion
+	var shader_lion: Shader = load("res://Shaders/Lion.gdshader")
+	var uniformes: Array = [] if shader_lion == null else shader_lion.get_shader_uniform_list().map(
+		func(u: Dictionary) -> String: return u.name)
+	_check(uniformes.has("couleur_joueur") and uniformes.has("barbouillage_couleur") and uniformes.has("barbouillage_force"),
+		"le shader du lion compile et expose couleur_joueur, barbouillage_couleur et barbouillage_force (%s)" % [uniformes])
+	var rouge := Joueur.new()
+	rouge.couleur = Color(0.90, 0.16, 0.16)
+	rouge.pseudo = "Alice"
+	var bleu := Joueur.new()
+	bleu.couleur = Color(0.16, 0.39, 0.95)
+	var sans_couleur := Joueur.new()
+	sans_couleur.pseudo = "Solo"
+	var lions_teintes: Array[Node] = []
+	for j: Joueur in [rouge, bleu, sans_couleur]:
+		var l: Node = load("res://Scenes/Lion.tscn").instantiate()
+		l.joueur = j
+		l.commandes = Commandes.manuelles()
+		l.position = Vector2(200 + 300 * lions_teintes.size(), 0)
+		root.add_child(l)
+		lions_teintes.append(l)
+	await _frames(1)
+	var mat_rouge := lions_teintes[0].sprite.material as ShaderMaterial
+	var mat_bleu := lions_teintes[1].sprite.material as ShaderMaterial
+	_check(mat_rouge != null and mat_rouge.shader == shader_lion and mat_rouge.get_shader_parameter("couleur_joueur") == rouge.couleur,
+		"le lion d'un joueur coloré porte le shader de teinte, à la couleur de son joueur")
+	_check(mat_bleu != null and mat_bleu != mat_rouge and mat_bleu.get_shader_parameter("couleur_joueur") == bleu.couleur,
+		"deux lions ont chacun leur matériau, chacun à la couleur de son joueur")
+	_check(lions_teintes[2].sprite.material == null, "un joueur sans couleur garde le rendu d'origine")
+	bleu.couleur = Color(0.10, 0.85, 0.90)
+	lions_teintes[1].appliquer_apparence()
+	_check(mat_bleu.get_shader_parameter("couleur_joueur") == bleu.couleur and mat_rouge.get_shader_parameter("couleur_joueur") == rouge.couleur,
+		"réappliquer l'apparence après un changement de couleur ne retouche que le lion de ce joueur")
+	bleu.couleur = Color.TRANSPARENT
+	lions_teintes[1].appliquer_apparence()
+	_check(lions_teintes[1].sprite.material == null, "un joueur redevenu sans couleur rend au lion son rendu d'origine")
+	rouge.debloquer_couleur(Color.RED)
+	GS.pret = true
+	lions_teintes[0].commandes.vomir_voulu = true
+	for i in range(3):
+		await process_frame  # le vomi démarre dans _process et l'AnimationPlayer change de sprite au même rythme
+	_check(lions_teintes[0].est_en_train_de_vomir and lions_teintes[0].sprite.texture.resource_path.ends_with("LionHeadVomit.png")
+		and lions_teintes[0].sprite.material == mat_rouge,
+		"en vomissant, le sprite de vomi garde le matériau de teinte du joueur")
+	lions_teintes[0].commandes.vomir_voulu = false
+	await _frames(2)
+	for l in lions_teintes:
+		l.free()
 
 	print("== %d échec(s) ==" % _echecs)
 	paused = false
