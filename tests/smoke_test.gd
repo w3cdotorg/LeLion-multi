@@ -155,6 +155,7 @@ func _run() -> void:
 		"hors démo, le lion porte le joueur local et lit les commandes de ce poste")
 	_check(not JL.a_une_couleur() and lion.sprite.material == null and not lion.etiquette_pseudo.visible,
 		"en solo, le joueur n'a pas de couleur de lion : sprite sans matériau (rendu d'origine), pas de pseudo")
+	_check(ville.territoire == null, "en solo, la ville ne tient pas de territoire : seule la couverture compte")
 
 	# Intro « Prêt ? Vomissez ! » : le jeu attend
 	_check(not GS.pret and main.get_node_or_null("Intro") != null, "l'intro s'affiche et le jeu n'est pas encore prêt")
@@ -338,12 +339,12 @@ func _run() -> void:
 	GS.regles.pastille_ramassee(JL, 0)
 	var haut: float = ville.position.y - ville.tex_size.y / 2.0
 	# un seul tampon clairsemé ne suffit pas : la couverture réelle est mesurée
-	ville.peindre(Vector2(1000, haut + 200), 45, JL.couleurs_debloquees)
+	ville.peindre(Vector2(1000, haut + 200), 45, JL)
 	ville.mesurer_progression()
 	_check(GS.progression < 0.01, "un tampon isolé ne compte presque pas (couverture %.3f)" % GS.progression)
 	for x in range(0, ville.tex_size.x, 40):
 		for y in range(0, ville.tex_size.y, 40):
-			ville.peindre(Vector2(x, haut + y), 45, JL.couleurs_debloquees)
+			ville.peindre(Vector2(x, haut + y), 45, JL)
 	ville.mesurer_progression()
 	await _frames(3)
 	_check(GS.progression >= GS.seuil_victoire(), "progression >= seuil après avoir tout peint (%.2f)" % GS.progression)
@@ -1019,6 +1020,114 @@ func _run() -> void:
 
 	for l in lions_bataille:
 		l.free()
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+
+	# Territoire : la ville d'une bataille tient la grille de propriété, dans une scène propre
+	# (sa ville, ses deux lions). Aucun ennemi des sections précédentes ne doit y entrer.
+	for ennemi in get_nodes_in_group("ennemi") + get_nodes_in_group("boss"):
+		ennemi.free()
+	GS.configurer_bataille(2)
+	GS.nouvelle_partie()
+	GS.pret = true
+	var j_r: Joueur = GS.joueurs[0]
+	var j_b: Joueur = GS.joueurs[1]
+	var ville_b: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	root.add_child(ville_b)
+	ville_b.position = Vector2(1000, 648 - ville_b.tex_size.y / 2.0)  # comme Main._placer_ville
+	var lions_t: Array[CharacterBody2D] = []
+	for j: Joueur in GS.joueurs:
+		var l: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+		l.joueur = j
+		l.commandes = Commandes.manuelles()
+		l.position = Vector2(200 + 1000 * lions_t.size(), 0)
+		root.add_child(l)
+		lions_t.append(l)
+	var l_r: CharacterBody2D = lions_t[0]
+	var l_b: CharacterBody2D = lions_t[1]
+	var poste_peinture := Vector2(600, ville_b.position.y - 300)
+	await _frames(2)
+	var t: Territoire = ville_b.territoire
+	_check(t != null and t.nb_peignables == ville_b.cellules_peignables and t.cellules_de(0) == 0 and t.cellules_de(1) == 0,
+		"en bataille, la ville tient un territoire vierge sur ses cellules peignables (%d)" % ville_b.cellules_peignables)
+	_check(l_r.traceuse_shape.shape.radius == l_b.traceuse_shape.shape.radius and j_r.couleurs_debloquees.size() == j_b.couleurs_debloquees.size(),
+		"(pré-condition) les deux lions ont le même rayon et autant de couleurs (trois nuances)")
+
+	# Le lion rouge peint : ses cellules comptent pour lui, dans ses nuances
+	l_r.global_position = poste_peinture
+	await _frames(1)
+	l_r.commandes.vomir_voulu = true
+	await _frames(40)
+	l_r.commandes.vomir_voulu = false
+	await _frames(2)
+	var cellules_rouges: int = t.cellules_de(0)
+	var rgba32_rouge: Array = j_r.nuances().map(_rgba8)
+	var rgba32_bleu: Array = j_b.nuances().map(_rgba8)
+	_check(cellules_rouges > 0 and t.cellules_de(1) == 0, "les cellules que peint un lion comptent pour son joueur (%d)" % cellules_rouges)
+	_check(_couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_rouge.has(k)),
+		"le lion rouge peint dans ses nuances")
+	_check(t.extraire_changements().size() == cellules_rouges and t.extraire_changements().is_empty(),
+		"les cellules qui se mettent à compter sont listées pour la synchronisation, une fois")
+
+	# Le lion bleu repeint au même endroit : il vole les cellules du rouge, dans ses propres nuances
+	l_r.global_position = Vector2(1500, 0)
+	l_b.global_position = poste_peinture
+	await _frames(1)
+	ville_b.image.fill(Color(0, 0, 0, 0))
+	ville_b.coulures.clear()
+	l_b.commandes.vomir_voulu = true
+	await _frames(40)
+	l_b.commandes.vomir_voulu = false
+	await _frames(2)
+	_check(_couleurs_peintes(ville_b.image).keys().all(func(k: int) -> bool: return rgba32_bleu.has(k)),
+		"à rayon et nombre de couleurs égaux, le second lion peint dans ses propres nuances")
+	_check(t.cellules_de(1) > 0 and t.cellules_de(0) < cellules_rouges and j_b.cellules_volees > 0
+		and j_b.cellules_volees == cellules_rouges - t.cellules_de(0) and j_r.cellules_volees == 0,
+		"repeindre les cellules d'un autre les lui vole ; les règles comptent les vols (%d volées, %d restent au rouge)" % [j_b.cellules_volees, t.cellules_de(0)])
+
+	# Sur un client, la ville dessine le tampon mais ne touche pas au territoire : l'hôte décide
+	var api_ville := SceneMultiplayer.new()
+	var pair_ville := ENetMultiplayerPeer.new()
+	pair_ville.create_client("127.0.0.1", 7779)
+	api_ville.multiplayer_peer = pair_ville
+	set_multiplayer(api_ville, ville_b.get_path())
+	var scores_avant := [t.cellules_de(0), t.cellules_de(1)]
+	var point_vierge := Vector2(1800, 648 - 20)  # bas de la skyline, à droite : jamais peint ici
+	ville_b.image.fill(Color(0, 0, 0, 0))
+	for i in range(10):
+		ville_b.peindre(point_vierge, 30, j_r)
+	_check(not ville_b.multiplayer.is_server() and not _couleurs_peintes(ville_b.image).is_empty()
+		and [t.cellules_de(0), t.cellules_de(1)] == scores_avant,
+		"sur un client, la ville dessine les tampons sans toucher au territoire")
+	set_multiplayer(null, ville_b.get_path())
+	pair_ville.close()
+	for i in range(10):
+		ville_b.peindre(point_vierge, 30, j_r)
+	_check(t.cellules_de(0) > scores_avant[0], "de retour sur l'hôte, les mêmes tampons comptent")
+
+	# Ruling (b) (revue finale phase 9 bis) : après terminer_partie, partie_en_cours retombe mais
+	# pret reste vrai (pas de retour à l'intro) ; un lion peut donc encore peindre. Le tampon visuel
+	# doit rester, mais plus aucun score de territoire ne doit bouger.
+	GS.terminer_partie(true)
+	_check(GS.pret and not GS.partie_en_cours, "(pré-condition) la manche est terminée mais le jeu reste « pret »")
+	var scores_manche_finie := [t.cellules_de(0), t.cellules_de(1)]
+	var volees_manche_finie := [j_r.cellules_volees, j_b.cellules_volees]
+	l_r.global_position = poste_peinture  # cellules déjà possédées par le bleu : un vol s'y verrait
+	await _frames(1)
+	l_r.commandes.vomir_voulu = true
+	await _frames(20)
+	l_r.commandes.vomir_voulu = false
+	await _frames(2)
+	_check(_couleurs_peintes(ville_b.image).keys().any(func(k: int) -> bool: return rgba32_rouge.has(k))
+		and [t.cellules_de(0), t.cellules_de(1)] == scores_manche_finie
+		and [j_r.cellules_volees, j_b.cellules_volees] == volees_manche_finie,
+		"après la fin de la manche, peindre dessine toujours le tampon mais ne change plus aucun score de territoire")
+
+	for l in lions_t:
+		l.free()
+	ville_b.free()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false

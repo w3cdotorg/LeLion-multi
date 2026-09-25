@@ -1,9 +1,10 @@
 extends Node2D
 ## La ville : masque de peinture RGBA appliqué par shader sur la skyline.
-## La peinture se fait par tampons multicolores (blit natif). La progression est mesurée
-## sur une grille de cellules couvrant les zones opaques de la skyline : une cellule compte
-## quand au moins COUVERTURE_CELLULE de sa surface est réellement peinte (mesure par
-## réduction du masque, à intervalle régulier).
+## La peinture se fait par tampons multicolores (blit natif), aux couleurs du joueur qui peint.
+## La progression est mesurée sur une grille de cellules couvrant les zones opaques de la
+## skyline : une cellule compte quand au moins COUVERTURE_CELLULE de sa surface est réellement
+## peinte (mesure par réduction du masque, à intervalle régulier). En bataille, la même grille
+## porte aussi le territoire (`Territoire`) : l'hôte y reporte chaque tampon.
 
 const TAILLE_CELLULE := 8
 const NB_TAMPONS := 4
@@ -27,6 +28,9 @@ var texture: ImageTexture
 var grille_taille: Vector2i
 var cellules_peignables := 0
 var cellules_peintes := 0
+## Grille de propriété de la bataille (propriétaire et charge par cellule, scores par joueur),
+## créée par `charger_skyline` quand les règles se jouent au territoire ; null en solo.
+var territoire: Territoire
 var _cellules_peignables: PackedByteArray
 var _a_mesurer := false
 var _temps_mesure := 0.0
@@ -51,6 +55,8 @@ func charger_skyline(nouvelle: Texture2D) -> void:
 	coulures.clear()
 	_tampons.clear()
 	_calculer_cellules_peignables()
+	territoire = Territoire.new(grille_taille, _cellules_peignables, TAILLE_CELLULE) \
+		if GameState.regles.compte_le_territoire() else null
 
 	image = Image.create(tex_size.x, tex_size.y, false, Image.FORMAT_RGBA8)
 	image.fill(Color(0, 0, 0, 0))
@@ -116,8 +122,11 @@ func _calculer_cellules_peignables() -> void:
 				cellules_peignables += 1
 
 
-## Applique un tampon de peinture de rayon `rayon` centré sur une position globale.
-func peindre(position_globale: Vector2, rayon: int, couleurs: Array[Color]) -> void:
+## Applique un tampon de peinture de rayon `rayon`, centré sur une position globale, aux couleurs
+## débloquées de `peintre`. En bataille, sur l'hôte seulement, et tant que la manche est en cours,
+## le tampon est aussi reporté sur le territoire et ses vols sont signalés aux règles.
+func peindre(position_globale: Vector2, rayon: int, peintre: Joueur) -> void:
+	var couleurs := peintre.couleurs_debloquees
 	if couleurs.is_empty() or rayon <= 0:
 		return
 	var local := sprite.to_local(position_globale)
@@ -138,6 +147,13 @@ func peindre(position_globale: Vector2, rayon: int, couleurs: Array[Color]) -> v
 			"fin": float(py + rayon + randi_range(14, 44)), "couleur": c,
 		})
 	_dirty = true
+	# Ruling (b) phase 9 bis : après terminer_partie, partie_en_cours retombe mais pret reste vrai
+	# (un lion peut encore peindre) ; ne toucher au territoire que tant que la manche est en cours,
+	# pour que la fin de manche fige les scores sans empêcher le tampon visuel.
+	if territoire != null and multiplayer.is_server() and GameState.regles._manche_en_cours():
+		var volees := territoire.tamponner(peintre.index, Vector2i(px, py), rayon)
+		if volees > 0:
+			GameState.regles.vol_de_cellules(peintre, volees)
 
 
 ## Les coulures descendent d'un trait de 2 px, une ligne à la fois.
