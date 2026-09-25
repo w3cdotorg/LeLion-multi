@@ -1,18 +1,27 @@
 extends Node2D
-## Racine de la partie : place la ville, écoute la fin de partie et affiche l'overlay.
+## Racine de la partie : met l'écran à la taille du mode, place la ville, le ciel, la caméra et
+## un lion par joueur, écoute la fin de partie et affiche le bilan du solo.
 
 @export var game_over_scene: PackedScene
 
 @export var force_tremblement := 14.0
 @export var duree_tremblement := 0.35
 @export var duree_demo := 45.0
+## Plusieurs lions (bataille) : hauteur de départ, en part de la hauteur de l'écran (en haut du ciel).
+@export var hauteur_depart_lions := 0.12
 
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const SCRIPT_PILOTE := preload("res://Scripts/Pilote.gd")
+const SCENE_LION := preload("res://Scenes/Lion.tscn")
 
 @onready var ville: Node2D = $Ville
-@onready var lion: CharacterBody2D = $Lion
+@onready var lion: Lion = $Lion
 @onready var camera: Camera2D = $Camera
+@onready var ciel: TextureRect = $Ciel
+
+## Un lion par joueur, dans l'ordre de `GameState.joueurs` : le premier est celui de la scène,
+## le lion du joueur local.
+var lions: Array[Lion] = []
 
 var _tremblement_restant := 0.0
 var _demo_restant := 0.0
@@ -21,10 +30,13 @@ var _demo_restant := 0.0
 const ACTIONS_DE_JEU := ["deplacer_gauche", "deplacer_droite", "deplacer_haut", "deplacer_bas", "vomir"]
 
 
-## Avant les _ready des enfants : le lion et le HUD lisent l'état de partie en se construisant.
+## Avant les _ready des enfants : le lion et le HUD lisent l'état de partie en se construisant,
+## le peintre et les apparitions la taille de l'écran. Les règles du mode sont branchées AVANT le
+## changement de scène (`GameState.configurer_solo` / `configurer_bataille`), jamais ici.
 func _enter_tree() -> void:
 	for action in ACTIONS_DE_JEU:
 		Input.action_release(action)
+	get_tree().root.content_scale_size = GameState.regles.taille_ecran()
 	GameState.nouvelle_partie()
 
 
@@ -35,6 +47,8 @@ func _ready() -> void:
 	GameState.joueur_local().touche.connect(_on_lion_touche)
 	ville.charger_skyline(load(GameState.niveau().texture))
 	_placer_ville()
+	_placer_ciel_et_camera()
+	_ajouter_lions()
 	if GameState.demo:
 		_installer_demo()
 
@@ -88,6 +102,41 @@ func _placer_ville() -> void:
 	ville.position = Vector2(screen_size.x / 2, screen_size.y - texture_size.y / 2)
 
 
+## Le ciel couvre l'écran du mode et la caméra en vise le centre (en solo : 2000×648 et
+## (1000, 324), les valeurs de la scène).
+func _placer_ciel_et_camera() -> void:
+	var taille := get_viewport_rect().size
+	ciel.size = taille
+	camera.position = taille / 2.0
+
+
+## Un lion par joueur. Le lion de la scène prend de lui-même le joueur local ; chaque autre lion
+## reçoit son joueur et des commandes manuelles AVANT l'ajout à l'arbre, sinon il prendrait en
+## silence le joueur local et le clavier de ce poste (en phase 14, ses commandes viendront du
+## réseau). Plusieurs lions partent en haut du ciel, répartis sur la largeur.
+func _ajouter_lions() -> void:
+	lions.clear()
+	lions.append(lion)
+	for i in range(1, GameState.joueurs.size()):
+		var autre: Lion = SCENE_LION.instantiate()
+		autre.name = "Lion%d" % (i + 1)
+		autre.joueur = GameState.joueurs[i]
+		autre.commandes = Commandes.manuelles()
+		add_child(autre)
+		move_child(autre, lion.get_index() + i)
+		lions.append(autre)
+	if lions.size() > 1:
+		_repartir_lions()
+
+
+## Centres des lions régulièrement espacés sur la largeur, tous à la même hauteur.
+func _repartir_lions() -> void:
+	var taille := get_viewport_rect().size
+	for i in range(lions.size()):
+		var centre_x := taille.x * (i + 0.5) / lions.size()
+		lions[i].position = Vector2(centre_x - Lion.CENTRE.x, taille.y * hauteur_depart_lions)
+
+
 func _process(delta: float) -> void:
 	if GameState.demo and GameState.partie_en_cours:
 		_demo_restant -= delta
@@ -123,6 +172,11 @@ func _on_partie_terminee(victoire: bool) -> void:
 			lion.hide()
 		get_tree().paused = true
 		get_tree().create_timer(2.5, true).timeout.connect(quitter_demo)
+		return
+	if GameState.regles.compte_le_territoire():
+		# Bataille : tout se fige, scores compris. Le bilan du solo ne parle que du joueur local ;
+		# les résultats de la bataille, lus sur le territoire, viendront en phase 18.
+		get_tree().paused = true
 		return
 	if not victoire:
 		lion.hide()
