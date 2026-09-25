@@ -31,7 +31,15 @@ var est_en_train_de_vomir := false
 var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
 ## État du lion (couleurs, bonus, coups) et source de ses intentions. À fournir avant l'ajout
 ## à l'arbre ; à défaut, le joueur local et ses commandes (celles du pilote en démo).
-var joueur: Joueur
+var joueur: Joueur:
+	set(valeur):
+		# `is_node_ready()` vaut déjà true pendant `_ready()` lui-même (pas seulement après) :
+		# le garde-fou ne bloque donc que le remplacement d'un joueur déjà fixé, pas le repli
+		# par défaut fait par `_ready()` ci-dessous.
+		if is_node_ready() and joueur != null:
+			push_error("Lion.joueur se fixe avant l'ajout à l'arbre")
+			return
+		joueur = valeur
 var commandes: Commandes
 var _vitesse := Vector2.ZERO
 var _recul := Vector2.ZERO
@@ -43,6 +51,9 @@ func _ready() -> void:
 		joueur = GameState.joueur_local()
 	if commandes == null:
 		commandes = Commandes.manuelles() if GameState.demo else Commandes.locales()
+	# La sous-ressource de Lion.tscn est partagée par toutes les instances ; chaque lion a besoin
+	# de son propre rayon.
+	traceuse_shape.shape = traceuse_shape.shape.duplicate()
 	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
 	joueur.bonus_change.connect(_on_bonus_change)
 	joueur.touche.connect(_on_lion_touche)

@@ -15,6 +15,10 @@ var _sens := 1.0
 var _rangee := 0
 
 
+func _ready() -> void:
+	assert(lion.commandes.source == Commandes.Source.MANUELLES, "le pilote a besoin de commandes manuelles, sinon ses écritures sont ignorées")
+
+
 func _physics_process(delta: float) -> void:
 	if not GameState.pret or not GameState.partie_en_cours or not is_instance_valid(lion):
 		return

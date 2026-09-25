@@ -181,3 +181,6 @@ func _tester_commandes() -> void:
 	Input.action_release("deplacer_droite")
 	Input.action_release("vomir")
 	_check(l.direction() == Vector2.ZERO and not l.vomir(), "relâcher les actions remet les commandes locales au repos")
+	m.direction_voulue = Vector2(3, 4)
+	_check(is_equal_approx(m.direction().length(), 1.0) and m.direction().is_equal_approx(Vector2(0.6, 0.8)),
+		"direction() borne les commandes manuelles à une longueur de 1")

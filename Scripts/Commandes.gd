@@ -7,7 +7,7 @@ extends RefCounted
 enum Source { LOCALES, MANUELLES }
 
 var source := Source.MANUELLES
-## Lus seulement en source MANUELLES.
+## Lus seulement en source MANUELLES. direction() borne direction_voulue à une longueur de 1.
 var direction_voulue := Vector2.ZERO
 var vomir_voulu := false
 
@@ -25,7 +25,9 @@ static func manuelles() -> Commandes:
 func direction() -> Vector2:
 	if source == Source.LOCALES:
 		return Input.get_vector("deplacer_gauche", "deplacer_droite", "deplacer_haut", "deplacer_bas")
-	return direction_voulue
+	# Bornée : une valeur reçue du réseau (phases suivantes) pourrait dépasser 1 et rendre
+	# un lion plus rapide que sa vitesse.
+	return direction_voulue.limit_length(1.0)
 
 
 func vomir() -> bool:

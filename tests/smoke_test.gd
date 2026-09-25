@@ -500,6 +500,8 @@ func _run() -> void:
 	GS.difficulte_courante = 0
 
 	# Un lion lié à un autre joueur suit ce joueur et ses propres commandes
+	# La GerbeTraceuse de ce lion peint encore avec les couleurs du joueur local via la
+	# façade GameState, jusqu'à la phase 6.
 	paused = false
 	var autre := Joueur.new()
 	autre.reinitialiser(3)
@@ -514,6 +516,15 @@ func _run() -> void:
 	_check(lion_autre.vomi_container.get_child_count() == 0, "une couleur du joueur local ne touche pas un lion lié à un autre joueur")
 	autre.debloquer_couleur(Color.RED)
 	_check(lion_autre.vomi_container.get_child_count() == 1, "le lion reconstruit sa gerbe quand son propre joueur débloque une couleur")
+	var rayon_autre: float = lion_autre.traceuse_shape.shape.radius
+	GS.activer_bonus(5.0)
+	_check(lion_autre.traceuse_shape.shape.radius == rayon_autre, "le bonus du joueur local ne touche pas un lion lié à un autre joueur")
+	GS.bonus_restant = 0.0
+	autre.activer_bonus(5.0)
+	_check(is_equal_approx(lion_autre.traceuse_shape.shape.radius, rayon_autre * 2.0), "le bonus de son propre joueur double la gerbe du lion")
+	autre.encaisser_coup(Vector2.INF, 1.5)
+	_check(lion_autre._recul.length() > 0.0, "un coup encaissé par son propre joueur repousse le lion")
+	lion_autre._recul = Vector2.ZERO  # sinon le recul contamine les vérifications de mouvement ci-dessous
 	GS.pret = false
 	lion_autre.commandes.direction_voulue = Vector2.RIGHT
 	var x_avant: float = lion_autre.global_position.x
@@ -528,6 +539,10 @@ func _run() -> void:
 	lion_autre.commandes.vomir_voulu = false
 	await _frames(2)
 	lion_autre.free()
+	_check(autre.couleur_debloquee.get_connections().is_empty() and autre.touche.get_connections().is_empty(),
+		"le lion libéré se désabonne de son joueur")
+	autre.debloquer_couleur(Color.BLUE)
+	autre = null
 
 	print("== %d échec(s) ==" % _echecs)
 	paused = false
