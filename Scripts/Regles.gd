@@ -5,13 +5,13 @@ extends RefCounted
 ## Sans effet par défaut ; chaque mode (solo, bataille) en dérive. Ne s'exécutent que sur
 ## l'hôte (en solo, le poste est son propre hôte).
 
-## État de la partie (l'autoload GameState), fourni à la construction : les règles ne
-## dépendent pas d'un global, ce qui permet de les tester (un test `--script` est compilé avant
-## l'enregistrement des autoloads).
-var partie: Node
+## État de la partie (l'autoload GameState, typé par sa classe EtatPartie), fourni à la
+## construction : les règles ne dépendent pas d'un global, ce qui permet de les tester (un test
+## `--script` est compilé avant l'enregistrement des autoloads).
+var partie: EtatPartie
 
 
-func _init(partie_: Node = null) -> void:
+func _init(partie_: EtatPartie = null) -> void:
 	partie = partie_
 
 
@@ -21,7 +21,9 @@ func lion_touche_par_ennemi(_joueur: Joueur, _origine: Vector2) -> void:
 	pass
 
 
-## Renvoie true si la pastille a eu un effet.
+## Renvoie true si la pastille a eu un effet (elle disparaît dans tous les cas ; la valeur de
+## retour ne sert qu'au feedback). `index_couleur` ne compte que pour les règles qui utilisent
+## l'arc-en-ciel ; les règles de bataille l'ignoreront.
 func pastille_ramassee(_joueur: Joueur, _index_couleur: int) -> bool:
 	return false
 
@@ -30,7 +32,8 @@ func etoile_ramassee(_joueur: Joueur) -> void:
 	pass
 
 
-## Renvoie true si le cœur a eu un effet.
+## Renvoie true si le cœur a eu un effet (il disparaît dans tous les cas ; la valeur de retour
+## ne sert qu'au feedback).
 func coeur_ramasse(_joueur: Joueur) -> bool:
 	return false
 

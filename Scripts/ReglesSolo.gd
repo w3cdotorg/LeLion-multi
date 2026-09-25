@@ -3,7 +3,14 @@ extends Regles
 ## Règles du jeu solo : des cœurs, l'arc-en-ciel à débloquer pastille par pastille, et la
 ## victoire quand la ville est peinte au seuil de la difficulté.
 
+## `BonusPickup` applique encore ses propres 8 secondes via `GameState.activer_bonus`, en plus de
+## celles-ci : ce doublon ne sera retiré qu'en phase 4.
 const DUREE_ETOILE := 8.0
+
+
+func _init(partie_: EtatPartie) -> void:
+	assert(partie_ != null, "ReglesSolo a besoin de l'état de partie")
+	super(partie_)
 
 
 func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:

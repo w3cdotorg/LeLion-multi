@@ -1,3 +1,4 @@
+class_name EtatPartie
 extends Node
 ## État global d'une partie : joueurs, progression de la peinture, chrono, fin de partie.
 ## L'état propre à chaque lion vit dans `Joueur` ; les propriétés et méthodes marquées
@@ -172,8 +173,7 @@ func est_invulnerable() -> bool:
 	return joueur_local().est_invulnerable()
 
 
-## Un ennemi touche le lion : perd une vie, ou termine la partie s'il n'en reste plus.
-## `origine` = position de l'ennemi, pour le recul (Vector2.INF si inconnue).
+## Façade : un ennemi touche le lion du joueur local (voir Regles.lion_touche_par_ennemi).
 func toucher_lion(origine: Vector2 = Vector2.INF) -> void:
 	regles.lion_touche_par_ennemi(joueur_local(), origine)
 

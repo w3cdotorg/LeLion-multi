@@ -205,14 +205,22 @@ func _tester_regles_solo() -> void:
 	base.lion_touche_par_ennemi(j, Vector2.ZERO)
 	base.etoile_ramassee(j)
 	base.progression_mesuree(1.0)
-	_check(j.vies == 3 and not j.bonus_actif() and not base.pastille_ramassee(j, 0) and not base.coeur_ramasse(j)
+	_check(j.vies == 3 and not j.bonus_actif() and not base.pastille_ramassee(j, 0)
 		and j.couleurs_debloquees.is_empty() and fins.is_empty(), "les règles de base n'ont aucun effet")
+	j.vies = 2
+	_check(not base.coeur_ramasse(j) and j.vies == 2, "coeur_ramasse des règles de base n'a aucun effet, même sous le maximum")
+	j.vies = 3
 
 	# Règles solo : elles agissent sur le joueur reçu, pas sur le joueur local
 	var r := ReglesSolo.new(gs)
 	var local: Joueur = gs.joueur_local()
+	var touches_locales: Array[Vector2] = []
+	var sur_touche_locale := func(o: Vector2) -> void: touches_locales.append(o)
+	gs.lion_touche.connect(sur_touche_locale)
 	r.lion_touche_par_ennemi(j, Vector2(3, 4))
-	_check(j.vies == 2 and j.est_invulnerable() and local.vies == 3, "un coup d'ennemi touche le joueur reçu, pas le joueur local")
+	_check(j.vies == 2 and j.est_invulnerable() and local.vies == 3 and touches_locales.is_empty(),
+		"un coup d'ennemi touche le joueur reçu, pas le joueur local, sans déclencher son relai lion_touche")
+	gs.lion_touche.disconnect(sur_touche_locale)
 	r.lion_touche_par_ennemi(j, Vector2(3, 4))
 	_check(j.vies == 2, "pas de coup pendant l'invulnérabilité")
 	j.invulnerable_restant = 0.0
@@ -271,14 +279,17 @@ func _tester_delegation_regles() -> void:
 	# Des règles sans effet : la façade ne fait plus rien
 	gs.regles = Regles.new(gs)
 	gs.toucher_lion(Vector2.ZERO)
-	_check(j.vies == 3 and not gs.debloquer_couleur(0) and j.couleurs_debloquees.is_empty() and not gs.gagner_vie(),
-		"avec d'autres règles, toucher_lion, debloquer_couleur et gagner_vie suivent ces règles")
+	_check(j.vies == 3 and not gs.debloquer_couleur(0) and j.couleurs_debloquees.is_empty(),
+		"avec d'autres règles, toucher_lion et debloquer_couleur suivent ces règles")
+	j.vies = 2
+	_check(not gs.gagner_vie() and j.vies == 2, "avec d'autres règles, gagner_vie suit aussi ces règles")
 	gs.signaler_progression(1.0)
 	_check(fins.is_empty() and gs.partie_en_cours and is_equal_approx(gs.progression, 1.0),
 		"signaler_progression enregistre toujours la progression mais laisse la victoire aux règles")
 
 	# Retour aux règles du solo
 	gs.regles = solo
+	_check(gs.gagner_vie() and j.vies == 3, "avec les règles du solo, gagner_vie rend une vie")
 	gs.signaler_progression(0.0)
 	gs.toucher_lion(Vector2.ZERO)
 	_check(j.vies == 2, "avec les règles du solo, toucher_lion retire une vie")
