@@ -23,6 +23,7 @@ func _run() -> void:
 	_tester_facade_game_state()
 	_tester_commandes()
 	_tester_regles_solo()
+	_tester_delegation_regles()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -247,6 +248,40 @@ func _tester_regles_solo() -> void:
 	_check(j.vies == 0 and fins == [false] and not gs.partie_en_cours, "le dernier coup termine la partie en défaite")
 	r.lion_touche_par_ennemi(j, Vector2.INF)
 	_check(j.vies == 0 and fins == [false], "après la fin de partie, un lion à 0 vie n'est plus frappé")
+
+	gs.partie_terminee.disconnect(sur_fin)
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+
+func _tester_delegation_regles() -> void:
+	print("-- GameState délègue aux règles")
+	var gs: Node = root.get_node("GameState")
+	_check(gs.regles is ReglesSolo, "par défaut, GameState applique les règles du solo")
+	var solo: Regles = gs.regles
+	gs.difficulte_courante = 0
+	gs.nouvelle_partie()
+	gs.pret = true
+	var j: Joueur = gs.joueur_local()
+	var fins: Array[bool] = []
+	var sur_fin := func(v: bool) -> void: fins.append(v)
+	gs.partie_terminee.connect(sur_fin)
+
+	# Des règles sans effet : la façade ne fait plus rien
+	gs.regles = Regles.new(gs)
+	gs.toucher_lion(Vector2.ZERO)
+	_check(j.vies == 3 and not gs.debloquer_couleur(0) and j.couleurs_debloquees.is_empty() and not gs.gagner_vie(),
+		"avec d'autres règles, toucher_lion, debloquer_couleur et gagner_vie suivent ces règles")
+	gs.signaler_progression(1.0)
+	_check(fins.is_empty() and gs.partie_en_cours and is_equal_approx(gs.progression, 1.0),
+		"signaler_progression enregistre toujours la progression mais laisse la victoire aux règles")
+
+	# Retour aux règles du solo
+	gs.regles = solo
+	gs.signaler_progression(0.0)
+	gs.toucher_lion(Vector2.ZERO)
+	_check(j.vies == 2, "avec les règles du solo, toucher_lion retire une vie")
 
 	gs.partie_terminee.disconnect(sur_fin)
 	gs.nouvelle_partie()
