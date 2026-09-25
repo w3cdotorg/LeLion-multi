@@ -1,6 +1,7 @@
 extends Node
-## État global d'une partie : couleurs débloquées, progression de la peinture,
-## chrono, fin de partie.
+## État global d'une partie : joueurs, progression de la peinture, chrono, fin de partie.
+## L'état propre à chaque lion vit dans `Joueur` ; les propriétés et méthodes marquées
+## « façade » délèguent au joueur local le temps que les appelants migrent (phases 2 à 6).
 
 signal couleur_debloquee(couleur: Color)
 signal progression_changee(ratio: float)
@@ -28,7 +29,7 @@ const NIVEAUX: Array[Dictionary] = [
 	{"id": "village", "nom": "NIVEAU_VILLAGE", "texture": "res://Assets/Sprites/skyline_village.png", "boss": true},
 ]
 
-var couleurs_debloquees: Array[Color] = []
+var joueurs: Array[Joueur] = [Joueur.new()]
 var progression := 0.0
 var temps_ecoule := 0.0
 var partie_en_cours := false
@@ -39,33 +40,57 @@ var mode_arcade := false
 var demo := false  # attract mode : le jeu se joue tout seul
 var etape_arcade := 0
 var temps_arcade := 0.0  # somme des temps des stages gagnés
-var vies := 3
-var coups_recus := 0
-var invulnerable_restant := 0.0
-var bonus_restant := 0.0
+
+# Façade : état du joueur local (supprimée en phase 6).
+var couleurs_debloquees: Array[Color]:
+	get:
+		return joueur_local().couleurs_debloquees
+var vies: int:
+	get:
+		return joueur_local().vies
+	set(valeur):
+		joueur_local().vies = valeur
+var coups_recus: int:
+	get:
+		return joueur_local().coups_recus
+var invulnerable_restant: float:
+	get:
+		return joueur_local().invulnerable_restant
+	set(valeur):
+		joueur_local().invulnerable_restant = valeur
+var bonus_restant: float:
+	get:
+		return joueur_local().bonus_restant
+	set(valeur):
+		joueur_local().bonus_restant = valeur
+
+
+func _ready() -> void:
+	var j := joueur_local()
+	j.couleur_debloquee.connect(func(c: Color) -> void: couleur_debloquee.emit(c))
+	j.bonus_change.connect(func(actif: bool) -> void: bonus_change.emit(actif))
+	j.vies_changees.connect(func(nb: int) -> void: vies_changees.emit(nb))
+	j.touche.connect(func(origine: Vector2) -> void: lion_touche.emit(origine))
+
+
+## Le joueur de ce poste. En solo, le seul joueur.
+func joueur_local() -> Joueur:
+	return joueurs[0]
 
 
 func _process(delta: float) -> void:
 	if not partie_en_cours or not pret:
 		return
 	temps_ecoule += delta
-	if invulnerable_restant > 0.0:
-		invulnerable_restant = max(0.0, invulnerable_restant - delta)
-	if bonus_restant > 0.0:
-		bonus_restant -= delta
-		if bonus_restant <= 0.0:
-			bonus_restant = 0.0
-			bonus_change.emit(false)
+	for j in joueurs:
+		j.avancer(delta)
 
 
 func nouvelle_partie() -> void:
-	couleurs_debloquees.clear()
+	for j in joueurs:
+		j.reinitialiser(difficulte().vies)
 	progression = 0.0
 	temps_ecoule = 0.0
-	bonus_restant = 0.0
-	invulnerable_restant = 0.0
-	vies = difficulte().vies
-	coups_recus = 0
 	pret = false
 	partie_en_cours = true
 
@@ -130,7 +155,7 @@ func cle_score() -> String:
 
 
 func est_invulnerable() -> bool:
-	return invulnerable_restant > 0.0
+	return joueur_local().est_invulnerable()
 
 
 ## Un ennemi touche le lion : perd une vie, ou termine la partie s'il n'en reste plus.
@@ -138,22 +163,12 @@ func est_invulnerable() -> bool:
 func toucher_lion(origine: Vector2 = Vector2.INF) -> void:
 	if not partie_en_cours or not pret or est_invulnerable():
 		return
-	vies -= 1
-	coups_recus += 1
-	vies_changees.emit(vies)
-	if vies <= 0:
+	if joueur_local().encaisser_coup(origine, DUREE_INVULNERABILITE) <= 0:
 		terminer_partie(false)
-		return
-	invulnerable_restant = DUREE_INVULNERABILITE
-	lion_touche.emit(origine)
 
 
 func gagner_vie() -> bool:
-	if vies >= VIES_MAX:
-		return false
-	vies += 1
-	vies_changees.emit(vies)
-	return true
+	return joueur_local().gagner_vie(VIES_MAX)
 
 
 func niveau() -> Dictionary:
@@ -180,12 +195,7 @@ func nb_couleurs_total() -> int:
 func debloquer_couleur(index: int) -> bool:
 	if index < 0 or index >= COULEURS_ARC_EN_CIEL.size():
 		return false
-	var c := COULEURS_ARC_EN_CIEL[index]
-	if couleurs_debloquees.has(c):
-		return false
-	couleurs_debloquees.append(c)
-	couleur_debloquee.emit(c)
-	return true
+	return joueur_local().debloquer_couleur(COULEURS_ARC_EN_CIEL[index])
 
 
 func prochain_index_couleur() -> int:
@@ -194,15 +204,12 @@ func prochain_index_couleur() -> int:
 
 
 func bonus_actif() -> bool:
-	return bonus_restant > 0.0
+	return joueur_local().bonus_actif()
 
 
 ## Active (ou prolonge) la gerbe XXL pour `duree` secondes.
 func activer_bonus(duree: float) -> void:
-	var etait_actif := bonus_actif()
-	bonus_restant = max(bonus_restant, duree)
-	if not etait_actif:
-		bonus_change.emit(true)
+	joueur_local().activer_bonus(duree)
 
 
 func signaler_progression(ratio: float) -> void:
