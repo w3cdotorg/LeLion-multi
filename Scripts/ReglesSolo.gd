@@ -4,6 +4,9 @@ extends Regles
 ## victoire quand la ville est peinte au seuil de la difficulté. La durée de l'étoile XXL est
 ## celle de la base (`Regles.DUREE_ETOILE`).
 
+## Invulnérabilité qui suit un coup, en secondes (le lion clignote pendant ce temps).
+const DUREE_INVULNERABILITE := 1.5
+
 
 func _init(partie_: EtatPartie) -> void:
 	assert(partie_ != null, "ReglesSolo a besoin de l'état de partie")
@@ -13,7 +16,7 @@ func _init(partie_: EtatPartie) -> void:
 func lion_touche_par_ennemi(joueur: Joueur, origine: Vector2) -> void:
 	if not _manche_en_cours() or joueur.est_invulnerable():
 		return
-	if joueur.encaisser_coup(origine, partie.DUREE_INVULNERABILITE) <= 0:
+	if joueur.encaisser_coup(origine, DUREE_INVULNERABILITE) <= 0:
 		partie.terminer_partie(false)
 
 

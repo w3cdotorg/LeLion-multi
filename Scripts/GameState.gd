@@ -20,7 +20,6 @@ const PALETTE_BATAILLE: Array[Color] = [
 	Color(0.18, 0.78, 0.25), Color(0.90, 0.20, 0.85), Color(0.10, 0.85, 0.90),
 ]
 const NB_ETAPES_ARCADE := 9  # 3 niveaux × 3 difficultés
-const DUREE_INVULNERABILITE := 1.5
 const DIFFICULTES: Array[Dictionary] = [
 	{"id": "facile", "nom": "DIFF_FACILE", "description": "DIFF_FACILE_DESC", "vies": 3, "pickups_coeur": true, "seuil": 0.85},
 	{"id": "moyen", "nom": "DIFF_MOYEN", "description": "DIFF_MOYEN_DESC", "vies": 3, "pickups_coeur": false, "seuil": 0.90},

@@ -267,7 +267,10 @@ func _run() -> void:
 	coccinelle.position.x = lion.global_position.x + 68
 	await _frames(3)
 	_check(GS.partie_en_cours and JL.vies == 2, "un coup coûte une vie, la partie continue (%d vies)" % JL.vies)
-	_check(JL.est_invulnerable(), "le lion est invulnérable après un coup")
+	var constantes_solo: Dictionary = GS.regles.get_script().get_script_constant_map()
+	_check(JL.est_invulnerable() and JL.invulnerable_restant > constantes_solo.get("DUREE_INVULNERABILITE", 99.0) - 0.2
+		and not GS.get_script().get_script_constant_map().has("DUREE_INVULNERABILITE"),
+		"le lion est invulnérable après un coup, pour la durée que fixent les règles du solo (plus GameState)")
 	_check(lion._recul.length() > 0.0, "le lion est repoussé par le coup (%.0f px/s)" % lion._recul.length())
 	_check(hud.flash.color.a > 0.0, "l'écran flashe en rouge")
 	_check(main._tremblement_restant > 0.0, "la caméra tremble")
@@ -642,7 +645,7 @@ func _run() -> void:
 	root.add_child(etoile_autre)
 	await _frames(3)
 	_check(not is_instance_valid(etoile_autre) and autre.bonus_actif()
-		and is_equal_approx(autre.bonus_restant, ReglesSolo.DUREE_ETOILE) and local.bonus_actif() == bonus_local,
+		and is_equal_approx(autre.bonus_restant, Regles.DUREE_ETOILE) and local.bonus_actif() == bonus_local,
 		"une étoile ramassée par un lion active la gerbe XXL de son joueur, pas celle du joueur local")
 	var coeur_autre: Node2D = load("res://Scenes/CoeurPickup.tscn").instantiate()
 	coeur_autre.position = Vector2(-500, -500)  # hors d'atteinte : les contacts sont simulés à la main
