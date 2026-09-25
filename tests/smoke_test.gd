@@ -500,8 +500,6 @@ func _run() -> void:
 	GS.difficulte_courante = 0
 
 	# Un lion lié à un autre joueur suit ce joueur et ses propres commandes
-	# La GerbeTraceuse de ce lion peint encore avec les couleurs du joueur local via la
-	# façade GameState, jusqu'à la phase 6.
 	paused = false
 	var autre := Joueur.new()
 	autre.reinitialiser(3)
@@ -556,10 +554,14 @@ func _run() -> void:
 	GS.lion_touche.connect(sur_touche_locale)
 	# La coccinelle qui a infligé la défaite Hardcore n'a jamais été libérée : elle continue de
 	# zigzaguer vers la gauche et peut retraverser le lion local, désormais de nouveau touchable
-	# ci-dessus, ce qui rendait ce test instable. On libère tout ennemi encore en jeu avant de
-	# continuer.
-	for ennemi in get_nodes_in_group("ennemi"):
+	# ci-dessus, ce qui rendait ce test instable. On libère tout ennemi encore en jeu (et le peintre,
+	# s'il y en avait un) avant de continuer.
+	for ennemi in get_nodes_in_group("ennemi") + get_nodes_in_group("boss"):
 		ennemi.free()
+	# Le Spawner de la partie Hardcore a encore des apparitions programmées (minuteries) :
+	# on le libère aussi, pour que rien d'autre que cette section n'agisse pendant qu'elle tourne.
+	main.get_node("Spawner").free()
+	spawner = null
 	GS.partie_en_cours = true  # la partie Hardcore est finie : les règles ignorent les coups hors partie
 	lion_autre.commandes.direction_voulue = Vector2.ZERO
 	lion_autre.global_position = Vector2(1400, 300)  # loin du lion local, resté dans la scène
@@ -610,6 +612,34 @@ func _run() -> void:
 	_check(autre.vies == 2 and local.vies == 2, "premier arrivé, premier servi : un seul lion profite d'un cœur touché par deux lions")
 	await _frames(1)
 	_check(not is_instance_valid(coeur_autre), "le cœur ramassé disparaît")
+
+	# La traceuse d'un lion peint avec les couleurs de son propre joueur
+	var ville_hc: Node = main.get_node("Ville")
+	_check(local.couleurs_debloquees.any(func(c: Color) -> bool: return not autre.couleurs_debloquees.has(c)),
+		"(pré-condition) le joueur local a une couleur que l'autre joueur n'a pas")
+	lion_autre.commandes.vomir_voulu = true
+	await _frames(20)
+	lion_autre.commandes.vomir_voulu = false
+	await _frames(2)
+	# Comparaison par to_rgba32() : une couleur relue depuis une image RGBA8 n'est égale à la
+	# couleur d'origine (Color, float) que si celle-ci est exactement représentable en 8 bits.
+	# Limite connue : Ville.gd met ses tampons en cache par (rayon, nombre de couleurs), pas par
+	# jeu de couleurs, donc deux lions ayant le même nombre de couleurs peindraient avec les
+	# tampons du premier peintre ; cette vérification ne discrimine que parce que le lion local
+	# ne peint pas dans cette ville et que les comptes diffèrent (1 couleur ici vs 2 pour l'autre
+	# joueur) ; le cache sera corrigé en phase 9, qui fera peindre ce test par le lion local en
+	# premier à nombre de couleurs égal.
+	var couleurs_peintes := {}
+	var image_ville: Image = ville_hc.image
+	for y in range(image_ville.get_height()):
+		for x in range(image_ville.get_width()):
+			var c: Color = image_ville.get_pixel(x, y)
+			if c.a > 0.0:
+				couleurs_peintes[c.to_rgba32()] = true
+	var rgba32_autre: Array = autre.couleurs_debloquees.map(func(c: Color) -> int: return c.to_rgba32())
+	_check(not couleurs_peintes.is_empty()
+		and couleurs_peintes.keys().all(func(k: int) -> bool: return rgba32_autre.has(k)),
+		"la traceuse d'un lion peint avec les couleurs de son joueur (%d couleur(s) sur la ville)" % couleurs_peintes.size())
 	GS.lion_touche.disconnect(sur_touche_locale)
 	GS.partie_en_cours = false
 	local.vies = vies_local_avant  # on restaure l'état d'avant la section, mort Hardcore compris

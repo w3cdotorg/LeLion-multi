@@ -20,9 +20,12 @@ const COULEUR_COEUR_PERDU := Color(1, 1, 1, 0.15)
 
 var _pastilles: Array[ColorRect] = []
 var _coeurs: Array[TextureRect] = []
+## Le HUD du solo suit le joueur local (la bataille aura son propre HUD, phase 17).
+var _joueur: Joueur
 
 
 func _ready() -> void:
+	_joueur = GameState.joueur_local()
 	for i in range(GameState.nb_couleurs_total()):
 		var pastille := ColorRect.new()
 		pastille.custom_minimum_size = TAILLE_PASTILLE
@@ -38,12 +41,12 @@ func _ready() -> void:
 		coeur.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		vies.add_child(coeur)
 		_coeurs.append(coeur)
-	_on_vies_changees(GameState.vies)
+	_on_vies_changees(_joueur.vies)
 
-	GameState.vies_changees.connect(_on_vies_changees)
-	GameState.lion_touche.connect(_on_lion_touche)
+	_joueur.vies_changees.connect(_on_vies_changees)
+	_joueur.touche.connect(_on_lion_touche)
 	GameState.progression_changee.connect(_on_progression_changee)
-	GameState.couleur_debloquee.connect(_on_couleur_debloquee)
+	_joueur.couleur_debloquee.connect(_on_couleur_debloquee)
 	if DisplayServer.is_touchscreen_available():
 		indice.text = "INDICE_TACTILE"
 	_placer_repere_seuil()
@@ -51,15 +54,15 @@ func _ready() -> void:
 	if GameState.mode_arcade:
 		etape.text = GameState.titre_etape()
 	_on_progression_changee(GameState.progression)
-	for c in GameState.couleurs_debloquees:
+	for c in _joueur.couleurs_debloquees:
 		_on_couleur_debloquee(c)
 
 
 func _process(_delta: float) -> void:
 	chrono.text = GameState.formater_temps(GameState.temps_ecoule)
-	etiquette_bonus.visible = GameState.bonus_actif()
+	etiquette_bonus.visible = _joueur.bonus_actif()
 	if etiquette_bonus.visible:
-		etiquette_bonus.text = tr("BONUS_XXL") % ceili(GameState.bonus_restant)
+		etiquette_bonus.text = tr("BONUS_XXL") % ceili(_joueur.bonus_restant)
 
 
 
@@ -90,7 +93,7 @@ func _on_progression_changee(ratio: float) -> void:
 
 
 func _on_couleur_debloquee(couleur: Color) -> void:
-	var index := GameState.couleurs_debloquees.find(couleur)
+	var index := _joueur.couleurs_debloquees.find(couleur)
 	if index >= 0 and index < _pastilles.size():
 		_pastilles[index].color = couleur
 	indice.hide()
