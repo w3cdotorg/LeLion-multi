@@ -21,6 +21,7 @@ func _run() -> void:
 	print("== tests unitaires LeLion ==")
 	_tester_joueur()
 	_tester_facade_game_state()
+	_tester_commandes()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -155,3 +156,28 @@ func _tester_facade_game_state() -> void:
 		"nouvelle_partie remet le joueur local à zéro")
 	gs.partie_en_cours = false
 	gs.pret = false
+
+
+func _tester_commandes() -> void:
+	print("-- Commandes")
+	var m := Commandes.manuelles()
+	_check(m.source == Commandes.Source.MANUELLES and m.direction() == Vector2.ZERO and not m.vomir(),
+		"des commandes manuelles neuves sont au repos")
+	m.direction_voulue = Vector2(0.6, -0.8)
+	m.vomir_voulu = true
+	_check(m.direction() == Vector2(0.6, -0.8) and m.vomir(), "les commandes manuelles renvoient ce qu'on y écrit")
+
+	var l := Commandes.locales()
+	_check(l.source == Commandes.Source.LOCALES, "Commandes.locales() crée des commandes locales")
+	_check(l.direction() == Vector2.ZERO and not l.vomir(), "sans action pressée, les commandes locales sont au repos")
+	Input.action_press("deplacer_droite")
+	Input.action_press("vomir")
+	_check(l.direction().x > 0.99 and absf(l.direction().y) < 0.01 and l.vomir(), "les commandes locales lisent les actions de ce poste")
+	m.direction_voulue = Vector2.ZERO
+	m.vomir_voulu = false
+	_check(m.direction() == Vector2.ZERO and not m.vomir(), "les commandes manuelles ignorent le clavier et la manette")
+	l.direction_voulue = Vector2.LEFT
+	_check(l.direction().x > 0.99, "écrire direction_voulue ne change pas des commandes locales")
+	Input.action_release("deplacer_droite")
+	Input.action_release("vomir")
+	_check(l.direction() == Vector2.ZERO and not l.vomir(), "relâcher les actions remet les commandes locales au repos")
