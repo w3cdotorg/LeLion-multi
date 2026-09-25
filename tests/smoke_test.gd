@@ -824,6 +824,35 @@ func _run() -> void:
 	j_bleu.etourdi_restant = 0.0
 	j_bleu.invulnerable_restant = 0.0
 
+	# Zones de contact : trois, le long de la parabole, jusqu'au point de chute
+	var zones: Array[Area2D] = lr.zones_contact
+	_check(zones.size() == 3 and zones[2].position == lr.gerbe_traceuse.position
+		and zones[0].position.y < zones[1].position.y and zones[1].position.y < zones[2].position.y
+		and zones.all(func(z: Area2D) -> bool: return z.collision_layer == 0 and not z.monitoring),
+		"trois zones de contact sur la parabole, la dernière au point de chute, inertes hors du vomi")
+	_check(zones[0].get_child(0).shape != lb.zones_contact[0].get_child(0).shape, "chaque lion a ses propres formes de zones de contact")
+	j_bleu.invulnerable_restant = 0.0
+	var infliges_avant: int = j_rouge.etourdissements_infliges
+	lb._recul = Vector2.ZERO
+	lb.global_position = lr.to_global(zones[1].position) - lb.CENTRE
+	await _frames(2)
+	lr.commandes.vomir_voulu = true
+	for i in range(30):  # vomi démarré au _process, contacts connus au tick physique suivant
+		await _frames(1)
+		if j_bleu.est_etourdi():
+			break
+	_check(j_bleu.est_etourdi() and materiau_bleu.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur
+		and j_rouge.etourdissements_infliges == infliges_avant + 1 and not j_rouge.est_etourdi(),
+		"la gerbe d'un lion étourdit l'autre lion qu'elle touche, barbouillé de sa couleur, et lui compte l'étourdissement")
+	var etourdi_apres_coup: float = j_bleu.etourdi_restant
+	await _frames(10)
+	_check(j_rouge.etourdissements_infliges == infliges_avant + 1 and j_bleu.etourdi_restant < etourdi_apres_coup,
+		"un lion déjà étourdi n'est pas ré-étourdi par la gerbe qui le touche encore")
+	lr.commandes.vomir_voulu = false
+	await _frames(3)  # le vomi s'arrête au _process suivant : pas de nouveau contact ensuite
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+
 	for l in lions_bataille:
 		l.free()
 	GS.configurer_solo()
