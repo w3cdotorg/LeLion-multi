@@ -168,8 +168,9 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 - **Grille** : la grille de cellules de 8 px existante (250 colonnes à 2000 px de large, 23 à 40
   rangées selon la skyline, haute de 180 à 320 px ; seules les cellules opaques comptent).
 - **Propriété (bataille, hôte uniquement)** : par cellule, `proprietaire` (0 = personne,
-  1 à 6) et `charge` (0 à `CHARGE_MAX`), en `PackedByteArray`. Un tampon de rayon *r* touche les
-  cellules peignables dont le centre est à moins de *r* :
+  1 à 6) et `charge` (0 à `CHARGE_MAX`), en `PackedByteArray`. Un tampon de rayon *r* touche à peu
+  près les cellules peignables qu'il recouvre : celles dont le centre est à moins de *r* + 4 px (une
+  demi-cellule, `Ville.EMPREINTE_TERRITOIRE` ; `Territoire.tamponner` reçoit ce rayon agrandi) :
   - cellule au peintre ou vierge : `charge += GAIN` (plafonnée) et propriétaire = peintre ;
   - cellule adverse : `charge -= GAIN`. Si `charge <= 0`, la cellule passe au peintre avec
     `charge = -charge`.
@@ -187,12 +188,20 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   pour une gerbe en mouvement (16 à 46 px de rayon) ; `CHARGE_MAX = SEUIL_POSSESSION` (12, fiche de
   correction du 25/09) : voler une cellule déjà possédée coûte alors 6 tampons (3 pour la vider,
   3 pour la prendre), contre 3 en terrain vierge. Calcul entier et déterministe (`Territoire`,
-  phase 9).
+  phase 9). Réglage vérifié sur de vrais lions (phase 10 ter, `tests/bataille_test.gd`) : une
+  passe pleine vitesse fait compter au territoire 0,7 à 1,3 fois les cellules que compte la
+  couverture du solo pour la même passe (mesuré : 0,82 à 1,21 sur les trois niveaux, de 16 à
+  46 px) et vole au moins 40 % des cellules d'un adversaire dès le premier cran (mesuré : 49 %).
+  C'est l'empreinte qui manquait (sans la demi-cellule : 0,44 à 0,92 et 8 %) ; `GAIN = 6` n'y
+  changeait presque rien.
 - **Visuel** : masque RGBA et `Ville.gdshader` inchangés. Chaque tampon est dessiné dans les
   nuances du peintre et recouvre ce qui est dessous. Les zones disputées apparaissent bigarrées.
-- **Synchro des tampons** : l'hôte diffuse chaque tampon `(index joueur u8, x u16, y u16,
-  rayon u8, graine u16)`, regroupés par frame, sur le canal fiable. Chaque machine dessine avec la
-  graine reçue : motifs et coulures identiques. Environ 3 Ko/s à 6 joueurs.
+- **Synchro des tampons** : l'hôte diffuse chaque tampon `(index joueur u8, x i16, y i16,
+  rayon u8, graine u16)`, regroupés par frame, sur le canal fiable. `Ville.peindre` accepte des
+  centres négatifs (le tampon déborde du haut ou de la gauche de l'image) : encodés en u16, ils
+  boucleraient vers ~65 500 et le client dessinerait au mauvais endroit ou pas du tout pendant que
+  le territoire de l'hôte compte le tampon quand même ; i16 les transporte sans ambiguïté. Chaque
+  machine dessine avec la graine reçue : motifs et coulures identiques. Environ 3 Ko/s à 6 joueurs.
 - **Synchro du score** : toutes les 0,2 s, l'hôte envoie la liste des cellules dont le
   propriétaire compté a changé (index u16 + propriétaire u8, `Territoire.extraire_changements()`)
   et les scores. Les clients n'effectuent aucun calcul de propriété : leur ville dessine les

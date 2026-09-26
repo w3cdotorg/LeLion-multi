@@ -42,8 +42,9 @@ const AMPLITUDE_SECOUSSE := 6.0
 ## Vitesse d'approche minimale (px/s) pour qu'un contact compte comme un choc ; en dessous,
 ## les lions se bloquent quand même (`_bloquer_contre_les_lions`), sans secousse ni décompte.
 @export var approche_min_choc: float = 100.0
-## Délai minimal entre deux chocs comptés avec le même autre lion, pour qu'une poussée
-## continue ne rafale pas les chocs (la commande maintenue ramène aussitôt l'un vers l'autre).
+## Délai minimal entre deux chocs comptés avec le même autre lion, en secondes de jeu, pour
+## qu'une poussée continue ne rafale pas les chocs (la commande maintenue ramène aussitôt l'un vers
+## l'autre).
 @export var delai_entre_chocs: float = 0.3
 
 @onready var sprite: Sprite2D = $Sprite2D
@@ -75,14 +76,15 @@ var commandes: Commandes
 var zones_contact: Array[Area2D] = []
 var _vitesse := Vector2.ZERO
 var _recul := Vector2.ZERO
-var _temps := 0.0
+var _temps := 0.0  # secondes de jeu écoulées pour ce lion (ticks physiques)
 var _clignotement: Tween
 var _secousse_restante := 0.0
 ## Générateur propre au lion pour la secousse du sprite : ne pas consommer la séquence globale
 ## de `randf_range`, dont dépendent le Spawner et les ennemis.
 var _rng := RandomNumberGenerator.new()
-## Horodatage (`Time.get_ticks_msec()`) du dernier choc compté avec chaque autre lion,
-## par identifiant d'instance ; entrées des lions libérés nettoyées à la volée.
+## Instant (`_temps`, en secondes de jeu) du dernier choc compté avec chaque autre lion, par
+## identifiant d'instance ; entrées des lions libérés nettoyées à la volée. Le temps de jeu, pas
+## l'horloge murale : une frame qui rame ou un test en `--fixed-fps` ne change rien au décompte.
 var _derniers_chocs: Dictionary = {}
 
 
@@ -127,7 +129,7 @@ func _physics_process(delta: float) -> void:
 	var screen_rect := get_viewport_rect()
 	var sprite_size := sprite.texture.get_size()
 	var x_borne: float = clamp(global_position.x, 0, screen_rect.size.x - sprite_size.x)
-	var y_borne: float = clamp(global_position.y, 0, screen_rect.size.y - sprite_size.y)
+	var y_borne: float = clamp(global_position.y, _marge_haute(), screen_rect.size.y - sprite_size.y)
 	# Un lion plaqué contre un bord n'a plus de vitesse fantôme sur cet axe : move_and_slide()
 	# ne connaît pas ce bord (ce n'est pas une collision), il ne l'a donc pas déjà annulée.
 	if x_borne != global_position.x:
@@ -155,6 +157,12 @@ func _process(delta: float) -> void:
 		_secousse_restante = max(0.0, _secousse_restante - delta)
 		var amplitude := AMPLITUDE_SECOUSSE * _secousse_restante / DUREE_SECOUSSE
 		sprite.offset = Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * amplitude
+
+
+## Hauteur gardée libre au-dessus du lion : celle de son pseudo quand il s'affiche (bataille),
+## pour qu'un lion collé en haut de l'écran ne le cache pas ; aucune en solo.
+func _marge_haute() -> float:
+	return -etiquette_pseudo.position.y if etiquette_pseudo.visible else 0.0
 
 
 ## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
@@ -290,11 +298,10 @@ func _on_pare_chocs_area_entered(zone: Area2D) -> void:
 	if approche < approche_min_choc:
 		return
 	_nettoyer_derniers_chocs()
-	var maintenant := Time.get_ticks_msec()
-	var dernier: int = _derniers_chocs.get(autre.get_instance_id(), -1)
-	if dernier >= 0 and maintenant - dernier < delai_entre_chocs * 1000.0:
+	var dernier: float = _derniers_chocs.get(autre.get_instance_id(), -1.0)
+	if dernier >= 0.0 and _temps - dernier < delai_entre_chocs:
 		return
-	_derniers_chocs[autre.get_instance_id()] = maintenant
+	_derniers_chocs[autre.get_instance_id()] = _temps
 	_recul += normale * approche * facteur_choc
 	_secousse_restante = DUREE_SECOUSSE
 	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.

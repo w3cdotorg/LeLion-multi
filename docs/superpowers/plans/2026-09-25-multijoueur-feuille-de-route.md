@@ -111,7 +111,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   plus qu'au solo.
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
-  vomir échantillonnés au même tick).
+  vomir échantillonnés au même tick). La prédiction locale doit appliquer la même borne
+  `Lion._marge_haute()` que l'hôte (phase 10 ter) ; cela ne tient que si la visibilité de
+  l'étiquette (couleur et pseudo du joueur) est identique sur chaque machine.
 - Phases 14 et 16 : sans paquet d'un client depuis N ms, l'hôte remet à zéro les commandes
   manuelles de son lion.
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
@@ -129,6 +131,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   dès que le chrono appelle `terminer_partie`, garder une sortie jusqu'à l'écran Résultats de la
   phase 18 (Échap permis une fois la manche finie, retour au salon ou au titre), ou livrer 17 et 18
   ensemble ;
+- **phase 17** (HUD) : les étiquettes de pseudo se chevauchent quand deux lions se touchent (vu sur
+  les captures de la phase 10 ter, ◉ manche à 4 : « Joueur 3Joueur 4 » illisible) ; les décaler ou
+  les empiler verticalement, ou estomper celle du lion le plus bas ;
+- **phase 13** (salon) : le pseudo choisi au salon peut être plus large que le sprite du lion
+  (l'étiquette de bataille est centrée, `offset_left -42 … offset_right 178`, sur un lion borné à
+  `x ∈ [0, 2000 - sprite_w]`) ; au-delà d'une douzaine de caractères à 26 px, elle est coupée par le
+  bord de l'écran : plafonner la longueur du pseudo au salon, ou clamper l'abscisse de l'étiquette
+  dans l'écran ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -182,7 +192,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   amorcer `_generer_tampons` avec un `RandomNumberGenerator` dont la graine est dérivée de
   `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
   tampon (spec §6) ;
-- **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
+- **prochaine phase qui touche `Scripts/Territoire.gd`** (phase 14, méthode d'affichage, ou scinder
+  la phase 14 si son plafond de fichiers est dépassé — sa ligne (# 14 ci-dessus) compte déjà 5
+  fichiers sans `Territoire.gd`) : le commentaire de `CHARGE_MAX` annonce encore « La phase 10
+  rerègle ces constantes sur une vraie manche » ; la phase 10 ter les a gardées (4, 12, 12) et réglé
+  l'empreinte du tampon dans la ville (`Ville.EMPREINTE_TERRITOIRE`, spec §6, cibles vérifiées par
+  `tests/bataille_test.gd`) : le corriger ; même remarque de plafond pour la méthode d'affichage du
+  point ci-dessus (« sur un client, la ville a aussi un territoire ») ;
 - **phase 14** : jeux de tampons (`Ville._generer_tampons`), mesurés en phase 10 : 0,5 ms (16 px)
   à 3,7 ms (46 px), 14,6 ms pour l'étoile XXL (92 px), 65 ms pour les 14 jeux d'un joueur ; sur la
   manche à 4 pilotée de `tests/bataille_test.gd` (ligne `MESURE jeux de tampons`, 5 passages), 16 à
@@ -195,14 +211,25 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
   partie depuis `Main`) ;
-- **phase 10 (obligatoire avant la première partie de bataille)** : `GameState.configurer_solo()` /
-  `configurer_bataille(n)` existent depuis la phase 8 (règles, joueurs redimensionnés en place,
-  index et couleurs ; testés). Les appeler **avant** le changement de scène, jamais depuis la scène
-  de jeu : `Main._enter_tree` appelle `GameState.nouvelle_partie()`, puis Lion, Spawner, HUD et Main
-  s'abonnent à `joueur_local()` dans leur `_ready`. `configurer_bataille(n)` avant la scène de
-  bataille, et `configurer_solo()` avant toute partie solo, démo ou arcade lancée depuis le titre
-  (sans quoi une partie solo jouée après une bataille garderait les règles et la couleur de la
-  bataille) ;
+- **phase 11** : `GameState.configurer_solo()` (retour au titre, phase 10 ter) garde `joueurs[0]`,
+  pas `joueur_local()`, et ne remet pas `index` à 0. Une fois `joueur_local()` capable de résoudre
+  par `id_reseau` (point ci-dessus), un client dont le joueur local était l'index *k* ≠ 0 reviendrait
+  au titre avec le `Joueur` d'un autre (pseudo, `id_reseau`) comme joueur solo : `configurer_solo()`
+  doit garder ou déplacer le joueur local en case 0 et réinitialiser son `index` ; le réabonnement
+  d'`Audio` (point ci-dessus) doit couvrir ce chemin ;
+- **phases 12/13** : le retour au titre remet les règles (`configurer_solo()`, phase 10 ter) mais
+  pas le pair multijoueur. Après « hôte perdu → retour au titre » (spec §4/§9), un pair ENet client
+  qui traîne ou vient de se fermer laisse `multiplayer.is_server()` à faux, et le solo relancé depuis
+  ce titre casse silencieusement (ennemis qui ne touchent jamais, pastilles ignorées, gerbe et chocs
+  non signalés) : chaque chemin de retour au titre doit restaurer
+  `multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()`, dans `Titre._ready` à côté de
+  `configurer_solo()` ou dans `Reseau.quitter()`, avec une vérification que le solo fonctionne après
+  la fermeture d'un pair client ;
+- **phase 13** : le salon appelle `GameState.configurer_bataille(n)` juste avant de charger la
+  scène de bataille, jamais depuis elle (`Main._enter_tree` appelle `nouvelle_partie()`, puis Lion,
+  Spawner, HUD et Main s'abonnent à `joueur_local()` dans leur `_ready`) ; l'écran titre remet le
+  solo avant toute partie (`configurer_solo()` et l'écran 2000×648, phase 10 ter) ; le salon et
+  l'écran Réseau passent eux-mêmes en 16:9 (spec §7 : `ReglesBataille.TAILLE_ECRAN`) ;
 - **phase 14** : les réactions du `Joueur` sont des appels de méthode qui émettent des signaux
   (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`, `gagner_cran`, `etourdir`, et `avancer`
   pour `etourdissement_fini`). Un `MultiplayerSynchronizer` qui écrit les champs bruts n'émettrait
@@ -218,9 +245,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
   tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
-- **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
-  lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
-  passer sous le lion près du bord ;
 - **phase 13** : `GameState.configurer_bataille(nb_joueurs)` attribue l'index et la couleur de
   chaque joueur depuis `PALETTE_BATAILLE`, par position ; une fois que le salon attribue les
   couleurs (choix des joueurs), `configurer_bataille` ne doit plus les écraser : lui passer les
@@ -291,12 +315,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
-- **phase 10 ter** : `GameState.prochain_index_couleur()` n'a plus d'appelant depuis la phase 10 bis
-  (le Spawner lit `GameState.regles.pastille_a_offrir()`, que `ReglesSolo` tient depuis la phase 10,
-  vérifications unitaires comprises) : la retirer ;
-- **phase 10 ter** : quand `Titre._ready` applique `taille_ecran()` (retour au titre en solo
-  2000×648), étendre le docstring de `Regles.taille_ecran()` ("appliquée par `Main` en entrant
-  dans la scène de jeu") avec "et par le titre" ;
+- **prochaine phase qui touche `Scripts/Regles.gd`** : `Titre._ready` applique aussi
+  `taille_ecran()` (retour au titre en solo 2000×648) : étendre le docstring de
+  `Regles.taille_ecran()` ("appliquée par `Main` en entrant dans la scène de jeu") avec "et par le
+  titre" ;
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.

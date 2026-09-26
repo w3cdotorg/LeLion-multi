@@ -4,7 +4,8 @@ extends Node2D
 ## La progression est mesurée sur une grille de cellules couvrant les zones opaques de la
 ## skyline : une cellule compte quand au moins COUVERTURE_CELLULE de sa surface est réellement
 ## peinte (mesure par réduction du masque, à intervalle régulier). En bataille, la même grille
-## porte aussi le territoire (`Territoire`) : l'hôte y reporte chaque tampon.
+## porte aussi le territoire (`Territoire`) : l'hôte y reporte chaque tampon, sur toutes les
+## cellules qu'il recouvre (`EMPREINTE_TERRITOIRE`).
 
 const TAILLE_CELLULE := 8
 const NB_TAMPONS := 4
@@ -14,6 +15,15 @@ const COULURES_MAX := 40
 const VITESSE_COULURE := 70.0  # px/s
 const INTERVALLE_MESURE := 0.2  # s
 const COUVERTURE_CELLULE := 0.4
+## Marge ajoutée au rayon d'un tampon pour le territoire : `Territoire.tamponner` touche les
+## cellules dont le centre est à moins du rayon reçu ; avec une demi-cellule de plus, il touche
+## à peu près toutes celles que le tampon recouvre (les cellules en diagonale, dont le centre est
+## entre r+4 et r+4√2, restent hors d'atteinte), comme la couverture du solo les compte à
+## peu près (une cellule comptée à 40 % d'alpha, pas « recouverte »). Mesuré sur une
+## passe pleine vitesse (`tests/bataille_test.gd`, phase 10 ter) : sans cette marge, le territoire
+## comptait 0,44 à 0,92 fois les cellules de la couverture et une passe ne volait que 8 % des
+## cellules d'un adversaire au premier cran ; avec elle, 0,82 à 1,21 fois et 49 % au moins.
+const EMPREINTE_TERRITOIRE := TAILLE_CELLULE / 2
 ## Jeux de tampons gardés au plus (un jeu par rayon et jeu de couleurs) ; au-delà, le cache est
 ## vidé. 6 joueurs × 7 crans × 2 (étoile XXL) en demandent 84 au pire.
 const TAMPONS_EN_CACHE_MAX := 96
@@ -150,7 +160,7 @@ func peindre(position_globale: Vector2, rayon: int, peintre: Joueur) -> void:
 	# Le territoire ne bouge que pendant la manche : après terminer_partie, pret reste vrai et un
 	# lion peut encore peindre ; le tampon se dessine, le score reste figé.
 	if territoire != null and multiplayer.is_server() and GameState.regles.manche_en_cours():
-		var volees := territoire.tamponner(peintre.index, Vector2i(px, py), rayon)
+		var volees := territoire.tamponner(peintre.index, Vector2i(px, py), rayon + EMPREINTE_TERRITOIRE)
 		if volees > 0:
 			GameState.regles.vol_de_cellules(peintre, volees)
 
