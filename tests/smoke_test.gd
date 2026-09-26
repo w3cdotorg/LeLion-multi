@@ -28,6 +28,20 @@ func _frames(n: int) -> void:
 		await physics_frame
 
 
+## Attend que `current_scene` devienne celle attendue, après un `change_scene_to_file` (différé :
+## la bascule se fait à une image d'écart, mais pas forcément après un nombre fixe d'images
+## *physiques* — sous charge CPU (CI), la physique rattrape son retard par rafales, si bien que
+## quelques `physics_frame` peuvent s'écouler avant même que le moteur ait traité l'image où la
+## bascule est différée). Bornée par `max_ms`, jamais une attente à l'aveugle : renvoie
+## `current_scene` dès qu'il correspond, ou tel quel au bout du délai (l'appelant garde son
+## `_check`, qui échoue alors normalement plutôt que de planter).
+func _attendre_scene(chemin: String, max_ms: int = 5000) -> Node:
+	var fin := Time.get_ticks_msec() + max_ms
+	while (current_scene == null or current_scene.scene_file_path != chemin) and Time.get_ticks_msec() < fin:
+		await process_frame
+	return current_scene
+
+
 ## Couleurs présentes sur une image (pixels non transparents), en clés `to_rgba32()`. À comparer
 ## à `_rgba8(couleur)`, pas à `couleur.to_rgba32()` : une image RGBA8 tronque chaque composante
 ## sur 8 bits (les nuances d'un joueur de bataille ne sont pas exactement représentables).
@@ -1580,8 +1594,7 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	reseau.inscrit.emit(2, palette[2])
 	_check(ecran.etat == ecran.Etat.SALON and ecran.bouton_heberger.disabled and not decouverte.ecoute_active(),
 		"inscrit par l'hôte : en route vers le salon, tout reste grisé")
-	await _frames(2)
-	var salon_client: Node = current_scene
+	var salon_client: Node = await _attendre_scene("res://Scenes/Salon.tscn")
 	_check(salon_client != null and salon_client.scene_file_path == "res://Scenes/Salon.tscn" and reseau.en_ligne(),
 		"puis le salon prend la suite, toujours en ligne (phase 13)")
 	if salon_client != null:
@@ -1616,8 +1629,7 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	ecran.heberger()
 	_check(reseau.en_ligne() and reseau.inscrits.size() == 1 and ecran.etat == ecran.Etat.SALON,
 		"un second Héberger avant le changement de scène ne relance rien")
-	await _frames(2)
-	var salon_hote: Node = current_scene
+	var salon_hote: Node = await _attendre_scene("res://Scenes/Salon.tscn")
 	_check(salon_hote != null and salon_hote.scene_file_path == "res://Scenes/Salon.tscn" and reseau.en_ligne() and root.multiplayer.is_server(),
 		"puis le salon prend la suite, toujours hôte (phase 13 : il affiche les adresses de l'hôte)")
 	if salon_hote != null:
@@ -1716,15 +1728,13 @@ func _tester_titre_reseau(scores: Node) -> void:
 		and multi.get_node(multi.focus_neighbor_left) == titre.bouton_jouer,
 		"clavier et manette : droite depuis Jouer mène à Multijoueur, gauche en revient")
 	multi.pressed.emit()
-	await _frames(2)
-	var ecran: Control = current_scene
+	var ecran: Control = (await _attendre_scene("res://Scenes/EcranReseau.tscn")) as Control
 	titre.free()
 	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn", "Multijoueur ouvre l'écran Réseau")
 	if ecran == null or ecran.scene_file_path != "res://Scenes/EcranReseau.tscn":
 		return
 	ecran.bouton_retour.pressed.emit()
-	await _frames(2)
-	var titre_retour: Control = current_scene
+	var titre_retour: Control = (await _attendre_scene("res://Scenes/Titre.tscn")) as Control
 	_check(titre_retour != null and titre_retour.scene_file_path == "res://Scenes/Titre.tscn" and not is_instance_valid(ecran)
 		and root.content_scale_size == Vector2i(2000, 648) and not decouverte.ecoute_active() and not reseau.en_ligne(),
 		"Retour ramène au titre, en 2000×648, hors réseau et sans écoute")
@@ -1905,8 +1915,7 @@ func _tester_salon(params: Node) -> void:
 		"un client voit pourquoi la partie attend, puis « l'hôte peut démarrer » (%s | %s)" % [attente_client, salon_client.etat.text])
 	reseau.quitter()
 	reseau.hote_perdu.emit()
-	await _frames(2)
-	var ecran: Node = current_scene
+	var ecran: Node = await _attendre_scene("res://Scenes/EcranReseau.tscn")
 	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.etat == ecran.Etat.ACCUEIL
 		and ecran.message.text == tr("RESEAU_HOTE_PERDU"), "hôte perdu : retour à l'écran Réseau, « L'hôte a quitté la partie »")
 	salon_client.free()
@@ -1920,8 +1929,7 @@ func _tester_salon(params: Node) -> void:
 	root.add_child(salon_client)
 	await process_frame
 	await _appuyer(&"ui_cancel", true)
-	await _frames(2)
-	ecran = current_scene
+	ecran = await _attendre_scene("res://Scenes/EcranReseau.tscn")
 	_check(not reseau.en_ligne() and ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.message.text.is_empty(),
 		"Échap (ou B) quitte le réseau et revient à l'écran Réseau, sans message")
 	salon_client.free()
@@ -1932,8 +1940,7 @@ func _tester_salon(params: Node) -> void:
 	# trouvé personne)
 	var orphelin: Control = load("res://Scenes/Salon.tscn").instantiate()
 	root.add_child(orphelin)
-	await _frames(2)
-	ecran = current_scene
+	ecran = await _attendre_scene("res://Scenes/EcranReseau.tscn")
 	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.message.text == tr("RESEAU_HOTE_PERDU"),
 		"un salon ouvert hors réseau revient à l'écran Réseau avec « L'hôte a quitté la partie »")
 	orphelin.free()
