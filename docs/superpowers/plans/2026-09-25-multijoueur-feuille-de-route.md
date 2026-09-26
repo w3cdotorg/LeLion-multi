@@ -64,12 +64,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
 | 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis. | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
-| 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie, test réseau en CI. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` ✏️ `.github/workflows/ci.yml` | tests verts, CI verte, ◉ planche de la palette |
+| 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` | tests verts, CI verte, ◉ planche de la palette |
+| 11 ter | **Test réseau durci et en CI** : refus comptés (`--refus=N`) au lieu de fenêtres d'attente fixes, marge garantie du scénario 5 (client lent), pas « Test réseau » dans la CI. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test réseau vert en CI |
 | 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
 | 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
-| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 bis (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
+| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 ter (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
 | 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
@@ -97,8 +98,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Phase 3 (Règles) : `Joueur.encaisser_coup` n'a pas de plancher sur `vies` ; les règles doivent
   conserver le garde-fou `partie_en_cours` de GameState (ou un clamp) pour qu'un lion à 0 vie ne
   soit jamais retouché.
-- Phase 11 : `GameState.joueur_local()` renvoie `joueurs[0]` (correct en solo seulement) ; il doit
-  choisir le joueur dont `id_reseau` correspond à `multiplayer.get_unique_id()`.
 - Phase 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et `commandes`
   avant `add_child`, via la `spawn_function` du `MultiplayerSpawner` (en local, c'est
   `Main._ajouter_lions` depuis la phase 10 bis, vérifié par `tests/bataille_test.gd`) ; sinon il
@@ -212,16 +211,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   aussi ses jeux (graine dérivée de la clé) : les pré-générer pendant l'intro (nuances de joueur, 7
   rayons, ×2) si la mesure sur un client montre des à-coups. Mémoire du cache plein : environ
   14,5 Mo pour 6 joueurs ;
-- **phase 11** : `Audio` s'abonne une fois pour toute la session au joueur local (`joueurs[0]`) ;
-  quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
-  seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
-  partie depuis `Main`) ;
-- **phase 11** : `GameState.configurer_solo()` (retour au titre, phase 10 ter) garde `joueurs[0]`,
-  pas `joueur_local()`, et ne remet pas `index` à 0. Une fois `joueur_local()` capable de résoudre
-  par `id_reseau` (point ci-dessus), un client dont le joueur local était l'index *k* ≠ 0 reviendrait
-  au titre avec le `Joueur` d'un autre (pseudo, `id_reseau`) comme joueur solo : `configurer_solo()`
-  doit garder ou déplacer le joueur local en case 0 et réinitialiser son `index` ; le réabonnement
-  d'`Audio` (point ci-dessus) doit couvrir ce chemin ;
 - **phase 12** : `Reseau.quitter()` (phase 11) ferme le pair et remet `OfflineMultiplayerPeer` ;
   `Reseau` le fait déjà de lui-même avant d'émettre `refuse`, `connexion_echouee` et `hote_perdu`
   (vérifié par `tests/reseau/lancer.sh`). `Titre._ready` doit encore appeler `Reseau.quitter()` à
@@ -265,28 +254,27 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
   tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
-- **phase 13** : `GameState.configurer_bataille(nb_joueurs)` attribue l'index et la couleur de
-  chaque joueur depuis `PALETTE_BATAILLE`, par position ; une fois que le salon attribue les
-  couleurs (choix des joueurs), `configurer_bataille` ne doit plus les écraser : lui passer les
-  couleurs du salon, par exemple `configurer_bataille(nb_joueurs, couleurs)`. Son `assert` sur le
-  nombre de joueurs devra aussi devenir un clamp ou un `push_error` une fois que c'est le salon qui
-  l'appelle (un salon mal formé ne doit pas planter la partie) ;
+- **phase 13** : `GameState.configurer_bataille(nb_joueurs, couleurs)` (phase 11 bis) garde les
+  couleurs qu'on lui passe, par index (la palette sinon) : le salon lui passe les siennes, après
+  avoir posé `id_reseau` et pseudo de chaque joueur depuis `Reseau.inscrits`. `configurer_bataille`
+  et `nouvelle_partie` annoncent alors le joueur local (`joueur_local_change`, qu'`Audio` suit), et
+  `configurer_solo` garde au retour au titre le dernier joueur local annoncé. Son `assert` sur le
+  nombre de joueurs doit devenir un clamp ou un `push_error` (un salon mal formé ne doit pas planter
+  la partie) : reporté faute d'appelant hors des tests ;
 - **phase 13** : `Regles` ne s'exécute sur l'hôte que pour ses événements ; ses requêtes de
   mode (`taille_ecran`, `compte_le_territoire`) sont lues sur chaque poste (spec §3.1). Chaque
   client doit donc appeler `GameState.configurer_bataille(n)` (sans écraser les couleurs déjà
   attribuées par le salon, voir le point ci-dessus) avant que la scène de jeu ne charge,
   sans quoi il reste sur `ReglesSolo` (posé par `EtatPartie._init`) : écran 2000×648 et aucun
   territoire créé par sa `Ville` ;
-- **phase 11** : la palette de bataille (planche de la phase 7 : rouge `(0.90, 0.16, 0.16)`, bleu
-  `(0.16, 0.39, 0.95)`, jaune `(0.98, 0.82, 0.10)`, vert `(0.18, 0.78, 0.25)`, magenta
-  `(0.90, 0.20, 0.85)`, cyan `(0.10, 0.85, 0.90)`) est depuis la phase 8 la constante unique
-  `GameState.PALETTE_BATAILLE`, attribuée par index par `configurer_bataille(n)` ; le salon
-  l'attribuera au choix des joueurs. En simulation
-  deutéranopie, rouge, vert et jaune se confondent (kaki) et magenta et cyan se rapprochent, et le
-  jaune est proche du visage du lion : différencier les luminosités (vert plus sombre, jaune plus
-  clair, par exemple) et compter aussi sur le pseudo et les vignettes du HUD. Attribuer la couleur
-  **avant** l'ajout du lion à l'arbre, ou rappeler `Lion.appliquer_apparence()` (aperçu du salon en
-  phase 13) ;
+- **phase 17** (HUD) : la palette de bataille est réglée pour la deutéranopie depuis la phase 11 bis
+  (écart OKLab minimal 0,186 entre couleurs simulées, vérifié par `tests/unitaires.gd`), mais sur la
+  crinière (couleur × luminance du sprite) rouge et vert restent deux kakis que seule la clarté
+  sépare, magenta et cyan deux gris bleutés : les vignettes du HUD portent le pseudo, pas seulement
+  la couleur, comme l'étiquette au-dessus du lion ;
+- **phase 13** (aperçu du salon) : attribuer la couleur d'un joueur **avant** l'ajout de son lion à
+  l'arbre, ou rappeler `Lion.appliquer_apparence()` quand elle change (voir le point des phases 13
+  et 14 sur `apparence_changee`) ;
 - **phase 17** : le score d'un joueur se lit sur le territoire de la ville
   (`ville.territoire.cellules_de(joueur.index)`, sur `ville.territoire.nb_peignables` pour un
   pourcentage, comme la manche de `tests/bataille_test.gd`) ; il n'y a pas de `Joueur.cellules`
@@ -342,7 +330,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
-- **phase 11 bis** (revue finale de la phase 11, M1) : `tests/reseau/lancer.sh` refuse les nouveaux
+- **phase 11 ter** (revue finale de la phase 11, M1) : `tests/reseau/lancer.sh` refuse les nouveaux
   venus après des fenêtres d'attente fixes (`--attente=1/2/3`), pas après un compte de refus réels :
   sur un runner de CI chargé (plusieurs processus Godot en parallèle), un démarrage lent donne
   « échec » au lieu du refus attendu, et la consigne interdit d'élargir les délais. Ajouter à
