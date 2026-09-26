@@ -2,7 +2,7 @@ extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
 ##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
 ## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client,
-## manche-muet.
+## manche-muet, bout-hote, bout-client.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -83,12 +83,38 @@ extends SceneTree
 ##   reçu, fige tout le processus S secondes (« FIGE_MUET ») avant de reprendre et sortir en 0, sans
 ##   rien vérifier lui-même : son ENet ne peut acquitter aucun DISCONNECT pendant ce temps, comme un
 ##   poste dont le fil principal compile ses shaders.
+## Manche de bout en bout (phase 15), par les vraies scènes : 1 hôte + 3 clients jouent une manche
+##   entière au clavier, chacun selon son programme (des commandes au hasard tirées de --graine=N,
+##   voir `Programme`), sur le niveau --niveau=L choisi par l'hôte au salon ; chaque poste mesure sa
+##   frame la plus longue (« MESURE ») et compte les réactions de chaque joueur reçues ou décidées.
+##   Bout-hôte : --clients=N, --niveau=L, --duree=S (défaut : la manche entière,
+##   `ReglesBataille.DUREE_MANCHE`), --partant=pseudo, --tue=chemin, --rester=chemin. Après
+##   DEBUT_RENCONTRES s de jeu, orchestre les rencontres (il ne décide que des lieux : il déplace des
+##   lions et fait apparaître pastilles, étoile et soucoupe sur eux ; les effets passent par le jeu) :
+##   une pastille ramassée au vol par chaque client, une étoile, une soucoupe, sa gerbe sur un client,
+##   la gerbe d'un client sur lui, un choc. Écrit « RENCONTRES », puis « A TUER » : lancer.sh arrache
+##   le poste de --partant (KILL, sans un paquet de plus) et crée --tue ; l'hôte chronomètre la
+##   détection du départ (« ECART_DEPART <ms> ») et écrit « DEPART VU ». À DUREE_CALME s de la fin,
+##   écrit « CALME » ; lions arrêtés, coulures finies et la manche arrivée à son terme, il la fige :
+##   « STATS … », « EMPREINTE … », « FIGE ».
+##   Bout-client : --graine=N, --calme=chemin (joue son programme jusqu'à ce fichier, puis écrit
+##   « CALME VU »), --fige=chemin (comme un client de la manche : sa propre « EMPREINTE »).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
 ## aucun autoload, et `ReglesBataille`).
 
 const DELAI_ETAPE := 15.0  # secondes au plus pour chaque attente
+## Manche de bout en bout : secondes de jeu avant les rencontres, puis avant la fin où tout se calme.
+const DEBUT_RENCONTRES := 20.0
+const DUREE_CALME := 4.0
+## Vitesse (px/s) au-delà de laquelle un lion ramasse une pastille « au vol », ou percute l'hôte.
+const VITESSE_AU_VOL := 150.0
+const VITESSE_CHOC := 250.0
+## Une pastille posée sur un lion n'est à lui que si aucun autre lion n'est à moins de cette distance
+## (de centre à centre) : deux lions au contact la toucheraient tous les deux, premier arrivé, premier
+## servi.
+const ISOLEMENT := 200.0
 
 var _echecs := 0
 var _options := {}
@@ -109,6 +135,17 @@ var _fiches_manche: Array[Dictionary] = []  # salon : les fiches reçues avec le
 var _tailles_vues: Array[int] = []
 ## Salon : la ligne d'état du salon notée après chaque `salon_change`, une fois l'affichage à jour.
 var _textes_etat: Array[String] = []
+## Manche de bout en bout : par index de joueur, les réactions vues sur ce poste depuis la barrière
+## (`[étourdissements, crans, gerbes XXL]`, voir `_suivre_reactions`).
+var _reactions: Dictionary[int, Array] = {}
+## Manche de bout en bout : la frame la plus longue de ce poste (ms), de l'intro au calme, et la plus
+## longue de celles qui ont généré des jeux de tampons (point de vigilance de la phase 15).
+var _pire_frame_ms := 0.0
+var _pire_frame_generation_ms := 0.0
+var _instant_frame := 0
+var _ville_mesuree: Node2D
+var _jeux_vus := 0
+var _jeux_generes := 0
 
 
 func _init() -> void:
@@ -168,8 +205,10 @@ func _run() -> void:
 		await _jouer_manche(role == "manche-hote")
 	elif role == "manche-muet":
 		await _jouer_muet()
+	elif role == "bout-hote" or role == "bout-client":
+		await _jouer_bout(role == "bout-hote")
 	else:
-		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client ou manche-muet")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote ou bout-client")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -770,7 +809,8 @@ func _jouer_passe(main: Node, sens: int) -> void:
 
 ## L'empreinte de la manche sur ce poste : territoire (propriétaire compté de chaque cellule), scores,
 ## tampons (nombre diffusé par l'hôte ou reçu par un client, et l'empreinte de leur suite), lions
-## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position). Pas l'image
+## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position),
+## niveau et, pour la manche de bout en bout, les réactions de chaque joueur vues ici. Pas l'image
 ## de la ville : les mêmes tampons y sont dessinés à l'identique (smoke test), mais une coulure qui
 ## descend encore quand un tampon la recouvre passe dessus ou dessous selon le rythme de chaque poste.
 func _empreinte(main: Node, manche: Node, hote: bool) -> String:
@@ -792,8 +832,14 @@ func _empreinte(main: Node, manche: Node, hote: bool) -> String:
 		if scenes.has(enfant.scene_file_path):
 			apparitions.append("%s@%.0f,%.0f" % [enfant.name, enfant.position.x, enfant.position.y])
 	apparitions.sort()
-	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s" % [hash(proprietaires), territoire.scores(),
-		manche.tampons_diffuses if hote else manche.tampons_recus, manche.empreinte_tampons, ";".join(lions), ";".join(apparitions)]
+	var reactions: Array[String] = []
+	var indices := _reactions.keys()
+	indices.sort()
+	for i: int in indices:
+		reactions.append("%d:%d,%d,%d" % [i, _reactions[i][0], _reactions[i][1], _reactions[i][2]])
+	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s niveau=%d reactions=%s" % [hash(proprietaires), territoire.scores(),
+		manche.tampons_diffuses if hote else manche.tampons_recus, manche.empreinte_tampons, ";".join(lions), ";".join(apparitions),
+		root.get_node("GameState").niveau_courant, ";".join(reactions)]
 
 
 func _finir_manche_hote(main: Node, manche: Node, gs: Node) -> void:
@@ -875,3 +921,334 @@ func _jouer_muet() -> void:
 	print("EXCLU apres=%.1f s" % apres)
 	_check(_issue == "inscrit+hote_perdu" and apres >= float(_option("delai-chargement", "0")),
 		"l'hôte l'exclut après le délai de la barrière (%.1f s)" % apres)
+
+
+## Rôles « bout-hote » et « bout-client » (phase 15, voir l'en-tête) : une manche entière à 1 hôte et
+## 3 clients, chacun au clavier selon son programme, avec les rencontres de l'hôte et un client
+## arraché en pleine manche ; la même empreinte chez l'hôte et chez chaque client resté.
+func _jouer_bout(hote: bool) -> void:
+	var main := await _rejoindre_la_manche(hote)
+	if main == null:
+		return
+	var gs: Node = root.get_node("GameState")
+	var manche: Node = main.get_node("Manche")
+	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	_suivre_reactions(gs)
+	if hote:
+		_check(manche._prets.size() == gs.joueurs.size() - 1 and manche._exclus.is_empty(),
+			"chaque client a chargé sa scène, personne n'est exclu (%s)" % [manche._prets])
+	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size()) and gs.joueurs.size() == 4,
+		"un lion par joueur, 1 hôte et 3 clients (%d)" % main.lions.size())
+	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	_check(gs.niveau_courant == int(_option("niveau", str(gs.niveau_courant))) and get_first_node_in_group("boss") != null,
+		"le niveau choisi au salon (%d), avec son peintre" % gs.niveau_courant)
+	print("INTRO")
+	_commencer_mesure(main)
+	var programme := Programme.new(int(_option("graine", "1")), main.get_node("Ville"))
+	if hote:
+		await _animer_bout_hote(main, manche, gs, programme)
+	else:
+		await _animer_bout_client(main, manche, gs, programme)
+	_effacer_scores()
+
+
+## Le programme de jeu d'un poste de la manche de bout en bout : des commandes au hasard, tirées de
+## sa graine, jouées au clavier comme un joueur (`Input.action_press`). Une cible au hasard dans la
+## bande de peinture (au-dessus des toits, comme le pilote de la démo), rejointe en huit directions et
+## remplacée une fois atteinte ou au bout de DUREE_CIBLE ms ; le vomi par périodes de 0,2 à 0,8 s,
+## trois fois sur quatre. Comme le pilote de la démo, il fuit d'abord un ennemi proche, et le peintre
+## (plus grand) de plus loin : sans quoi le peintre, qui couvre la bande de peinture du Village,
+## étourdirait les lions sans relâche et plus personne ne jouerait.
+class Programme:
+	const DUREE_CIBLE := 1500
+	const DISTANCE_DANGER := 280.0
+	const DISTANCE_DANGER_PEINTRE := 420.0
+	const ACTIONS: Array[String] = ["deplacer_gauche", "deplacer_droite", "deplacer_haut", "deplacer_bas", "vomir"]
+	var rng := RandomNumberGenerator.new()
+	var bande: Rect2
+	var cible := Vector2.ZERO
+	var fin_cible := 0
+	var fin_vomi := 0
+
+	func _init(graine: int, ville: Node2D) -> void:
+		rng.seed = graine
+		var haut: float = ville.position.y - ville.tex_size.y / 2.0
+		bande = Rect2(100.0, haut - 300.0, 1650.0, 120.0)
+
+	## Une image de jeu pour `lion` (le lion de ce poste, dont la position est celle de l'hôte).
+	func piloter(lion: Node2D) -> void:
+		var maintenant := Time.get_ticks_msec()
+		if maintenant >= fin_cible or lion.position.distance_to(cible) < 30.0:
+			cible = Vector2(rng.randf_range(bande.position.x, bande.end.x), rng.randf_range(bande.position.y, bande.end.y))
+			fin_cible = maintenant + DUREE_CIBLE
+		if maintenant >= fin_vomi:
+			_basculer("vomir", rng.randf() < 0.75)
+			fin_vomi = maintenant + rng.randi_range(200, 800)
+		var ecart := cible - lion.position
+		var fuite := _fuite(lion)
+		if fuite != Vector2.ZERO:
+			ecart = fuite * 100.0
+		_basculer("deplacer_gauche", ecart.x < -20.0)
+		_basculer("deplacer_droite", ecart.x > 20.0)
+		_basculer("deplacer_haut", ecart.y < -20.0)
+		_basculer("deplacer_bas", ecart.y > 20.0)
+
+	## La direction qui éloigne `lion` des ennemis et du peintre trop proches (nulle s'il n'y en a pas).
+	func _fuite(lion: Node2D) -> Vector2:
+		var centre: Vector2 = lion.position + lion.CENTRE
+		var fuite := Vector2.ZERO
+		for groupe: String in ["ennemi", "boss"]:
+			var distance := DISTANCE_DANGER if groupe == "ennemi" else DISTANCE_DANGER_PEINTRE
+			for ennemi: Node2D in lion.get_tree().get_nodes_in_group(groupe):
+				var ecart: Vector2 = centre - ennemi.global_position
+				if ecart.length() < distance:
+					fuite += ecart.normalized() * (distance - ecart.length())
+		return fuite.normalized()
+
+	## Toutes les touches relâchées : le lion s'arrête et ne vomit plus.
+	func relacher() -> void:
+		for action in ACTIONS:
+			Input.action_release(action)
+
+	static func _basculer(action: String, appuyee: bool) -> void:
+		if appuyee:
+			Input.action_press(action)
+		else:
+			Input.action_release(action)
+
+
+## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).
+func _jouer_jusqu_a(main: Node, programme: Programme, condition: Callable, delai: float) -> bool:
+	var fin := Time.get_ticks_msec() + int(delai * 1000.0)
+	while not condition.call() and Time.get_ticks_msec() < fin:
+		if main.lion != null:
+			programme.piloter(main.lion)
+		await process_frame
+	return condition.call()
+
+
+## Compte, sur ce poste, les réactions de chaque joueur : étourdissements, crans et gerbes XXL. Chez
+## l'hôte, celles que décident ses règles ; chez un client, celles que sa manche reçoit de l'hôte.
+## Branché dès la barrière passée : les mêmes comptes partout prouvent qu'aucune n'est perdue ni
+## doublée en route.
+func _suivre_reactions(gs: Node) -> void:
+	for j: Joueur in gs.joueurs:
+		var comptes := [0, 0, 0]  # un Array, partagé avec les lambdas (capturé par référence)
+		_reactions[j.index] = comptes
+		j.etourdi.connect(func(_origine: Vector2, _barbouillage: Color) -> void: comptes[0] += 1)
+		j.crans_changes.connect(func(_crans: int) -> void: comptes[1] += 1)
+		j.bonus_change.connect(func(actif: bool) -> void:
+			if actif:
+				comptes[2] += 1)
+
+
+## Mesure de ce poste de l'intro au calme, à chaque image (`process_frame`) : la durée de l'image
+## qui s'achève, et si des jeux de tampons y ont été générés (le cache de la ville a grandi).
+func _mesurer_frame() -> void:
+	var maintenant := Time.get_ticks_usec()
+	var jeux: int = _ville_mesuree._tampons.size()
+	if _instant_frame > 0:
+		var duree := (maintenant - _instant_frame) / 1000.0
+		_pire_frame_ms = maxf(_pire_frame_ms, duree)
+		if jeux > _jeux_vus:
+			_pire_frame_generation_ms = maxf(_pire_frame_generation_ms, duree)
+			_jeux_generes += jeux - _jeux_vus
+	_jeux_vus = jeux
+	_instant_frame = maintenant
+
+
+func _commencer_mesure(main: Node) -> void:
+	_ville_mesuree = main.get_node("Ville")
+	_jeux_vus = _ville_mesuree._tampons.size()
+	process_frame.connect(_mesurer_frame)
+
+
+## La mesure de ce poste, de l'intro au calme : jeux de tampons, frame la plus longue.
+func _ecrire_mesure() -> void:
+	process_frame.disconnect(_mesurer_frame)
+	print("MESURE %s : %d jeux de tampons en cache, %d générés pendant la manche ; frame la plus longue %.0f ms, %.0f ms au plus pour une frame qui en génère"
+		% [reseau.pseudo, _ville_mesuree._tampons.size(), _jeux_generes, _pire_frame_ms, _pire_frame_generation_ms])
+
+
+## Vrai si aucun autre lion de la manche n'a son centre à moins d'ISOLEMENT de celui de `lion`.
+func _isole(lion: Node2D, main: Node) -> bool:
+	var centre: Vector2 = lion.global_position + lion.CENTRE
+	return main.lions.all(func(l: Node) -> bool: return l == lion or centre.distance_to(l.global_position + l.CENTRE) >= ISOLEMENT)
+
+
+## La zone de contact `n` (1 à 3, de la bouche au point de chute) de la gerbe d'un lion.
+func _zone_de_contact(lion: Node, n: int) -> Node2D:
+	return lion.find_child("ZoneContact%d" % n, true, false)
+
+
+func _animer_bout_hote(main: Node, manche: Node, gs: Node, programme: Programme) -> void:
+	var duree := float(_option("duree", str(ReglesBataille.DUREE_MANCHE)))
+	var ville: Node2D = main.get_node("Ville")
+	_check(await _jouer_jusqu_a(main, programme, func() -> bool: return gs.temps_ecoule >= DEBUT_RENCONTRES, DEBUT_RENCONTRES + 10.0),
+		"%.0f s de jeu libre avant les rencontres" % DEBUT_RENCONTRES)
+	programme.relacher()
+	await _rencontres(main, gs)
+	print("RENCONTRES")
+
+	# Un client arraché en pleine manche (KILL : ni DISCONNECT ni aucun autre paquet), comme un PC
+	# planté ou un Wi-Fi coupé : l'hôte le voit partir au bout du silence de session d'ENet.
+	var partant: Joueur = null
+	for j: Joueur in gs.joueurs:
+		if j.pseudo == _option("partant", ""):
+			partant = j
+	_check(partant != null, "(pré-condition) le client à arracher est dans la manche (%s)" % _option("partant", ""))
+	if partant == null:
+		return
+	print("A TUER")
+	_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("tue", ""))), "lancer.sh arrache le poste de %s" % partant.pseudo)
+	var arrache_a := Time.get_ticks_msec()
+	_check(await _attendre(func() -> bool: return _departs.has(partant.id_reseau)), "l'hôte voit partir %s" % partant.pseudo)
+	print("ECART_DEPART %d" % (Time.get_ticks_msec() - arrache_a))
+	var sans_lui := func() -> bool:
+		return main.lions.size() == gs.joueurs.size() - 1 and main.lions.all(func(l: Node) -> bool: return l.joueur != partant)
+	var cellules: int = ville.territoire.cellules_de(partant.index)
+	_check(await _attendre(sans_lui) and cellules > 0, "son lion disparaît, ses cellules restent au territoire (%d)" % cellules)
+	print("DEPART VU")
+	# Le poste arraché n'a pas pu effacer ses scores de test (`_rejoindre_la_manche`) : l'hôte le fait.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://scores_reseau_%s.cfg" % partant.pseudo))
+
+	_check(await _jouer_jusqu_a(main, programme, func() -> bool: return gs.temps_ecoule >= duree - DUREE_CALME, duree),
+		"le jeu continue jusqu'à %.0f s de la fin" % DUREE_CALME)
+	programme.relacher()
+	_ecrire_mesure()
+	print("CALME")
+	var calme := func() -> bool:
+		return main.lions.all(func(l: Node) -> bool: return l.velocity == Vector2.ZERO) and ville.coulures.is_empty()
+	_check(await _attendre(calme), "les lions s'arrêtent, les coulures finissent")
+	_check(await _attendre(func() -> bool: return gs.temps_ecoule >= duree), "la manche va jusqu'au bout de ses %.0f s" % duree)
+	gs.terminer_partie(false)  # tout se fige chez l'hôte (bataille) ; la manche diffuse encore
+	await _pause(1.0)
+	print("STATS chocs=%s etourdissements=%s vols=%s crans=%s" % [gs.joueurs.map(func(j: Joueur) -> int: return j.chocs),
+		gs.joueurs.map(func(j: Joueur) -> int: return j.etourdissements_infliges),
+		gs.joueurs.map(func(j: Joueur) -> int: return j.cellules_volees), gs.joueurs.map(func(j: Joueur) -> int: return j.crans)])
+	print("EMPREINTE %s" % _empreinte(main, manche, true))
+	print("FIGE")
+	if _options.has("rester"):
+		var rester := _option("rester", "")
+		print("HOTE RESTE")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+	paused = false
+	reseau.quitter()
+
+
+## Les rencontres de la manche de bout en bout. L'hôte ne décide que des lieux (il déplace des lions,
+## fait apparaître une pastille, une étoile, une soucoupe sur eux) ; les effets passent par le jeu :
+## contacts physiques chez l'hôte, règles, réactions diffusées aux clients. Les clients jouent leur
+## programme pendant ce temps ; le lion de l'hôte, touches relâchées, sert d'outil.
+func _rencontres(main: Node, gs: Node) -> void:
+	var spawner: Node = main.get_node("Spawner")
+	var lion_hote: Node2D = main.lion
+	var moi: Joueur = gs.joueur_local()
+	var clients: Array = main.lions.filter(func(l: Node) -> bool: return l != lion_hote)
+
+	# Deux pastilles ramassées au vol par le lion de chaque client, l'une après l'autre
+	for l: Node2D in clients + clients:
+		var j: Joueur = l.joueur
+		var crans_avant := j.crans
+		_check(await _attendre(func() -> bool: return l.velocity.length() >= VITESSE_AU_VOL and not j.est_etourdi() and _isole(l, main)),
+			"(pré-condition) le lion de %s est en mouvement, à l'écart des autres" % j.pseudo)
+		var vitesse: float = l.velocity.length()
+		spawner.spawn_pickup(0, l.global_position + l.CENTRE)
+		_check(await _attendre(func() -> bool: return j.crans == mini(crans_avant + 1, Joueur.CRANS_MAX)),
+			"le lion de %s ramasse au vol une pastille (%.0f px/s) : un cran de plus (%d)" % [j.pseudo, vitesse, j.crans])
+
+	# Une étoile, au vol aussi, pour le troisième client en train de peindre : la gerbe XXL
+	var l3: Node2D = clients[2]
+	var j3: Joueur = l3.joueur
+	var peint_seul := func() -> bool:
+		return (l3.velocity.length() >= VITESSE_AU_VOL and l3.est_en_train_de_vomir and not j3.bonus_actif()
+			and not j3.est_etourdi() and _isole(l3, main))
+	_check(await _attendre(peint_seul), "(pré-condition) le lion de %s vomit en mouvement, à l'écart des autres, sans gerbe XXL" % j3.pseudo)
+	spawner.spawn_bonus(l3.global_position + l3.CENTRE)
+	_check(await _attendre(func() -> bool: return j3.bonus_actif()), "le lion de %s ramasse une étoile : la gerbe XXL" % j3.pseudo)
+
+	# Une soucoupe sur le lion du premier client : un ennemi l'étourdit (sans barbouillage). Une autre
+	# soucoupe tant qu'il n'est pas étourdi par un ennemi : il a pu l'être entre-temps par une gerbe,
+	# ou être encore immunisé quand la première est passée.
+	var l1: Node2D = clients[0]
+	var j1: Joueur = l1.joueur
+	var par_ennemi := [false]  # des Array, partagés avec les lambdas
+	var sur_ennemi := func(_origine: Vector2, barbouillage: Color) -> void:
+		if barbouillage.a == 0.0:
+			par_ennemi[0] = true
+	j1.etourdi.connect(sur_ennemi)
+	var soucoupe: Node2D = null
+	var fin := Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	while not par_ennemi[0] and Time.get_ticks_msec() < fin:
+		var centre: Vector2 = l1.global_position + l1.CENTRE
+		var partie := soucoupe == null or not is_instance_valid(soucoupe) or soucoupe.global_position.distance_to(centre) > 150.0
+		if partie and not j1.est_etourdi() and not j1.est_invulnerable():
+			soucoupe = spawner.spawn_soucoupe(centre.y)
+			soucoupe.position.x = centre.x
+		await physics_frame
+	j1.etourdi.disconnect(sur_ennemi)
+	_check(par_ennemi[0], "une soucoupe étourdit le lion de %s" % j1.pseudo)
+
+	# La gerbe de l'hôte sur le lion du deuxième client, qu'il place sur la trajectoire tant qu'il peut
+	# être étourdi, jusqu'à ce qu'elle l'étourdisse (barbouillé de la couleur de l'hôte : pas un ennemi)
+	var l2: Node2D = clients[1]
+	var j2: Joueur = l2.joueur
+	var par_hote := [false]
+	var sur_gerbe_hote := func(_origine: Vector2, barbouillage: Color) -> void:
+		if barbouillage == moi.couleur:
+			par_hote[0] = true
+	j2.etourdi.connect(sur_gerbe_hote)
+	lion_hote.global_position = Vector2(600, 250)
+	lion_hote.direction_du_lion = 1
+	Input.action_press("vomir")
+	fin = Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	while not par_hote[0] and Time.get_ticks_msec() < fin:
+		if lion_hote.est_en_train_de_vomir and not j2.est_etourdi() and not j2.est_invulnerable():
+			l2.global_position = _zone_de_contact(lion_hote, 2).global_position - l2.CENTRE
+		await physics_frame
+	Input.action_release("vomir")
+	j2.etourdi.disconnect(sur_gerbe_hote)
+	_check(par_hote[0], "la gerbe de l'hôte étourdit le lion de %s, qui passe dessous" % j2.pseudo)
+
+	# La gerbe du troisième client (ses commandes, venues du réseau) sur le lion de l'hôte, de même
+	var par_client := [false]
+	var sur_gerbe_client := func(_origine: Vector2, barbouillage: Color) -> void:
+		if barbouillage == j3.couleur:
+			par_client[0] = true
+	moi.etourdi.connect(sur_gerbe_client)
+	fin = Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	while not par_client[0] and Time.get_ticks_msec() < fin:
+		if l3.est_en_train_de_vomir and not j3.est_etourdi() and not moi.est_etourdi() and not moi.est_invulnerable():
+			l3.global_position = Vector2(1200, 250)
+			lion_hote.global_position = _zone_de_contact(l3, 2).global_position - lion_hote.CENTRE
+		await physics_frame
+	moi.etourdi.disconnect(sur_gerbe_client)
+	_check(par_client[0], "la gerbe de %s, vomie à ses commandes, étourdit le lion de l'hôte" % j3.pseudo)
+
+	# Un choc : un client lancé à pleine vitesse percute le lion de l'hôte, arrêté sur sa route
+	var chocs_hote := moi.chocs
+	fin = Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	var percuteur: Node2D = null
+	while moi.chocs == chocs_hote and Time.get_ticks_msec() < fin:
+		if lion_hote.velocity.length() < 1.0:
+			for l: Node2D in clients:
+				var dans_le_ciel := Rect2(300, 150, 1300, 550).has_point(l.global_position)
+				if l.velocity.length() >= VITESSE_CHOC and not l.joueur.est_etourdi() and dans_le_ciel:
+					percuteur = l
+					lion_hote.global_position = l.global_position + l.velocity.normalized() * 80.0
+					break
+		await physics_frame
+	_check(moi.chocs > chocs_hote and percuteur != null and percuteur.joueur.chocs > 0,
+		"le lion de %s percute celui de l'hôte : un choc compté pour les deux" % ("?" if percuteur == null else percuteur.joueur.pseudo))
+
+
+func _animer_bout_client(main: Node, manche: Node, gs: Node, programme: Programme) -> void:
+	var calme := _option("calme", "")
+	_check(await _jouer_jusqu_a(main, programme, func() -> bool: return FileAccess.file_exists(calme), ReglesBataille.DUREE_MANCHE + 30.0),
+		"le jeu dure jusqu'au calme annoncé par lancer.sh (%s)" % calme)
+	programme.relacher()
+	_ecrire_mesure()
+	print("CALME VU")
+	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size() - 1),
+		"le lion du client arraché a disparu ici aussi (%d lions)" % main.lions.size())
+	await _finir_manche_client(main, manche)
