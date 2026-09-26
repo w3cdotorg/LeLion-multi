@@ -52,6 +52,7 @@ func _run() -> void:
 	await _tester_pseudos_et_chocs()
 	await _tester_reglage_territoire()
 	await _tester_manche()
+	await _tester_retour_au_titre()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
@@ -131,7 +132,7 @@ func _tester_scene() -> void:
 
 func _tester_solo_apres_bataille() -> void:
 	print("-- Solo après une bataille")
-	GS.configurer_solo()
+	# Le solo a été configuré par l'écran titre (section précédente), comme dans le jeu.
 	GS.niveau_courant = 2  # le Village : son peintre
 	GS.difficulte_courante = 0
 	var main: Node = load("res://Scenes/Main.tscn").instantiate()
@@ -486,3 +487,23 @@ func _tester_pseudos_et_chocs() -> void:
 	await _liberer(main)
 	for j: Joueur in GS.joueurs:
 		j.pseudo = ""
+
+
+func _tester_retour_au_titre() -> void:
+	print("-- Retour au titre après une bataille")
+	var main := await _charger_bataille(0)
+	await _liberer(main)
+	_check(GS.regles.compte_le_territoire() and root.content_scale_size == Vector2i(TAILLE_BATAILLE),
+		"(pré-condition) une bataille vient de se jouer, en 16:9")
+	var scores: Node = root.get_node("Scores")
+	scores.chemin = "user://scores_test_bataille.cfg"  # l'écran titre enregistre ses préférences
+	scores.effacer()
+	var titre: Control = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
+	root.add_child(titre)
+	await _frames(1)
+	_check(GS.regles is ReglesSolo and GS.joueurs.size() == 1 and not GS.joueur_local().a_une_couleur(),
+		"l'écran titre remet le solo avant toute partie : ses règles, un seul joueur, sans couleur")
+	_check(root.get_visible_rect().size == Vector2(2000, 648), "l'écran titre est en 2000×648")
+	titre.free()
+	scores.effacer()

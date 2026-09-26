@@ -63,7 +63,8 @@ func joueur_local() -> Joueur:
 ## Prépare une partie solo : règles du solo, un seul joueur, sans couleur (son lion garde son
 ## rendu d'origine). Comme `configurer_bataille`, à appeler AVANT de charger la scène de jeu :
 ## `Main._enter_tree` appelle `nouvelle_partie()`, puis Lion, Spawner, HUD et Main s'abonnent à
-## `joueur_local()` dans leur `_ready`.
+## `joueur_local()` dans leur `_ready`. L'écran titre l'appelle (toute partie qu'il lance est
+## une partie solo).
 func configurer_solo() -> void:
 	regles = ReglesSolo.new(self)
 	joueurs.resize(1)  # en place : joueurs[0] reste le même objet
@@ -179,13 +180,6 @@ func couleur(index: int) -> Color:
 
 func nb_couleurs_total() -> int:
 	return COULEURS_ARC_EN_CIEL.size()
-
-
-## Prochaine couleur de l'arc-en-ciel à offrir au joueur local (-1 si toutes sont débloquées).
-## Règle du solo, lue par le Spawner (en bataille, les apparitions passeront par les règles).
-func prochain_index_couleur() -> int:
-	var i := joueur_local().couleurs_debloquees.size()
-	return i if i < COULEURS_ARC_EN_CIEL.size() else -1
 
 
 func signaler_progression(ratio: float) -> void:
