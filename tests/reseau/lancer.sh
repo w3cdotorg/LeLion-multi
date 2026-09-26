@@ -9,6 +9,10 @@
 set -u
 cd "$(dirname "$0")/../.." || exit 2
 
+# N6 : sur un Mac sans coreutils dans le PATH, chaque poste sortirait en 127 (« timeout » introuvable)
+# sans indice. `export PATH="/opt/homebrew/bin:$PATH"` avant de lancer ce script s'il manque.
+command -v timeout >/dev/null || { echo "il faut la commande GNU 'timeout' (coreutils) dans le PATH" >&2; exit 2; }
+
 GODOT="${GODOT:-godot}"
 PORT_BASE="${1:-17777}"
 DELAI="${DELAI:-40}"
@@ -51,6 +55,42 @@ attendre_hote() {
 	done
 	echec "l'hôte $1 n'écoute pas"
 	return 1
+}
+
+# attendre_ligne <nom> <motif> : attend qu'une ligne contenant <motif> apparaisse dans le journal de
+# <nom>, 15 s au plus (par exemple « ACCEPTE » du rôle lent, I2).
+attendre_ligne() {
+	local i
+	for i in $(seq 1 150); do
+		grep -q -- "$2" "$JOURNAUX/$1.log" 2>/dev/null && return 0
+		sleep 0.1
+	done
+	echec "« $2 » n'apparaît jamais dans le journal de $1"
+	return 1
+}
+
+# attendre_fin <nom> : attend la fin d'UN poste déjà lancé, vérifie son code et son journal, et le
+# retire des postes suivis (terminer() ne le revérifie donc pas). Pour choréographier un scénario où
+# certains postes doivent finir avant que d'autres soient lancés (I2, scénario 5).
+attendre_fin() {
+	local nom="$1" i code
+	for i in "${!NOMS[@]}"; do
+		if [ "${NOMS[$i]}" = "$nom" ]; then
+			wait "${PIDS[$i]}"
+			code=$?
+			if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+				echec "$nom n'a pas fini dans les $DELAI s (tué par timeout)"
+			elif [ "$code" -ne 0 ]; then
+				echec "$nom sort en $code"
+			fi
+			grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/$nom.log" && echec "erreurs dans le journal de $nom"
+			unset "PIDS[$i]" "NOMS[$i]"
+			PIDS=("${PIDS[@]}")
+			NOMS=("${NOMS[@]}")
+			return
+		fi
+	done
+	echec "attendre_fin : $nom introuvable parmi les postes suivis"
 }
 
 # terminer <titre> : attend chaque poste lancé, vérifie son code de sortie et son journal.
@@ -120,6 +160,25 @@ terminer "manche en cours : arrivée refusée"
 P=$((PORT_BASE + 4))
 lancer seul4 --role=client --port=$P --pseudo=Seul --attendu=echec
 terminer "sans hôte : échec de connexion après le délai"
+
+# 5. Réservation à la réponse, vrai auth_timeout (I2, Focus 2 et 5) : un client lent est accepté
+#    mais ne finit jamais sa poignée de main. Pendant sa réservation (place prise dès la réponse de
+#    l'hôte, avant toute arrivée), un rival est refusé « plein » sans course possible (le rival ne
+#    part qu'après l'acceptation du lent, vue dans son journal). Après le vrai délai de poignée de
+#    main (3 s), l'hôte le libère (vrai peer_authentication_failed) : un troisième client obtient
+#    la place, à l'index 1.
+P=$((PORT_BASE + 5))
+lancer hote5 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --attente=1
+if attendre_hote hote5; then
+	lancer lent5 --role=lent --port=$P --pseudo=Lent --attente=6
+	if attendre_ligne lent5 "ACCEPTE"; then
+		lancer rival5 --role=client --port=$P --pseudo=Rival --attendu=refus_plein
+		attendre_fin rival5
+		sleep 3.5  # laisse passer le vrai auth_timeout (3 s) avant le troisième client
+		lancer tard5 --role=client --port=$P --pseudo=Tard --attendu=inscrit
+	fi
+fi
+terminer "poignée de main jamais finie : réservation à la réponse, puis libération par le vrai délai"
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then

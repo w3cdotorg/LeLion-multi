@@ -1,16 +1,23 @@
 extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
-##   godot --headless --script tests/reseau/joueur.gd -- --role=hote|client [options]
+##   godot --headless --script tests/reseau/joueur.gd -- --role=hote|client|lent [options]
 ## Communes : --port=N (défaut 17777), --pseudo=texte.
 ## Hôte : --places=N (joueurs, hôte compris ; défaut 6), --clients=N (clients qui doivent arriver),
 ##   --partants=N (clients qui repartiront d'eux-mêmes), --manche (manche en cours : tout nouveau
 ##   venu est refusé), --attente=S (secondes gardées ouvertes après les arrivées et départs, pour
 ##   les demandes qui doivent être refusées). Écrit « HOTE PRET » quand il écoute, puis quitte le
 ##   réseau (ses clients doivent voir l'hôte partir).
-## Client : --attendu=inscrit|inscrit_ou_plein|refus_version|refus_manche|echec, --version=x.y (se
-##   présente avec cette version au lieu de la sienne), --partir (une fois inscrit et un autre
-##   client en vue, quitte de lui-même ; sinon, attend que l'hôte parte). Écrit une ligne
-##   « RESULTAT … » que lancer.sh compte d'un poste à l'autre.
+## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
+##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
+##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte). Écrit une
+##   ligne « RESULTAT … » que lancer.sh compte d'un poste à l'autre. `refus_plein` est la version
+##   déterministe d'`inscrit_ou_plein` (un seul dénouement possible, pas une course).
+## Lent : présente sa demande sur sa propre poignée de main (son propre `ENetMultiplayerPeer` et
+##   `SceneMultiplayer`, posé par `set_multiplayer` sur un nœud à lui : le `SceneTree` interroge
+##   aussi ces API), mais n'appelle jamais `complete_auth` — sa poignée de main ne finit donc
+##   jamais. Écrit « ACCEPTE index=N » dès la réponse de l'hôte, puis reste ouvert --attente=S
+##   secondes (défaut 6) avant de se fermer. Preuve de bout en bout (Focus 2, Focus 5) que la place
+##   d'un accepté est réservée dès la réponse et libérée par le vrai `auth_timeout` de l'hôte.
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau` par `root.get_node`, ne nomme ni `Reseau` ni `GameState` (il peut nommer
 ## `EtatPartie`, dont le script ne nomme aucun autoload).
@@ -69,8 +76,10 @@ func _run() -> void:
 		await _jouer_hote()
 	elif role == "client":
 		await _jouer_client()
+	elif role == "lent":
+		await _jouer_lent()
 	else:
-		_check(false, "rôle inconnu : --role=hote ou --role=client")
+		_check(false, "rôle inconnu : --role=hote, --role=client ou --role=lent")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1,
 		"à la fin, le poste est revenu hors réseau (pair hors ligne, hôte de lui-même, plus d'inscrits)")
@@ -82,13 +91,15 @@ func _jouer_hote() -> void:
 	var nb_clients := int(_option("clients", "0"))
 	var nb_partants := int(_option("partants", "0"))
 	reseau.places = int(_option("places", str(EtatPartie.NB_JOUEURS_MAX)))
-	reseau.manche_en_cours = _options.has("manche")
 	reseau.joueur_arrive.connect(_sur_arrivee)
 	reseau.joueur_parti.connect(_sur_depart)
 	var erreur: int = reseau.heberger(int(_option("port", "17777")))
 	_check(erreur == OK, "l'hôte écoute (erreur %d)" % erreur)
 	if erreur != OK:
 		return
+	# manche_en_cours après heberger() : quitter() (que heberger() appelle en premier) le remet à
+	# faux à chaque nouvelle session (I1).
+	reseau.manche_en_cours = _options.has("manche")
 	print("HOTE PRET")
 	var hote: Dictionary = reseau.inscrits[root.multiplayer.get_unique_id()]
 	_check(root.multiplayer.is_server() and hote.index == 0 and hote.couleur == EtatPartie.PALETTE_BATAILLE[0]
@@ -115,8 +126,7 @@ func _jouer_hote() -> void:
 
 	await _pause(float(_option("attente", "0")))
 	_check(_arrivees.size() == nb_clients, "aucune arrivée de trop : %d client(s) en tout" % _arrivees.size())
-	reseau.quitter()
-	await _pause(0.5)  # le temps que la fermeture parte vers les clients
+	reseau.quitter()  # close() envoie ses paquets de façon synchrone (N7) : pas de pause à ajouter ici
 
 
 func _jouer_client() -> void:
@@ -165,6 +175,11 @@ func _jouer_client() -> void:
 			else:
 				_check(await _attendre(func() -> bool: return _issue != "inscrit"), "l'hôte finit par partir")
 				_check(_issue == "inscrit+hote_perdu", "le départ de l'hôte est signalé une fois, comme hôte perdu (%s)" % _issue)
+		"refus_plein":
+			_check(_issue == "refuse" and _raison == reseau.REFUS_PLEIN and _version_hote == version_projet,
+				"refusé parce que la partie est pleine, sans course possible (%s, %s)" % [_raison, _issue])
+			await _pause(1.0)
+			_check(_issue == "refuse", "un refus n'est suivi d'aucun autre signal (%s)" % _issue)
 		"refus_version", "refus_manche":
 			var raison_attendue: String = reseau.REFUS_VERSION if attendu == "refus_version" else reseau.REFUS_MANCHE
 			_check(_issue == "refuse" and _raison == raison_attendue and _version_hote == version_projet,
@@ -176,6 +191,37 @@ func _jouer_client() -> void:
 				"sans hôte, la connexion échoue après le délai de %.0f s (%.1f s)" % [reseau.DELAI_CONNEXION, duree])
 		_:
 			_check(false, "issue attendue inconnue : %s" % attendu)
+
+
+## Rôle de test « lent » (I2, Focus 2 et 5) : une poignée de main qui ne finit jamais, sur sa propre
+## API (jamais celle de `Reseau`, jamais nommée). Preuve de bout en bout que la place d'un accepté
+## est réservée dès la réponse de l'hôte (pas à l'arrivée), et libérée par le vrai `auth_timeout`.
+func _jouer_lent() -> void:
+	var noeud := Node.new()
+	root.add_child(noeud)
+	var api := SceneMultiplayer.new()
+	set_multiplayer(api, noeud.get_path())  # ce script est déjà le SceneTree
+	var pair := ENetMultiplayerPeer.new()
+	var erreur := pair.create_client("127.0.0.1", int(_option("port", "17777")))
+	_check(erreur == OK, "le client lent est créé (erreur %d)" % erreur)
+	if erreur == OK:
+		var pseudo_lent: String = reseau.pseudo
+		# Un Dictionary, pas un bool local : une lambda GDScript capture les variables locales par
+		# valeur, pas par référence ; `etat.accepte` reste, lui, partagé avec `_attendre` ci-dessous.
+		var etat := {"accepte": false}
+		api.peer_authenticating.connect(func(id: int) -> void:
+			api.send_auth(id, var_to_bytes({"jeu": reseau.JEU, "version": reseau.version, "pseudo": pseudo_lent})))
+		api.auth_callback = func(_id: int, donnees: PackedByteArray) -> void:
+			var reponse: Variant = bytes_to_var(donnees)
+			if reponse is Dictionary and reponse.get("accepte") == true:
+				etat.accepte = true
+				print("ACCEPTE index=%d" % reponse.index)
+			# Jamais de complete_auth ici : la poignée de main ne finit pas, exprès.
+		api.multiplayer_peer = pair
+		_check(await _attendre(func() -> bool: return etat.accepte), "le client lent reçoit une acceptation, sans jamais finir sa poignée de main")
+		await _pause(float(_option("attente", "6")))
+	pair.close()
+	noeud.queue_free()
 
 
 func _sur_arrivee(id: int) -> void:
