@@ -1251,8 +1251,22 @@ func _run() -> void:
 	pair_lion.close()
 	poste_lion.free()
 
+	# Phase 15 bis : un lion libéré (départ d'un joueur, fin de manche) alors que son joueur reste
+	# (GameState le garde) ne doit plus rien recevoir de lui : ni le lion ni ses composants
+	var ids_lions: Array = lions_bataille.map(func(l: Node) -> int: return l.get_instance_id()) \
+		+ lions_bataille.map(func(l: Node) -> int: return l.gerbe.get_instance_id()) \
+		+ lions_bataille.map(func(l: Node) -> int: return l.pare_chocs.get_instance_id())
 	for l in lions_bataille:
 		l.free()
+	var restes := 0
+	for j: Joueur in [j_rouge, j_bleu]:
+		for s: Signal in [j.couleur_debloquee, j.bonus_change, j.touche, j.crans_changes, j.etourdi, j.etourdissement_fini]:
+			restes += s.get_connections().filter(func(c: Dictionary) -> bool: return ids_lions.has((c.callable as Callable).get_object_id())).size()
+	_check(restes == 0, "un lion libéré n'est plus abonné aux signaux de son joueur (%d abonnements restants)" % restes)
+	j_rouge.etourdir(1.0, 1.0, Vector2.INF, j_bleu.couleur)
+	j_rouge.activer_bonus(1.0)
+	j_bleu.recevoir_crans(3)
+	j_bleu.recevoir_fin_etourdissement(0.0)
 	GS.configurer_solo()
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false
