@@ -43,6 +43,10 @@ var _joueur_ecoute: Joueur
 ## Vies du joueur écouté à son dernier `vies_changees` (ou au départ de la partie, que
 ## `Joueur.reinitialiser` pose sans signal) : une vie regagnée est un `vies_changees` en hausse.
 var _vies_vues := 0
+## Crans du joueur écouté à son dernier `crans_changes` (ou au départ de la partie) : un cran de
+## bataille gagné est une hausse ; `Joueur.recevoir_crans` (phase 14) peut aussi les faire baisser
+## (resynchronisation), ce qui ne doit rien jouer.
+var _crans_vus := 0
 ## Frame du dernier son de ramassage : une pastille du solo débloque une couleur ET donne un cran
 ## dans la même frame, un seul son part.
 var _ramassage_joue_a := -1
@@ -145,6 +149,7 @@ func _ecouter(joueur: Joueur) -> void:
 		_joueur_ecoute.vies_changees.disconnect(_on_vies_changees)
 	_joueur_ecoute = joueur
 	_vies_vues = joueur.vies
+	_crans_vus = joueur.crans
 	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
 	joueur.crans_changes.connect(_on_crans_changes)
 	joueur.bonus_change.connect(_on_bonus_change)
@@ -163,9 +168,12 @@ func _on_couleur_debloquee(_couleur: Color) -> void:
 	_jouer_ramassage()
 
 
-## Une pastille de bataille donne un cran sans débloquer de couleur.
-func _on_crans_changes(_crans: int) -> void:
-	_jouer_ramassage()
+## Une pastille de bataille donne un cran sans débloquer de couleur. Un cran en baisse (resync)
+## ne joue rien : `_on_vies_changees` garde déjà ce principe par symétrie.
+func _on_crans_changes(crans: int) -> void:
+	if crans > _crans_vus:
+		_jouer_ramassage()
+	_crans_vus = crans
 
 
 ## L'étoile : la gerbe XXL commence (sa fin, `actif` faux, ne joue rien).
@@ -184,6 +192,7 @@ func _on_vies_changees(vies: int) -> void:
 ## Départ d'une partie : `nouvelle_partie` a remis les vies sans signal.
 func _on_partie_prete() -> void:
 	_vies_vues = _joueur_ecoute.vies
+	_crans_vus = _joueur_ecoute.crans
 
 
 func _on_partie_terminee(victoire: bool) -> void:

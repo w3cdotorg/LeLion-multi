@@ -262,6 +262,10 @@ func _run() -> void:
 	_check(_sons.count("pickup") == sons_avant + 1, "l'étoile joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(lion.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
 	_check(hud.etiquette_bonus.visible, "le HUD affiche le bonus")
+	var etoile_solo: Node = spawner.spawn_bonus(Vector2(-500, -500))  # loin du lion : jamais ramassée
+	etoile_solo._expirer()
+	await _frames(1)
+	_check(not is_instance_valid(etoile_solo), "en solo (son propre hôte), une étoile en fin de vie se libère elle-même")
 	JL.bonus_restant = 0.01
 	await create_timer(0.1).timeout
 	await _frames(1)
@@ -456,7 +460,8 @@ func _run() -> void:
 	boss._arreter()
 	boss.etat = boss.Etat.PAUSE
 	boss.position.x = 1000.0
-	lion.global_position = Vector2(1000 - 68, boss.position.y - 66)
+	lion.global_position = Vector2(1000 - 60 - 68, boss.position.y - 120 - 66)
+	lion.direction_du_lion = -1  # dos au peintre : le repli par défaut pointerait vers lui, à l'envers
 	JL.vies = 3
 	JL.invulnerable_restant = 0.3
 	await _frames(3)
@@ -465,8 +470,8 @@ func _run() -> void:
 	await create_timer(0.4).timeout
 	await _frames(2)
 	_check(JL.vies == 2, "un lion resté au contact du peintre est frappé dès la fin de son invulnérabilité (contact continu)")
-	_check(lion._recul.length() > 0.0 and absf(lion._recul.normalized().y) < 0.01,
-		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal (%s)" % lion._recul)
+	_check(lion._recul.normalized().is_equal_approx(Vector2(-1, 0)),
+		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal, loin du peintre (%s)" % lion._recul)
 	boss.etat = boss.Etat.REPOS  # au repos, hors de l'écran : il ne touche plus rien
 	boss.position.x = boss._x_hors_ecran()
 	GS.niveau_courant = 0
@@ -772,7 +777,7 @@ func _run() -> void:
 	if etoile_client.has_method("_expirer"):
 		etoile_client._expirer()
 	await _frames(1)
-	_check(etoile_client.has_method("_expirer") and is_instance_valid(etoile_client),
+	_check(is_instance_valid(etoile_client) and etoile_client.has_method("_expirer"),
 		"sur un client, une étoile en fin de vie ne se libère pas d'elle-même (l'hôte la fait disparaître)")
 	set_multiplayer(null, poste_client.get_path())
 	pair_client.close()
@@ -880,6 +885,11 @@ func _run() -> void:
 	GS.configurer_bataille(2)
 	GS.nouvelle_partie()
 	GS.pret = true
+	# Ce test contourne l'intro (`GameState.demarrer`), qui émettrait `partie_prete` en jeu réel et
+	# resynchroniserait Audio (vies et crans) sur le joueur local après le `reinitialiser` silencieux
+	# de `nouvelle_partie` : on le fait à la main pour ne pas hériter d'un `_crans_vus` d'une section
+	# précédente.
+	root.get_node("Audio")._on_partie_prete()
 	var j_rouge: Joueur = GS.joueurs[0]
 	var j_bleu: Joueur = GS.joueurs[1]
 	var lions_bataille: Array[CharacterBody2D] = []
