@@ -35,9 +35,6 @@ const VITESSE_ETOILES := 5.0  # radians par seconde
 const DUREE_SECOUSSE := 0.25
 const AMPLITUDE_SECOUSSE := 6.0
 
-@export var speed: float = 350.0
-@export var acceleration: float = 2400.0
-@export var force_recul: float = 700.0
 @export var inclinaison_max: float = 0.14  # radians
 ## Auto-tamponneuses : recul de chaque lion = vitesse d'approche relative × facteur_choc.
 @export var facteur_choc: float = 1.2
@@ -93,8 +90,8 @@ var joueur: Joueur:
 var commandes: Commandes
 ## Zones de contact de la gerbe, de la bouche au point de chute (la dernière y rejoint la traceuse).
 var zones_contact: Array[Area2D] = []
-var _vitesse := Vector2.ZERO
-var _recul := Vector2.ZERO
+## Vitesse commandée et recul du lion (logique pure) : ce que `avancer` fait avancer d'un pas.
+var deplacement := DeplacementLion.new()
 var _temps := 0.0  # secondes de jeu écoulées pour ce lion (ticks physiques)
 var _clignotement: Tween
 var _secousse_restante := 0.0
@@ -134,17 +131,20 @@ func _physics_process(delta: float) -> void:
 	if not multiplayer.is_server():
 		_suivre_l_hote(delta)
 		return
-	var input_vector := _direction_voulue()
-
-	if input_vector.x != 0:
-		direction_du_lion = 1 if input_vector.x > 0 else -1  # le setter réoriente le lion
-
-	_vitesse = _vitesse.move_toward(input_vector * speed, acceleration * delta)
-	_recul = _recul.move_toward(Vector2.ZERO, acceleration * 1.5 * delta)
-	velocity = _bloquer_contre_les_lions(_vitesse + _recul)
-	move_and_slide()
+	avancer(_direction_voulue(), delta)
 	_animer_deplacement(delta)
+	_signaler_vomi_sur_les_lions()
 
+
+## Un pas de déplacement du lion vers `direction` (longueur 1 au plus), de `delta` secondes : son
+## orientation, sa vitesse (commandée, recul, contacts avec les autres lions), `move_and_slide`, puis
+## les bords de l'écran. Le seul chemin du déplacement sur l'hôte (tick physique) ; la prédiction du
+## lion local (phase 16) rejouera les mêmes pas, ses commandes en main.
+func avancer(direction: Vector2, delta: float) -> void:
+	if direction.x != 0:
+		direction_du_lion = 1 if direction.x > 0 else -1  # le setter réoriente le lion
+	velocity = _bloquer_contre_les_lions(deplacement.vitesse_du_pas(direction, delta))
+	move_and_slide()
 	var screen_rect := get_viewport_rect()
 	var sprite_size := sprite.texture.get_size()
 	var x_borne: float = clamp(global_position.x, 0, screen_rect.size.x - sprite_size.x)
@@ -157,7 +157,6 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 	global_position.x = x_borne
 	global_position.y = y_borne
-	_signaler_vomi_sur_les_lions()
 
 
 func _process(delta: float) -> void:
@@ -191,7 +190,7 @@ func _marge_haute() -> float:
 ## signale rien aux règles (la prédiction du lion local viendra en phase 16). Seule l'animation
 ## (inclinaison, trot) tourne ici, sur la vitesse de l'hôte.
 func _suivre_l_hote(delta: float) -> void:
-	_vitesse = velocity
+	deplacement.vitesse = velocity
 	_animer_deplacement(delta)
 
 
@@ -240,9 +239,9 @@ func _appliquer_teinte() -> void:
 
 ## Penche le lion dans le sens de la course et le fait trottiner.
 func _animer_deplacement(delta: float) -> void:
-	var cible: float = (_vitesse.x / speed) * inclinaison_max * signf(sprite.scale.x)
+	var cible: float = (deplacement.vitesse.x / deplacement.speed) * inclinaison_max * signf(sprite.scale.x)
 	sprite.rotation = lerp(sprite.rotation, cible, min(1.0, 10.0 * delta))
-	var en_mouvement := _vitesse.length() > speed * 0.2
+	var en_mouvement := deplacement.vitesse.length() > deplacement.speed * 0.2
 	var bob := sin(_temps * 14.0) * 3.0 if en_mouvement else 0.0
 	sprite.position.y = lerp(sprite.position.y, 67.0 + bob, min(1.0, 12.0 * delta))
 
@@ -260,7 +259,7 @@ func _on_lion_touche(origine: Vector2) -> void:
 ## agresseur étourdi que depuis une frame physique antérieure (un échange simultané étourdit
 ## les deux lions).
 func _on_etourdi(origine: Vector2, barbouillage: Color) -> void:
-	_vitesse = Vector2.ZERO
+	deplacement.arreter()
 	_reculer(origine)
 	_barbouiller(barbouillage)
 	etoiles.visible = true
@@ -275,12 +274,7 @@ func _on_etourdissement_fini() -> void:
 
 
 func _reculer(origine: Vector2) -> void:
-	var direction_recul := Vector2(-direction_du_lion, 0.0)
-	if origine.is_finite():
-		direction_recul = (global_position + CENTRE - origine).normalized()
-		if direction_recul.length() < 0.1:
-			direction_recul = Vector2(-direction_du_lion, 0.0)
-	_recul = direction_recul * force_recul
+	deplacement.repousser(global_position + CENTRE, origine, direction_du_lion)
 
 
 ## Clignotement de l'invulnérabilité : le même après un coup (solo) et pour l'immunité qui suit
@@ -326,9 +320,9 @@ func _on_pare_chocs_area_entered(zone: Area2D) -> void:
 		return
 	var normale := _normale_de_choc(autre)
 	var approche := (velocity - autre.velocity).dot(-normale)
-	var vers_autre := _vitesse.dot(-normale)
+	var vers_autre := deplacement.vitesse.dot(-normale)
 	if vers_autre > 0.0:
-		_vitesse += normale * vers_autre
+		deplacement.vitesse += normale * vers_autre
 	if approche < approche_min_choc:
 		return
 	_nettoyer_derniers_chocs()
@@ -336,7 +330,7 @@ func _on_pare_chocs_area_entered(zone: Area2D) -> void:
 	if dernier >= 0.0 and _temps - dernier < delai_entre_chocs:
 		return
 	_derniers_chocs[autre.get_instance_id()] = _temps
-	_recul += normale * approche * facteur_choc
+	deplacement.recul += normale * approche * facteur_choc
 	_secousse_restante = DUREE_SECOUSSE
 	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
 	if multiplayer.is_server() and get_instance_id() < autre.get_instance_id():
@@ -373,7 +367,7 @@ func _bloquer_contre_les_lions(v: Vector2) -> Vector2:
 		if vers_autre > 0.0:
 			v += normale * vers_autre
 		var enfoncement := 2.0 * _rayon_choc - pare_chocs.global_position.distance_to(autre.pare_chocs.global_position)
-		var vitesse_ecartement: float = minf(maxf(enfoncement, 0.0) * raideur_choc, speed)
+		var vitesse_ecartement: float = minf(maxf(enfoncement, 0.0) * raideur_choc, deplacement.speed)
 		v += normale * vitesse_ecartement
 	return v
 

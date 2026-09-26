@@ -297,7 +297,7 @@ func _run() -> void:
 	_check(JL.est_invulnerable() and absf(JL.invulnerable_restant - ReglesSolo.DUREE_INVULNERABILITE) < 0.2
 		and not GS.get_script().get_script_constant_map().has("DUREE_INVULNERABILITE"),
 		"le lion est invulnérable après un coup, pour la durée que fixent les règles du solo (plus GameState)")
-	_check(lion._recul.length() > 0.0, "le lion est repoussé par le coup (%.0f px/s)" % lion._recul.length())
+	_check(lion.deplacement.recul.length() > 0.0, "le lion est repoussé par le coup (%.0f px/s)" % lion.deplacement.recul.length())
 	_check(hud.flash.color.a > 0.0, "l'écran flashe en rouge")
 	_check(main._tremblement_restant > 0.0, "la caméra tremble")
 	_check(hud._coeurs[2].modulate == hud.COULEUR_COEUR_PERDU, "le HUD grise le cœur perdu")
@@ -474,8 +474,8 @@ func _run() -> void:
 	await create_timer(0.4).timeout
 	await _frames(2)
 	_check(JL.vies == 2, "un lion resté au contact du peintre est frappé dès la fin de son invulnérabilité (contact continu)")
-	_check(lion._recul.normalized().is_equal_approx(Vector2(-1, 0)),
-		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal, loin du peintre (%s)" % lion._recul)
+	_check(lion.deplacement.recul.normalized().is_equal_approx(Vector2(-1, 0)),
+		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal, loin du peintre (%s)" % lion.deplacement.recul)
 	boss.etat = boss.Etat.REPOS  # au repos, hors de l'écran : il ne touche plus rien
 	boss.position.x = boss._x_hors_ecran()
 	GS.niveau_courant = 0
@@ -545,7 +545,7 @@ func _run() -> void:
 	_check(lion.commandes.source == Commandes.Source.MANUELLES, "en démo, le lion suit des commandes manuelles")
 	spawner.spawn_pickup(0, Vector2(1200, 250))
 	await _frames(10)
-	_check(lion.commandes.direction_voulue.length() > 0.9 and lion._vitesse.length() > 0.0, "le pilote dirige le lion vers la pastille")
+	_check(lion.commandes.direction_voulue.length() > 0.9 and lion.deplacement.vitesse.length() > 0.0, "le pilote dirige le lion vers la pastille")
 	var soucoupe3: Node = spawner.spawn_soucoupe(lion.global_position.y + 66)
 	soucoupe3.position.x = lion.global_position.x + 250
 	await _frames(2)
@@ -607,8 +607,8 @@ func _run() -> void:
 	autre.activer_bonus(5.0)
 	_check(is_equal_approx(lion_autre.traceuse_shape.shape.radius, rayon_autre * 2.0), "le bonus de son propre joueur double la gerbe du lion")
 	autre.encaisser_coup(Vector2.INF, 1.5)
-	_check(lion_autre._recul.length() > 0.0, "un coup encaissé par son propre joueur repousse le lion")
-	lion_autre._recul = Vector2.ZERO  # sinon le recul contamine les vérifications de mouvement ci-dessous
+	_check(lion_autre.deplacement.recul.length() > 0.0, "un coup encaissé par son propre joueur repousse le lion")
+	lion_autre.deplacement.recul = Vector2.ZERO  # sinon le recul contamine les vérifications de mouvement ci-dessous
 	GS.pret = false
 	lion_autre.commandes.direction_voulue = Vector2.RIGHT
 	var x_avant: float = lion_autre.global_position.x
@@ -768,7 +768,7 @@ func _run() -> void:
 			pastille_intrus.free()
 	intrus.free()
 	autre.invulnerable_restant = 0.0
-	lion_autre._recul = Vector2.ZERO  # le recul des coups précédents l'éloigne encore
+	lion_autre.deplacement.recul = Vector2.ZERO  # le recul des coups précédents l'éloigne encore
 	lion_autre.global_position = Vector2(1400, 300)
 	await _frames(1)
 	var poste_client := Node2D.new()  # sous-arbre dont le pair multijoueur est un client
@@ -1000,16 +1000,16 @@ func _run() -> void:
 	var materiau_bleu := lb.sprite.material as ShaderMaterial
 	lb.commandes.direction_voulue = Vector2.LEFT
 	await _frames(5)
-	_check(lb._vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
+	_check(lb.deplacement.vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
 	materiau_bleu.set_shader_parameter("barbouillage_force", 0.5)  # pour un check discriminant : un ennemi doit bien la remettre à 0
 	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
-	_check(j_bleu.est_etourdi() and lb._vitesse == Vector2.ZERO and lb._recul.x > 0.0 and lb.etoiles.visible,
+	_check(j_bleu.est_etourdi() and lb.deplacement.vitesse == Vector2.ZERO and lb.deplacement.recul.x > 0.0 and lb.etoiles.visible,
 		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
 	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "un ennemi ne barbouille pas")
 	lb.commandes.vomir_voulu = true
 	var position_etoile: Vector2 = lb.etoiles.get_child(0).position
 	await _frames(10)
-	_check(lb._vitesse == Vector2.ZERO and not lb.est_en_train_de_vomir, "étourdi, le lion ignore ses commandes : ni déplacement ni vomi")
+	_check(lb.deplacement.vitesse == Vector2.ZERO and not lb.est_en_train_de_vomir, "étourdi, le lion ignore ses commandes : ni déplacement ni vomi")
 	_check(lb.etoiles.get_child(0).position != position_etoile, "les étoiles tournent autour de la tête")
 	j_bleu.etourdi_restant = 0.05
 	await create_timer(0.1).timeout
@@ -1017,7 +1017,7 @@ func _run() -> void:
 	_check(not j_bleu.est_etourdi() and not lb.etoiles.visible and j_bleu.est_invulnerable()
 		and lb._clignotement != null and lb._clignotement.is_running(),
 		"à la fin de l'étourdissement, les étoiles s'en vont et l'immunité clignote")
-	_check(lb._vitesse.x < 0.0 and lb.est_en_train_de_vomir, "le lion obéit de nouveau à ses commandes")
+	_check(lb.deplacement.vitesse.x < 0.0 and lb.est_en_train_de_vomir, "le lion obéit de nouveau à ses commandes")
 	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
 	_check(not j_bleu.est_etourdi(), "un ennemi ne ré-étourdit pas un lion immunisé")
 
@@ -1075,7 +1075,7 @@ func _run() -> void:
 	_check(zones[0].get_child(0).shape != lb.zones_contact[0].get_child(0).shape, "chaque lion a ses propres formes de zones de contact")
 	j_bleu.invulnerable_restant = 0.0
 	var infliges_avant: int = j_rouge.etourdissements_infliges
-	lb._recul = Vector2.ZERO
+	lb.deplacement.recul = Vector2.ZERO
 	lb.global_position = lr.to_global(zones[1].position) - lb.CENTRE
 	await _frames(2)
 	lr.commandes.vomir_voulu = true
@@ -1099,8 +1099,8 @@ func _run() -> void:
 	_check(lr.collision_mask == 0 and lr.pare_chocs.collision_layer == 16 and lr.pare_chocs.collision_mask == 16
 		and is_equal_approx(lr._rayon_choc, 45.0) and lr.get_node("CollisionShape2D").shape.radius > 60.0,
 		"les lions se heurtent sur leur couche dédiée, à 45 px ; le corps (63 px) reste celui que touchent ennemis et pastilles")
-	lr._recul = Vector2.ZERO
-	lb._recul = Vector2.ZERO
+	lr.deplacement.recul = Vector2.ZERO
+	lb.deplacement.recul = Vector2.ZERO
 	lr.global_position = Vector2(600, 300)
 	lb.global_position = Vector2(800, 300)
 	await _frames(2)
@@ -1111,7 +1111,7 @@ func _run() -> void:
 			break
 	lr.commandes.direction_voulue = Vector2.ZERO
 	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
-	_check(lr._recul.x < 0.0 and lb._recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
+	_check(lr.deplacement.recul.x < 0.0 and lb.deplacement.recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
 		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
 	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")
 	var distance_min := 1e9
@@ -1122,11 +1122,11 @@ func _run() -> void:
 		"les lions ne s'enfoncent pas l'un dans l'autre (distance min %.0f px), un seul choc compté" % distance_min)
 
 	# Poussée continue de 2 s (120 ticks physiques) contre un lion immobile : avant cette
-	# correction, seul `_recul` s'opposait à `_vitesse` (qui ramenait aussitôt vers l'autre) et
-	# chaque re-contact comptait, jusqu'à 14 chocs en 2 s ; `_vitesse` doit maintenant se
+	# correction, seul le recul s'opposait à la vitesse commandée (qui ramenait aussitôt vers l'autre) et
+	# chaque re-contact comptait, jusqu'à 14 chocs en 2 s ; la vitesse commandée doit maintenant se
 	# réaccélérer et le délai anti-rafale limiter le décompte.
-	lr._recul = Vector2.ZERO
-	lb._recul = Vector2.ZERO
+	lr.deplacement.recul = Vector2.ZERO
+	lb.deplacement.recul = Vector2.ZERO
 	lr.global_position = Vector2(600, 300)
 	lb.global_position = Vector2(800, 300)
 	await _frames(2)
@@ -1144,8 +1144,8 @@ func _run() -> void:
 
 	# Un lion étourdi peut être poussé
 	GS.regles.lion_touche_par_ennemi(j_bleu, Vector2.INF)
-	lb._recul = Vector2.ZERO
-	lr._recul = Vector2.ZERO
+	lb.deplacement.recul = Vector2.ZERO
+	lr.deplacement.recul = Vector2.ZERO
 	lr.global_position = Vector2(600, 300)
 	lb.global_position = Vector2(800, 300)
 	await _frames(2)
@@ -1159,6 +1159,32 @@ func _run() -> void:
 	_check(j_bleu.est_etourdi() and lb.global_position.x > x_bleu + 10.0 and j_rouge.chocs >= 2,
 		"un lion étourdi est poussé par celui qui le percute (%.0f px)" % (lb.global_position.x - x_bleu))
 	_check(distance_min > 2 * 45.0 - 15.0, "même en poussant sans relâche, un lion ne s'enfonce pas dans l'autre (distance min %.0f px)" % distance_min)
+
+	# Phase 15 bis : le pas de déplacement (`Lion.avancer`), seul chemin du déplacement sur l'hôte, que
+	# rejouera la prédiction du lion local (phase 16) ; chaque lion a son propre état de déplacement
+	j_bleu.etourdi_restant = 0.0
+	j_bleu.invulnerable_restant = 0.0
+	lr.commandes.direction_voulue = Vector2.ZERO
+	lr.global_position = Vector2(400, 300)
+	lb.global_position = Vector2(1400, 300)
+	await _frames(30)  # reculs amortis, contacts des pare-chocs oubliés
+	_check(lr.deplacement != lb.deplacement and lr.deplacement.recul == Vector2.ZERO and lr.velocity == Vector2.ZERO,
+		"(pré-condition) chaque lion a son propre déplacement ; le lion rouge est à l'arrêt")
+	var x_avant_pas: float = lr.global_position.x
+	var dt_pas := 1.0 / Engine.physics_ticks_per_second
+	lr.avancer(Vector2.RIGHT, dt_pas)
+	_check(lr.deplacement.vitesse == Vector2(lr.deplacement.acceleration * dt_pas, 0.0) and lr.velocity == lr.deplacement.vitesse
+		and absf(lr.global_position.x - x_avant_pas - lr.velocity.x * dt_pas) < 0.001 and lr.direction_du_lion == 1,
+		"un pas vers la droite : la vitesse gagne une accélération d'un tick, le lion avance d'autant (%.3f px)" % (lr.global_position.x - x_avant_pas))
+	lr.avancer(Vector2.LEFT, dt_pas)
+	_check(lr.direction_du_lion == -1 and lr.sprite.scale.x == -1.0 and lr.bouche.position.x == lr.BOUCHE_X_GAUCHE,
+		"un pas vers la gauche retourne le lion et sa gerbe")
+	lr.global_position = Vector2(-50, -50)
+	lr.avancer(Vector2(-1, -1).normalized(), dt_pas)
+	_check(lr.global_position == Vector2(0, -lr.etiquette_pseudo.position.y if lr.etiquette_pseudo.visible else 0.0)
+		and lr.velocity == Vector2.ZERO, "un pas hors de l'écran le ramène au bord, sans vitesse fantôme (%s)" % lr.global_position)
+	lr.deplacement.vitesse = Vector2.ZERO
+	lr.global_position = Vector2(600, 300)
 
 	# Phase 14 : sur un client, un lion n'est qu'une réplique du lion de l'hôte (position, vitesse,
 	# orientation et vomi reçus par son Synchro ; réactions par les signaux de son joueur)
@@ -1203,7 +1229,7 @@ func _run() -> void:
 	for i in range(3):
 		await process_frame  # le vomi démarre dans _process
 	await _frames(1)
-	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl._vitesse == Vector2(350, 0)
+	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl.deplacement.vitesse == Vector2(350, 0)
 		and repl.est_en_train_de_vomir and repl.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
 		"la réplique suit l'état reçu : position, vitesse (son animation), orientation, vomi (particules)")
 	repl.vomi_de_l_hote = false

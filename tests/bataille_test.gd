@@ -503,8 +503,8 @@ func _tester_pseudos_et_chocs() -> void:
 	var j2: Joueur = GS.joueurs[2]
 	for essai in range(2):
 		for l: CharacterBody2D in [l1, l2]:
-			l._recul = Vector2.ZERO
-			l._vitesse = Vector2.ZERO
+			l.deplacement.recul = Vector2.ZERO
+			l.deplacement.vitesse = Vector2.ZERO
 		l1.global_position = Vector2(600, 400)
 		l2.global_position = Vector2(800, 400)
 		await _frames(2)
