@@ -88,8 +88,10 @@ func _preparer_manche_en_reseau() -> void:
 	manche.barriere_passee.connect(_sur_barriere_passee)
 	manche.joueur_parti.connect(_sur_joueur_parti)
 	menu_pause.visibility_changed.connect(_suspendre_commandes)
-	if not multiplayer.is_server():
-		Reseau.hote_perdu.connect(_sur_hote_perdu)
+	# M2 (revue finale) : `Reseau.hote_perdu` peut aussi partir chez l'hôte (son propre pair ENet en
+	# erreur, N4 de `Reseau.gd`) ; sans ce branchement, l'hôte continuait seul une manche que
+	# personne ne recevait plus, sans aucun message.
+	Reseau.hote_perdu.connect(_sur_hote_perdu)
 	manche.demarrer(ville)
 
 
@@ -156,9 +158,15 @@ func _suspendre_commandes() -> void:
 		lion.commandes.suspendues = menu_pause.visible
 
 
-## Chez un client : l'hôte est parti (ce poste est déjà hors réseau). Tout se fige sous le message,
-## puis retour au titre (spec §9).
+## L'hôte est parti, vu d'un client, ou son propre pair ENet en erreur chez l'hôte lui-même (M2 de
+## la revue finale) : ce poste est déjà hors réseau. Tout se fige sous le message, puis retour au
+## titre (spec §9).
 func _sur_hote_perdu() -> void:
+	# M1 (revue finale) : ce poste est déjà hors réseau (`Reseau.en_ligne()` est faux) ; sans ceci,
+	# Échap ouvrirait le menu local par-dessus le message (il se croit encore hors ligne comme en
+	# solo) puis un second Échap dépauserait l'arbre en le refermant, repartant la ville figée.
+	menu_pause.hide()
+	menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
 	var couche := CanvasLayer.new()
 	couche.name = "HotePerdu"
 	couche.layer = 10

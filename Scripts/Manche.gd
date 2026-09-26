@@ -12,7 +12,9 @@ extends Node
 ## - Commandes : chaque client envoie à chaque tick physique la direction et l'envie de vomir de son
 ##   lion (RPC `unreliable_ordered`, numérotées : l'hôte ignore un numéro déjà vu, en attendant la
 ##   redondance de la phase 16) ; l'hôte les écrit dans les commandes manuelles de ce lion, et les
-##   remet au repos après SILENCE_COMMANDES sans nouvelle commande.
+##   remet au repos après SILENCE_COMMANDES de temps de jeu sans nouvelle commande (pas l'horloge
+##   murale, M4 de la revue finale : un rattrapage de ticks physiques après un gel de l'hôte ne doit
+##   pas se lire comme un silence).
 ## - Tampons : chaque tampon de la ville de l'hôte (`Ville.tampon_peint`) est diffusé, regroupé par
 ##   tick physique, sur le canal fiable 1 (`Peinture.encoder_tampons`) ; un client le dessine
 ##   (`Ville.peindre_tampon_recu`).
@@ -36,8 +38,9 @@ signal joueur_parti(index: int)
 ## Délai de la barrière de chargement, en secondes : au-delà, les joueurs dont la scène n'est pas
 ## chargée sont exclus.
 const DELAI_CHARGEMENT := 20.0
-## Sans commande d'un client depuis ce délai (ms), l'hôte remet son lion au repos (point de
-## vigilance des phases 14 et 16 : un client planté ne laisse pas son lion filer ou vomir).
+## Sans commande d'un client depuis ce délai (ms de temps de jeu, pas l'horloge murale : M4 de la
+## revue finale), l'hôte remet son lion au repos (point de vigilance des phases 14 et 16 : un client
+## planté ne laisse pas son lion filer ou vomir).
 const SILENCE_COMMANDES := 500
 ## Période de diffusion du territoire (cellules changées et scores), en secondes (spec §6).
 const INTERVALLE_TERRITOIRE := 0.2
@@ -77,6 +80,12 @@ var _temps_territoire := 0.0
 ## murale : un hôte figé (chargement, compilation des shaders) n'exclut personne en reprenant, avant
 ## d'avoir lu les « scène chargée » arrivés pendant qu'il était figé.
 var _temps_chargement := 0.0
+## Hôte, après la barrière : temps de jeu écoulé (ticks physiques additionnés en secondes), utilisé
+## pour SILENCE_COMMANDES. Pas l'horloge murale (M4, revue finale) : après un gel de l'hôte
+## (compilation d'un shader), plusieurs ticks physiques de rattrapage passent avant le sondage
+## réseau du même `process` ; comptés à l'horloge murale, ce rattrapage se lirait comme un silence
+## des commandes et remettrait chaque lion distant au repos pour rien.
+var _temps_manche := 0.0
 ## Client : numéro de la dernière commande envoyée.
 var _numero := 0
 
@@ -139,7 +148,8 @@ func _physics_process(delta: float) -> void:
 		_temps_chargement += delta
 		_verifier_barriere()
 		return
-	verifier_silences(Time.get_ticks_msec())
+	_temps_manche += delta
+	verifier_silences(int(_temps_manche * 1000.0))
 	_diffuser_tampons()
 	_temps_territoire += delta
 	if _temps_territoire >= INTERVALLE_TERRITOIRE:
@@ -177,7 +187,10 @@ func _verifier_barriere() -> void:
 	barriere = true
 	_prets.clear()
 	for id in Reseau.scenes_chargees:
-		if id != multiplayer.get_unique_id() and Reseau.inscrits.has(id):
+		# M5 (revue finale) : un exclu encore connecté qui a fini de charger entre-temps ne doit pas
+		# recevoir l'intro ni les diffusions ; la barrière continue d'attendre son départ (il reste
+		# dans les attendus).
+		if id != multiplayer.get_unique_id() and Reseau.inscrits.has(id) and not _exclus.has(id):
 			_prets.append(id)
 	Reseau.definir_silence(Reseau.SILENCE_SESSION)
 	_ville.tampon_peint.connect(_sur_tampon_peint)
@@ -198,6 +211,14 @@ func _exclure(id: int) -> void:
 	_exclus.append(id)
 	push_warning("Manche : le joueur %d n'a pas chargé sa scène à temps, exclu" % id)
 	if multiplayer.get_peers().has(id):
+		# I1 (revue finale phase 14) : un pair figé (chargement, compilation des shaders) n'acquitte
+		# jamais le DISCONNECT ; sans ceci, ENet ne l'abandonne qu'à son propre silence de
+		# chargement (SILENCE_CHARGEMENT, 20 à 30 s), et la barrière l'attend tout ce temps. Un
+		# silence court (1 à 2 s) avant `disconnect_peer` (sans `force`) : le départ arrive quand
+		# même par `peer_disconnected`, puis `Reseau.joueur_parti`, comme un pair réactif.
+		var pair := multiplayer.multiplayer_peer as ENetMultiplayerPeer
+		if pair != null:
+			pair.get_peer(id).set_timeout(Reseau.ESSAIS_SILENCE, 1000, 2000)
 		multiplayer.multiplayer_peer.disconnect_peer(id)
 
 
@@ -231,13 +252,13 @@ func _recevoir_commandes(numero: Variant, direction: Variant, vomir: Variant) ->
 	var id := multiplayer.get_remote_sender_id()
 	for j in GameState.joueurs:
 		if j.id_reseau == id:
-			recevoir_commandes_de(j.index, numero, direction, vomir, Time.get_ticks_msec())
+			recevoir_commandes_de(j.index, numero, direction, vomir, int(_temps_manche * 1000.0))
 			return
 
 
 ## Chez l'hôte : écrit la commande `numero` du joueur d'index `index` dans les commandes de son lion,
-## reçue à `maintenant` (ms). Refusée (faux) pour un lion inconnu, des arguments d'un autre type ou
-## non finis, ou un numéro déjà vu.
+## reçue à `maintenant` (ms de temps de jeu). Refusée (faux) pour un lion inconnu, des arguments
+## d'un autre type ou non finis, ou un numéro déjà vu.
 func recevoir_commandes_de(index: int, numero: Variant, direction: Variant, vomir: Variant, maintenant: int) -> bool:
 	var c: Commandes = _commandes.get(index)
 	if c == null or not (numero is int) or not (direction is Vector2) or not (vomir is bool) or not direction.is_finite():
@@ -251,7 +272,7 @@ func recevoir_commandes_de(index: int, numero: Variant, direction: Variant, vomi
 
 
 ## Chez l'hôte : le lion d'un client dont aucune commande n'est arrivée depuis SILENCE_COMMANDES ms
-## (à `maintenant`) revient au repos.
+## de temps de jeu (à `maintenant`) revient au repos.
 func verifier_silences(maintenant: int) -> void:
 	for index: int in _recues:
 		if maintenant - int(_recues[index].a) > SILENCE_COMMANDES and _commandes.has(index):
@@ -342,14 +363,17 @@ func _sur_bonus(actif_: bool, j: Joueur) -> void:
 @rpc("authority", "call_remote", "reliable")
 func _recevoir_etourdi(index: Variant, duree: Variant, immunite: Variant, origine: Variant, barbouillage: Variant) -> void:
 	var j := _joueur_recu(index)
-	if j != null and duree is float and immunite is float and origine is Vector2 and barbouillage is Color:
+	# M4 (revue finale) : bornées (l'hôte est de confiance sur un LAN, mais une valeur non finie
+	# rendrait `est_etourdi()` faux) ; `origine` vaut légitimement `Vector2.INF` (origine inconnue,
+	# `Lion._reculer` la gère), jamais bornée à `is_finite()`.
+	if j != null and _duree_valide(duree) and _duree_valide(immunite) and origine is Vector2 and barbouillage is Color:
 		j.etourdir(duree, immunite, origine, barbouillage)
 
 
 @rpc("authority", "call_remote", "reliable")
 func _recevoir_fin_etourdissement(index: Variant, immunite: Variant) -> void:
 	var j := _joueur_recu(index)
-	if j != null and immunite is float:
+	if j != null and _duree_valide(immunite):
 		j.recevoir_fin_etourdissement(immunite)
 
 
@@ -363,7 +387,7 @@ func _recevoir_crans(index: Variant, crans: Variant) -> void:
 @rpc("authority", "call_remote", "reliable")
 func _recevoir_bonus(index: Variant, duree: Variant) -> void:
 	var j := _joueur_recu(index)
-	if j != null and duree is float:
+	if j != null and _duree_valide(duree):
 		j.activer_bonus(duree)
 
 
@@ -379,6 +403,12 @@ func _joueur_recu(index: Variant) -> Joueur:
 	if not actif or not (index is int) or index < 0 or index >= GameState.joueurs.size():
 		return null
 	return GameState.joueurs[index]
+
+
+## M4 (revue finale) : une durée ou une immunité reçue de l'hôte, bornée à [0, 30] et finie (une
+## RPC de l'hôte n'a qu'un effet visuel hors plage, mais NaN ou l'infini casserait `est_etourdi()`).
+func _duree_valide(v: Variant) -> bool:
+	return v is float and is_finite(v) and v >= 0.0 and v <= 30.0
 
 
 # --- Départs ----------------------------------------------------------------------------------------
