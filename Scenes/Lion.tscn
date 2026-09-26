@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://dmayuumv4a1gh"]
+[gd_scene load_steps=16 format=3 uid="uid://dmayuumv4a1gh"]
 
 [ext_resource type="Script" uid="uid://dh0gkc6tf8etc" path="res://Scripts/Lion.gd" id="1_3r2l0"]
 [ext_resource type="Texture2D" uid="uid://cmjsa80060vyw" path="res://Assets/Sprites/LionHead.png" id="1_kx51r"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://dmbxtsy64rnau" path="res://Scripts/GerbeTraceuse.gd" id="9_or3p1"]
 [ext_resource type="Texture2D" uid="uid://dy0pggnw08ymx" path="res://Assets/Sprites/etoile.png" id="10_etoile"]
 [ext_resource type="Script" path="res://Scripts/PareChocs.gd" id="11_parechocs"]
+[ext_resource type="Script" path="res://Scripts/GerbeLion.gd" id="12_gerbe"]
 
 [sub_resource type="Animation" id="Animation_r1xi6"]
 resource_name = "Idle"
@@ -163,3 +164,10 @@ shape = SubResource("CircleShape2D_choc")
 [node name="Synchro" type="MultiplayerSynchronizer" parent="."]
 replication_interval = 0.012
 replication_config = SubResource("SceneReplicationConfig_synchro")
+
+[node name="Gerbe" type="Node2D" parent="." node_paths=PackedStringArray("vomi_container", "traceuse", "traceuse_shape", "bouche")]
+script = ExtResource("12_gerbe")
+vomi_container = NodePath("../VomiParticlesContainer")
+traceuse = NodePath("../GerbeTraceuse")
+traceuse_shape = NodePath("../GerbeTraceuse/CollisionShape2D")
+bouche = NodePath("../Bouche")

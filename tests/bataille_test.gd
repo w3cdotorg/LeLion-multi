@@ -444,7 +444,7 @@ func _mesurer_passe(niveau: int, crans: int) -> Vector2:
 	await _passe(lions[1], haut)
 	var part_volee := float(GS.joueurs[1].cellules_volees) / maxi(cellules_a, 1)
 	print("  MESURE niveau %d, rayon %d : territoire %d / couverture %d = %.2f ; volées par une passe : %d (%.0f %%)"
-		% [niveau, int(lions[0].traceuse_shape.shape.radius), cellules_a, ville.cellules_peintes, rapport,
+		% [niveau, int(lions[0].gerbe.traceuse_shape.shape.radius), cellules_a, ville.cellules_peintes, rapport,
 			GS.joueurs[1].cellules_volees, 100.0 * part_volee])
 	for l in lions:
 		l.free()

@@ -1,10 +1,14 @@
 class_name Lion
 extends CharacterBody2D
-## Le lion : déplacement, gerbe de vomi multicolore, traceuse de peinture ; en bataille,
-## crinière à la couleur de son joueur, pseudo au-dessus de la tête, étourdissement et
-## auto-tamponneuses.
-## La gerbe part de la bouche à 45° vers le bas ; la traceuse est placée au point de chute et
-## les zones de contact le long de la parabole, avec la même physique que les particules.
+## Le lion : son joueur et ses commandes, son déplacement, son vomi ; en bataille, crinière à la
+## couleur de son joueur, pseudo au-dessus de la tête, étourdissement. Trois composants (phase 15 bis) :
+## - `deplacement` (`DeplacementLion`, logique pure) : vitesse commandée et recul, dont `avancer` fait
+##   un pas par tick physique sur l'hôte (la prédiction du lion local, phase 16, rejouera ces pas) ;
+## - `pare_chocs` (`PareChocs`, le nœud `PareChocs`) : les auto-tamponneuses (chocs, blocage) ;
+## - `gerbe` (`GerbeLion`, le nœud `Gerbe`) : émetteurs, traceuse de peinture au point de chute et
+##   zones de contact le long de la parabole.
+## Le lion écoute son joueur et répartit ses réactions entre eux ; la présentation (teinte, pseudo,
+## étoiles, barbouillage, clignotement, secousse, trot) reste ici.
 ## Le lion ne décide de rien : sur l'hôte, il signale aux règles les autres lions que touche
 ## sa gerbe et ceux qu'il percute, comme le font les ennemis et les pastilles.
 ## En réseau (phase 14), seul l'hôte simule les lions ; sur un client, chaque lion est une réplique
@@ -12,22 +16,7 @@ extends CharacterBody2D
 ## `MultiplayerSynchronizer` (`Synchro`), ses réactions (étourdissement, crans, gerbe XXL) par les
 ## signaux de son joueur, que la manche lui transmet (`Joueur.recevoir_*`).
 
-const ANGLE_GERBE_DEG := 45.0
-const ECART_EVENTAIL_DEG := 24.0
-const VITESSE_GERBE := 320.0
-const GRAVITE_GERBE := 300.0
-const DUREE_GERBE := 0.6
-const PARTICULES_PAR_COULEUR := 400
-const RAYON_TRACEUSE := Vector2i(16, 46)  # min, max
-const FACTEUR_BONUS := 2.0
-const TEXTURE_PARTICULE := preload("res://Assets/Sprites/circle_white.png")
-const BOUCHE_X_DROITE := 89.0
-const BOUCHE_X_GAUCHE := 47.0
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
-const PAS_RAYON_PAR_CRAN := 5
-const NB_ZONES_CONTACT := 3
-const RAYON_ZONE_CONTACT := 22.0
-const COUCHE_CORPS_LIONS := 1  # couche du corps des lions, celle que détectent ennemis et pastilles
 const CENTRE := Vector2(68, 66)  # centre du corps, dans le repère du lion
 const FORCE_BARBOUILLAGE := 0.7
 const RAYON_ETOILES := Vector2(40, 12)
@@ -39,13 +28,10 @@ const AMPLITUDE_SECOUSSE := 6.0
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var anim: AnimationPlayer = $AnimationPlayer
-@onready var vomi_container: Node2D = $VomiParticlesContainer
-@onready var gerbe_traceuse: Area2D = $GerbeTraceuse
-@onready var traceuse_shape: CollisionShape2D = $GerbeTraceuse/CollisionShape2D
-@onready var bouche: Marker2D = $Bouche
 @onready var etiquette_pseudo: Label = $Pseudo
 @onready var etoiles: Node2D = $Etoiles
 @onready var pare_chocs: PareChocs = $PareChocs
+@onready var gerbe: GerbeLion = $Gerbe
 
 var est_en_train_de_vomir := false
 ## 1 = droite, -1 = gauche. Répliquée chez les clients (`Synchro`) : le setter y retourne le sprite
@@ -76,8 +62,6 @@ var joueur: Joueur:
 			return
 		joueur = valeur
 var commandes: Commandes
-## Zones de contact de la gerbe, de la bouche au point de chute (la dernière y rejoint la traceuse).
-var zones_contact: Array[Area2D] = []
 ## Vitesse commandée et recul du lion (logique pure) : ce que `avancer` fait avancer d'un pas.
 var deplacement := DeplacementLion.new()
 ## Secondes de jeu écoulées pour ce lion (ticks physiques) : trot, étoiles, délai entre deux chocs.
@@ -95,18 +79,15 @@ func _ready() -> void:
 		joueur = GameState.joueur_local()
 	if commandes == null:
 		commandes = Commandes.manuelles() if GameState.demo else Commandes.locales()
-	# La sous-ressource de Lion.tscn est partagée par toutes les instances ; chaque lion a besoin
-	# de son propre rayon.
-	traceuse_shape.shape = traceuse_shape.shape.duplicate()
+	gerbe.preparer()
 	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
 	joueur.bonus_change.connect(_on_bonus_change)
 	joueur.touche.connect(_on_lion_touche)
 	joueur.crans_changes.connect(_on_crans_changes)
 	joueur.etourdi.connect(_on_etourdi)
 	joueur.etourdissement_fini.connect(_on_etourdissement_fini)
-	_creer_zones_contact()
 	_appliquer_direction()
-	mettre_a_jour_degrade_vomi()
+	gerbe.reconstruire()
 	appliquer_apparence()
 
 
@@ -117,7 +98,7 @@ func _physics_process(delta: float) -> void:
 		return
 	avancer(_direction_voulue(), delta)
 	_animer_deplacement(delta)
-	_signaler_vomi_sur_les_lions()
+	gerbe.signaler_vomi_sur_les_lions()
 
 
 ## Un pas de déplacement du lion vers `direction` (longueur 1 au plus), de `delta` secondes : son
@@ -190,8 +171,20 @@ func _veut_vomir() -> bool:
 	return GameState.pret and not joueur.est_etourdi() and commandes.vomir()
 
 
-func _on_couleur_debloquee(_couleur: Color) -> void:
-	mettre_a_jour_degrade_vomi()
+func demarrer_vomi() -> void:
+	if joueur.couleurs_debloquees.is_empty():
+		return
+	est_en_train_de_vomir = true
+	gerbe.demarrer()
+	anim.play("Vomit")
+	Audio.demarrer_vomi()
+
+
+func arreter_vomi() -> void:
+	est_en_train_de_vomir = false
+	gerbe.arreter()
+	anim.play("Idle")
+	Audio.arreter_vomi()
 
 
 ## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ; à
@@ -204,6 +197,11 @@ func appliquer_apparence() -> void:
 	etiquette_pseudo.text = joueur.pseudo
 	etiquette_pseudo.add_theme_color_override("font_color", joueur.couleur)
 	etiquette_pseudo.visible = joueur.a_une_couleur() and not joueur.pseudo.is_empty()
+
+
+## Petite secousse du sprite, au choc avec un autre lion (`PareChocs`) ; pas de secousse d'écran.
+func secouer() -> void:
+	_secousse_restante = DUREE_SECOUSSE
 
 
 ## Un joueur sans couleur (le solo) laisse le sprite sans matériau : le lion s'affiche
@@ -221,6 +219,12 @@ func _appliquer_teinte() -> void:
 	mat.set_shader_parameter("couleur_joueur", joueur.couleur)
 
 
+## Retourne le sprite et réoriente la gerbe (bouche, émetteurs, traceuse, zones de contact).
+func _appliquer_direction() -> void:
+	sprite.scale.x = direction_du_lion
+	gerbe.orienter()
+
+
 ## Penche le lion dans le sens de la course et le fait trottiner.
 func _animer_deplacement(delta: float) -> void:
 	var cible: float = (deplacement.vitesse.x / deplacement.speed) * inclinaison_max * signf(sprite.scale.x)
@@ -228,6 +232,19 @@ func _animer_deplacement(delta: float) -> void:
 	var en_mouvement := deplacement.vitesse.length() > deplacement.speed * 0.2
 	var bob := sin(temps * 14.0) * 3.0 if en_mouvement else 0.0
 	sprite.position.y = lerp(sprite.position.y, 67.0 + bob, min(1.0, 12.0 * delta))
+
+
+func _on_couleur_debloquee(_couleur: Color) -> void:
+	gerbe.reconstruire()
+
+
+func _on_crans_changes(_crans: int) -> void:
+	gerbe.placer_traceuse()
+
+
+func _on_bonus_change(_actif: bool) -> void:
+	gerbe.placer_traceuse()
+	gerbe.appliquer_taille_particules()
 
 
 ## Recul et clignotement pendant l'invulnérabilité qui suit un coup (solo).
@@ -286,18 +303,6 @@ func _barbouiller(couleur: Color) -> void:
 	mat.set_shader_parameter("barbouillage_force", FORCE_BARBOUILLAGE if couleur.a > 0.0 else 0.0)
 
 
-func _tourner_etoiles() -> void:
-	var nb := etoiles.get_child_count()
-	for i in range(nb):
-		var angle := temps * VITESSE_ETOILES + TAU * i / nb
-		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)
-
-
-## Petite secousse du sprite, au choc avec un autre lion (`PareChocs`) ; pas de secousse d'écran.
-func secouer() -> void:
-	_secousse_restante = DUREE_SECOUSSE
-
-
 ## Vrai si la tête porte encore un barbouillage visible (couleur d'agresseur appliquée).
 ## `get_shader_parameter` renvoie `null` tant que `_barbouiller` ne l'a jamais fixé.
 func _barbouillage_actif() -> bool:
@@ -308,156 +313,8 @@ func _barbouillage_actif() -> bool:
 	return force != null and force > 0.0
 
 
-func _on_crans_changes(_crans: int) -> void:
-	_placer_traceuse()
-
-
-func _on_bonus_change(_actif: bool) -> void:
-	_placer_traceuse()
-	_appliquer_taille_particules()
-
-
-func _facteur_bonus() -> float:
-	return FACTEUR_BONUS if joueur.bonus_actif() else 1.0
-
-
-func _appliquer_taille_particules() -> void:
-	for emitter in vomi_container.get_children():
-		var mat := emitter.process_material as ParticleProcessMaterial
-		if mat != null:
-			mat.scale_min = 0.6 * _facteur_bonus()
-			mat.scale_max = 1.4 * _facteur_bonus()
-
-
-## Retourne le sprite, déplace la bouche et réoriente gerbe et traceuse.
-func _appliquer_direction() -> void:
-	sprite.scale.x = direction_du_lion
-	bouche.position.x = BOUCHE_X_DROITE if direction_du_lion > 0 else BOUCHE_X_GAUCHE
-	vomi_container.position = bouche.position
-	_orienter_emetteurs()
-	_placer_traceuse()
-
-
-func _angle_gerbe(index: int, count: int) -> float:
-	var base := ANGLE_GERBE_DEG if direction_du_lion > 0 else 180.0 - ANGLE_GERBE_DEG
-	var offset: float = lerp(-ECART_EVENTAIL_DEG / 2, ECART_EVENTAIL_DEG / 2, float(index) / max(count - 1, 1))
-	return deg_to_rad(base + offset * direction_du_lion)
-
-
-## Position, dans le repère du lion, d'une particule tirée à 45° après `t` secondes de vol
-## (même physique que le ParticleProcessMaterial). `t = DUREE_GERBE` : le point de chute.
-func _point_de_gerbe(t: float) -> Vector2:
-	var v := Vector2.from_angle(deg_to_rad(ANGLE_GERBE_DEG)) * VITESSE_GERBE
-	var point := Vector2(v.x * t, v.y * t + 0.5 * GRAVITE_GERBE * t * t)
-	point.x *= direction_du_lion
-	return bouche.position + point
-
-
-## Traceuse au point de chute ; rayon de peinture selon les crans (16 px au premier, 5 px de
-## plus par cran, 46 px au plus) et le bonus. Zones de contact réparties sur la parabole.
-func _placer_traceuse() -> void:
-	gerbe_traceuse.position = _point_de_gerbe(DUREE_GERBE)
-	if traceuse_shape.shape is CircleShape2D:
-		var rayon: float = clamp(RAYON_TRACEUSE.x + (joueur.crans - 1) * PAS_RAYON_PAR_CRAN, RAYON_TRACEUSE.x, RAYON_TRACEUSE.y)
-		traceuse_shape.shape.radius = rayon * _facteur_bonus()
-	for i in range(zones_contact.size()):
-		zones_contact[i].position = _point_de_gerbe(DUREE_GERBE * (i + 1) / zones_contact.size())
-		(zones_contact[i].get_child(0).shape as CircleShape2D).radius = RAYON_ZONE_CONTACT * _facteur_bonus()
-
-
-## Zones qui détectent le corps des autres lions sur la trajectoire de la gerbe, pendant le
-## vomi. Créées par le code : chaque lion a ses propres formes (leur rayon suit son bonus).
-func _creer_zones_contact() -> void:
-	for i in range(NB_ZONES_CONTACT):
-		var zone := Area2D.new()
-		zone.name = "ZoneContact%d" % (i + 1)
-		zone.collision_layer = 0  # rien ne la détecte (ennemis, pastilles, ville)
-		zone.collision_mask = COUCHE_CORPS_LIONS
-		zone.monitorable = false
-		zone.monitoring = false
-		var forme := CollisionShape2D.new()
-		forme.shape = CircleShape2D.new()
-		zone.add_child(forme)
-		add_child(zone)
-		zones_contact.append(zone)
-
-
-## Sur l'hôte : chaque autre lion que touche la gerbe est signalé aux règles, à chaque frame
-## de contact (les règles ignorent un lion déjà étourdi ou immunisé).
-func _signaler_vomi_sur_les_lions() -> void:
-	if not est_en_train_de_vomir or not multiplayer.is_server():
-		return
-	for zone in zones_contact:
-		for corps in zone.get_overlapping_bodies():
-			var victime := corps as Lion
-			if victime != null and victime != self:
-				GameState.regles.lion_touche_par_vomi(victime.joueur, joueur, zone.global_position)
-
-
-func _orienter_emetteurs() -> void:
-	var emitters := vomi_container.get_children()
-	for index in range(emitters.size()):
-		var mat := emitters[index].process_material as ParticleProcessMaterial
-		if mat != null:
-			var angle := _angle_gerbe(index, emitters.size())
-			mat.direction = Vector3(cos(angle), sin(angle), 0)
-
-
-## Reconstruit un émetteur par couleur débloquée (en bataille, les trois nuances du joueur,
-## débloquées dès le départ : voir `Regles.couleurs_de_depart`).
-func mettre_a_jour_degrade_vomi() -> void:
-	for child in vomi_container.get_children():
-		vomi_container.remove_child(child)
-		child.queue_free()
-
-	for couleur in joueur.couleurs_debloquees:
-		var gradient := Gradient.new()
-		gradient.set_color(0, couleur)
-		gradient.set_color(1, Color(couleur, 0.0))
-		gradient.add_point(0.75, couleur)
-		var gradient_texture := GradientTexture1D.new()
-		gradient_texture.gradient = gradient
-
-		var material := ParticleProcessMaterial.new()
-		material.color_ramp = gradient_texture
-		material.spread = 6.0
-		material.initial_velocity_min = VITESSE_GERBE * 0.9
-		material.initial_velocity_max = VITESSE_GERBE * 1.1
-		material.gravity = Vector3(0, GRAVITE_GERBE, 0)
-		material.scale_min = 0.6 * _facteur_bonus()
-		material.scale_max = 1.4 * _facteur_bonus()
-
-		var emitter := GPUParticles2D.new()
-		emitter.texture = TEXTURE_PARTICULE
-		emitter.process_material = material
-		emitter.amount = PARTICULES_PAR_COULEUR
-		emitter.lifetime = DUREE_GERBE
-		emitter.emitting = est_en_train_de_vomir
-		vomi_container.add_child(emitter)
-
-	_orienter_emetteurs()
-	_placer_traceuse()
-
-
-func demarrer_vomi() -> void:
-	if joueur.couleurs_debloquees.is_empty():
-		return
-	est_en_train_de_vomir = true
-	gerbe_traceuse.monitoring = true
-	for zone in zones_contact:
-		zone.monitoring = true
-	anim.play("Vomit")
-	Audio.demarrer_vomi()
-	for emitter in vomi_container.get_children():
-		emitter.emitting = true
-
-
-func arreter_vomi() -> void:
-	est_en_train_de_vomir = false
-	gerbe_traceuse.monitoring = false
-	for zone in zones_contact:
-		zone.monitoring = false
-	anim.play("Idle")
-	Audio.arreter_vomi()
-	for emitter in vomi_container.get_children():
-		emitter.emitting = false
+func _tourner_etoiles() -> void:
+	var nb := etoiles.get_child_count()
+	for i in range(nb):
+		var angle := temps * VITESSE_ETOILES + TAU * i / nb
+		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)

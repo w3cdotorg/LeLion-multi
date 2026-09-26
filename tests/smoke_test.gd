@@ -242,8 +242,8 @@ func _run() -> void:
 	_check(_sons.count("pickup") == sons_avant + 1 and JL.crans == 2,
 		"une pastille du solo débloque une couleur et donne un cran : un seul son de ramassage (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
-	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
-	_check(lion.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
+	_check(lion.gerbe.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
+	_check(lion.gerbe.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
 	var hud: Node = main.get_node("HUD")
 	_check(hud.indice.visible == false, "le HUD cache l'indice après la première couleur")
 	_check(hud._pastilles[0].color == GS.couleur(0) and hud._pastilles[1].color != GS.couleur(1),
@@ -254,13 +254,13 @@ func _run() -> void:
 	Input.action_press("vomir")
 	await _frames(30)
 	_check(lion.est_en_train_de_vomir, "le lion vomit tant que l'action est maintenue")
-	var rayon_normal: float = lion.traceuse_shape.shape.radius
+	var rayon_normal: float = lion.gerbe.traceuse_shape.shape.radius
 	sons_avant = _sons.count("pickup")
 	var bonus: Node = spawner.spawn_bonus(lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(bonus) and JL.bonus_actif(), "l'étoile ramassée active la gerbe XXL")
 	_check(_sons.count("pickup") == sons_avant + 1, "l'étoile joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
-	_check(lion.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
+	_check(lion.gerbe.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
 	_check(hud.etiquette_bonus.visible, "le HUD affiche le bonus")
 	var etoile_solo: Node = spawner.spawn_bonus(Vector2(-500, -500))  # loin du lion : jamais ramassée
 	etoile_solo._expirer()
@@ -269,7 +269,7 @@ func _run() -> void:
 	JL.bonus_restant = 0.01
 	await create_timer(0.1).timeout
 	await _frames(1)
-	_check(not JL.bonus_actif() and lion.traceuse_shape.shape.radius == rayon_normal, "le bonus expire et le rayon revient à la normale")
+	_check(not JL.bonus_actif() and lion.gerbe.traceuse_shape.shape.radius == rayon_normal, "le bonus expire et le rayon revient à la normale")
 	_check(root.get_node("Audio")._vomi.playing, "la boucle sonore de vomi tourne")
 	_check(ville.cellules_peintes > 0, "la ville a été peinte (%d cellules)" % ville.cellules_peintes)
 	_check(GS.progression > 0.0, "la progression est remontée dans GameState (%.4f)" % GS.progression)
@@ -360,7 +360,7 @@ func _run() -> void:
 	GS.demarrer()
 	await _frames(1)
 	_check(Input.get_action_strength("deplacer_droite") == 0.0, "une nouvelle partie démarre avec les actions relâchées")
-	_check(JL.couleurs_debloquees.is_empty() and main.get_node("Lion").vomi_container.get_child_count() == 0
+	_check(JL.couleurs_debloquees.is_empty() and main.get_node("Lion").gerbe.vomi_container.get_child_count() == 0
 		and main.get_node("HUD")._pastilles[0].color == main.get_node("HUD").COULEUR_VERROUILLEE,
 		"une nouvelle partie repart sans couleur : ni émetteur, ni pastille allumée")
 	_check(JL.vies == 3 and JL.coups_recus == 0 and main.get_node("HUD")._coeurs[2].modulate == main.get_node("HUD").COULEUR_COEUR,
@@ -595,17 +595,17 @@ func _run() -> void:
 	lion_autre.position = Vector2(400, 200)
 	root.add_child(lion_autre)
 	await _frames(1)
-	_check(lion_autre.vomi_container.get_child_count() == 0, "un lion lié à un joueur sans couleur n'a pas d'émetteur")
+	_check(lion_autre.gerbe.vomi_container.get_child_count() == 0, "un lion lié à un joueur sans couleur n'a pas d'émetteur")
 	GS.regles.pastille_ramassee(JL, 3)
-	_check(lion_autre.vomi_container.get_child_count() == 0, "une couleur du joueur local ne touche pas un lion lié à un autre joueur")
+	_check(lion_autre.gerbe.vomi_container.get_child_count() == 0, "une couleur du joueur local ne touche pas un lion lié à un autre joueur")
 	autre.debloquer_couleur(Color.RED)
-	_check(lion_autre.vomi_container.get_child_count() == 1, "le lion reconstruit sa gerbe quand son propre joueur débloque une couleur")
-	var rayon_autre: float = lion_autre.traceuse_shape.shape.radius
+	_check(lion_autre.gerbe.vomi_container.get_child_count() == 1, "le lion reconstruit sa gerbe quand son propre joueur débloque une couleur")
+	var rayon_autre: float = lion_autre.gerbe.traceuse_shape.shape.radius
 	JL.activer_bonus(5.0)
-	_check(lion_autre.traceuse_shape.shape.radius == rayon_autre, "le bonus du joueur local ne touche pas un lion lié à un autre joueur")
+	_check(lion_autre.gerbe.traceuse_shape.shape.radius == rayon_autre, "le bonus du joueur local ne touche pas un lion lié à un autre joueur")
 	JL.bonus_restant = 0.0
 	autre.activer_bonus(5.0)
-	_check(is_equal_approx(lion_autre.traceuse_shape.shape.radius, rayon_autre * 2.0), "le bonus de son propre joueur double la gerbe du lion")
+	_check(is_equal_approx(lion_autre.gerbe.traceuse_shape.shape.radius, rayon_autre * 2.0), "le bonus de son propre joueur double la gerbe du lion")
 	autre.encaisser_coup(Vector2.INF, 1.5)
 	_check(lion_autre.deplacement.recul.length() > 0.0, "un coup encaissé par son propre joueur repousse le lion")
 	lion_autre.deplacement.recul = Vector2.ZERO  # sinon le recul contamine les vérifications de mouvement ci-dessous
@@ -843,9 +843,9 @@ func _run() -> void:
 	autre.gagner_cran()  # l'autre joueur : rouge et cyan, 3 crans
 	autre.avancer(Regles.DUREE_ETOILE)  # fin de la gerbe XXL de l'étoile ramassée plus haut (autre n'est pas dans GS.joueurs)
 	_check(local.couleurs_debloquees.size() == autre.couleurs_debloquees.size()
-		and lion.traceuse_shape.shape.radius == lion_autre.traceuse_shape.shape.radius
+		and lion.gerbe.traceuse_shape.shape.radius == lion_autre.gerbe.traceuse_shape.shape.radius
 		and not local.couleurs_debloquees.any(func(c: Color) -> bool: return autre.couleurs_debloquees.has(c)),
-		"(pré-condition) les deux lions ont autant de couleurs, le même rayon (%.0f px) et aucune couleur commune" % lion.traceuse_shape.shape.radius)
+		"(pré-condition) les deux lions ont autant de couleurs, le même rayon (%.0f px) et aucune couleur commune" % lion.gerbe.traceuse_shape.shape.radius)
 	lion.global_position = Vector2(600, ville_hc.position.y - 300)
 	Input.action_press("vomir")
 	await _frames(20)
@@ -957,18 +957,18 @@ func _run() -> void:
 	await _frames(2)
 
 	# Gerbe en trois nuances, rayon selon les crans
-	var couleurs_gerbe: Array = lr.vomi_container.get_children().map(
+	var couleurs_gerbe: Array = lr.gerbe.vomi_container.get_children().map(
 		func(e: GPUParticles2D) -> Color: return (e.process_material as ParticleProcessMaterial).color_ramp.gradient.get_color(0))
 	_check(couleurs_gerbe == j_rouge.nuances(), "un lion de bataille a trois émetteurs, aux nuances de son joueur (%s)" % [couleurs_gerbe])
-	_check(lr.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
+	_check(lr.gerbe.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
 	var sons_bataille := _sons.count("pickup")
 	GS.regles.pastille_ramassee(j_rouge, 0)
-	_check(lr.traceuse_shape.shape.radius == 21.0 and lb.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
+	_check(lr.gerbe.traceuse_shape.shape.radius == 21.0 and lb.gerbe.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
 	_check(GS.joueur_local() == j_rouge and _sons.count("pickup") == sons_bataille + 1,
 		"en bataille, le cran d'une pastille (aucune couleur débloquée) joue le son de ramassage du joueur local")
 	for i in range(10):
 		GS.regles.pastille_ramassee(j_rouge, 0)
-	_check(lr.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
+	_check(lr.gerbe.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
 	lr.commandes.vomir_voulu = true
 	for i in range(3):
 		await process_frame  # le vomi démarre dans _process
@@ -1029,7 +1029,7 @@ func _run() -> void:
 		and materiau_bleu.get_shader_parameter("couleur_joueur") == j_bleu.couleur,
 		"le vomi barbouille la tête de la couleur de l'agresseur, par-dessus la teinte du joueur")
 	await _frames(3)
-	_check(not lb.est_en_train_de_vomir and not lb.gerbe_traceuse.monitoring, "étourdi en plein vomi, le lion arrête de vomir")
+	_check(not lb.est_en_train_de_vomir and not lb.gerbe.traceuse.monitoring, "étourdi en plein vomi, le lion arrête de vomir")
 	j_bleu.etourdi_restant = 0.05
 	await create_timer(0.1).timeout
 	await _frames(2)
@@ -1067,12 +1067,12 @@ func _run() -> void:
 	j_bleu.invulnerable_restant = 0.0
 
 	# Zones de contact : trois, le long de la parabole, jusqu'au point de chute
-	var zones: Array[Area2D] = lr.zones_contact
-	_check(zones.size() == 3 and zones[2].position.is_equal_approx(lr.gerbe_traceuse.position)
+	var zones: Array[Area2D] = lr.gerbe.zones_contact
+	_check(zones.size() == 3 and zones[2].position.is_equal_approx(lr.gerbe.traceuse.position)
 		and zones[0].position.y < zones[1].position.y and zones[1].position.y < zones[2].position.y
 		and zones.all(func(z: Area2D) -> bool: return z.collision_layer == 0 and not z.monitoring),
 		"trois zones de contact sur la parabole, la dernière au point de chute, inertes hors du vomi")
-	_check(zones[0].get_child(0).shape != lb.zones_contact[0].get_child(0).shape, "chaque lion a ses propres formes de zones de contact")
+	_check(zones[0].get_child(0).shape != lb.gerbe.zones_contact[0].get_child(0).shape, "chaque lion a ses propres formes de zones de contact")
 	j_bleu.invulnerable_restant = 0.0
 	var infliges_avant: int = j_rouge.etourdissements_infliges
 	lb.deplacement.recul = Vector2.ZERO
@@ -1177,7 +1177,7 @@ func _run() -> void:
 		and absf(lr.global_position.x - x_avant_pas - lr.velocity.x * dt_pas) < 0.001 and lr.direction_du_lion == 1,
 		"un pas vers la droite : la vitesse gagne une accélération d'un tick, le lion avance d'autant (%.3f px)" % (lr.global_position.x - x_avant_pas))
 	lr.avancer(Vector2.LEFT, dt_pas)
-	_check(lr.direction_du_lion == -1 and lr.sprite.scale.x == -1.0 and lr.bouche.position.x == lr.BOUCHE_X_GAUCHE,
+	_check(lr.direction_du_lion == -1 and lr.sprite.scale.x == -1.0 and lr.gerbe.bouche.position.x == lr.gerbe.BOUCHE_X_GAUCHE,
 		"un pas vers la gauche retourne le lion et sa gerbe")
 	lr.global_position = Vector2(-50, -50)
 	lr.avancer(Vector2(-1, -1).normalized(), dt_pas)
@@ -1215,7 +1215,7 @@ func _run() -> void:
 	repl.position = Vector2(600, 500)
 	poste_lion.add_child(repl)
 	await _frames(1)
-	_check(repl.sprite.scale.x == -1.0 and repl.bouche.position.x == repl.BOUCHE_X_GAUCHE,
+	_check(repl.sprite.scale.x == -1.0 and repl.gerbe.bouche.position.x == repl.gerbe.BOUCHE_X_GAUCHE,
 		"sur un client, l'orientation reçue à l'apparition est appliquée (sprite et bouche à gauche)")
 	repl.commandes.direction_voulue = Vector2.RIGHT
 	repl.commandes.vomir_voulu = true
@@ -1230,7 +1230,7 @@ func _run() -> void:
 		await process_frame  # le vomi démarre dans _process
 	await _frames(1)
 	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl.deplacement.vitesse == Vector2(350, 0)
-		and repl.est_en_train_de_vomir and repl.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
+		and repl.est_en_train_de_vomir and repl.gerbe.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
 		"la réplique suit l'état reçu : position, vitesse (son animation), orientation, vomi (particules)")
 	repl.vomi_de_l_hote = false
 	for i in range(3):
@@ -1285,7 +1285,7 @@ func _run() -> void:
 	var t: Territoire = ville_b.territoire
 	_check(t != null and t.nb_peignables == ville_b.cellules_peignables and t.cellules_de(0) == 0 and t.cellules_de(1) == 0,
 		"en bataille, la ville tient un territoire vierge sur ses cellules peignables (%d)" % ville_b.cellules_peignables)
-	_check(l_r.traceuse_shape.shape.radius == l_b.traceuse_shape.shape.radius and j_r.couleurs_debloquees.size() == j_b.couleurs_debloquees.size(),
+	_check(l_r.gerbe.traceuse_shape.shape.radius == l_b.gerbe.traceuse_shape.shape.radius and j_r.couleurs_debloquees.size() == j_b.couleurs_debloquees.size(),
 		"(pré-condition) les deux lions ont le même rayon et autant de couleurs (trois nuances)")
 
 	# Le lion rouge peint : ses cellules comptent pour lui, dans ses nuances
@@ -1407,9 +1407,9 @@ func _run() -> void:
 	await _frames(2)
 	emis.clear()
 	ville_b.tampon_peint.connect(sur_tampon)
-	lion_c.gerbe_traceuse.monitoring = true  # comme un vomi répliqué
+	lion_c.gerbe.traceuse.monitoring = true  # comme un vomi répliqué
 	await _frames(5)
-	_check(lion_c.gerbe_traceuse.get_overlapping_areas().size() > 0 and emis.is_empty(),
+	_check(lion_c.gerbe.traceuse.get_overlapping_areas().size() > 0 and emis.is_empty(),
 		"la traceuse d'un lion de client, au-dessus de la ville, ne peint pas (seule celle de l'hôte peint)")
 	ville_b.tampon_peint.disconnect(sur_tampon)
 	lion_c.free()
