@@ -1,4 +1,4 @@
-extends Area2D
+extends Pastille
 ## Étoile arc-en-ciel : double le rayon de la gerbe pendant quelques secondes.
 ## Disparaît d'elle-même si personne ne la ramasse.
 
@@ -7,14 +7,13 @@ const DUREE_DE_VIE := 7.0
 @onready var sprite: Sprite2D = $Sprite2D
 
 var _temps := 0.0
-var _ramassee := false
 
 
 func _ready() -> void:
 	var tween := create_tween()
 	tween.tween_interval(DUREE_DE_VIE - 1.5)
 	tween.tween_property(sprite, "modulate:a", 0.0, 1.5)
-	tween.tween_callback(queue_free)
+	tween.tween_callback(_expirer)
 
 
 func _process(delta: float) -> void:
@@ -24,15 +23,5 @@ func _process(delta: float) -> void:
 	sprite.rotation = _temps * 1.5
 
 
-## Les contacts ne sont tranchés que par l'hôte (en solo, le poste est son propre hôte).
-func _on_body_entered(body: Node2D) -> void:
-	if not multiplayer.is_server():
-		return
-	if not body.is_in_group("lion"):
-		return
-	if _ramassee:  # premier arrivé, premier servi : queue_free() est différé
-		return
-	_ramassee = true
-	GameState.regles.etoile_ramassee(body.joueur)
-	Audio.jouer("pickup")
-	queue_free()
+func _ramasser(joueur: Joueur) -> void:
+	GameState.regles.etoile_ramassee(joueur)

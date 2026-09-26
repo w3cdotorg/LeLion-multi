@@ -35,9 +35,21 @@ var _musique: AudioStreamPlayer  # la piste de base, toujours audible
 var ensemble_courant := ""
 var intensite := -1
 var _fondus: Array = [null, null, null]
-## Le joueur local, dont chaque couleur débloquée joue le son de pastille. Suivi pour toute la
-## session : il change sur un client réseau et au retour au solo (`GameState.joueur_local_change`).
+## Le joueur local, dont chaque ramassage joue le son de pastille (couleur débloquée, cran de gerbe,
+## gerbe XXL, vie regagnée), sur chaque poste : en réseau, ses signaux partent aussi chez un client
+## (les réactions du joueur répliquées par la manche). Suivi pour toute la session : il change sur
+## un client réseau et au retour au solo (`GameState.joueur_local_change`).
 var _joueur_ecoute: Joueur
+## Vies du joueur écouté à son dernier `vies_changees` (ou au départ de la partie, que
+## `Joueur.reinitialiser` pose sans signal) : une vie regagnée est un `vies_changees` en hausse.
+var _vies_vues := 0
+## Crans du joueur écouté à son dernier `crans_changes` (ou au départ de la partie) : un cran de
+## bataille gagné est une hausse ; `Joueur.recevoir_crans` (phase 14) peut aussi les faire baisser
+## (resynchronisation), ce qui ne doit rien jouer.
+var _crans_vus := 0
+## Frame du dernier son de ramassage : une pastille du solo débloque une couleur ET donne un cran
+## dans la même frame, un seul son part.
+var _ramassage_joue_a := -1
 
 
 func _ready() -> void:
@@ -64,6 +76,7 @@ func _ready() -> void:
 
 	_ecouter(GameState.joueur_local())
 	GameState.joueur_local_change.connect(_ecouter)
+	GameState.partie_prete.connect(_on_partie_prete)
 	GameState.partie_terminee.connect(_on_partie_terminee)
 
 
@@ -131,13 +144,55 @@ func arreter_vomi() -> void:
 func _ecouter(joueur: Joueur) -> void:
 	if _joueur_ecoute != null:
 		_joueur_ecoute.couleur_debloquee.disconnect(_on_couleur_debloquee)
+		_joueur_ecoute.crans_changes.disconnect(_on_crans_changes)
+		_joueur_ecoute.bonus_change.disconnect(_on_bonus_change)
+		_joueur_ecoute.vies_changees.disconnect(_on_vies_changees)
 	_joueur_ecoute = joueur
+	_vies_vues = joueur.vies
+	_crans_vus = joueur.crans
 	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
+	joueur.crans_changes.connect(_on_crans_changes)
+	joueur.bonus_change.connect(_on_bonus_change)
+	joueur.vies_changees.connect(_on_vies_changees)
 
 
-## Son de pastille : le joueur local vient de débloquer une couleur.
-func _on_couleur_debloquee(_couleur: Color) -> void:
+## Son de pastille, une fois par frame au plus : le joueur local vient de ramasser quelque chose.
+func _jouer_ramassage() -> void:
+	if _ramassage_joue_a == Engine.get_process_frames():
+		return
+	_ramassage_joue_a = Engine.get_process_frames()
 	jouer("pickup")
+
+
+func _on_couleur_debloquee(_couleur: Color) -> void:
+	_jouer_ramassage()
+
+
+## Une pastille de bataille donne un cran sans débloquer de couleur. Un cran en baisse (resync)
+## ne joue rien : `_on_vies_changees` garde déjà ce principe par symétrie.
+func _on_crans_changes(crans: int) -> void:
+	if crans > _crans_vus:
+		_jouer_ramassage()
+	_crans_vus = crans
+
+
+## L'étoile : la gerbe XXL commence (sa fin, `actif` faux, ne joue rien).
+func _on_bonus_change(actif: bool) -> void:
+	if actif:
+		_jouer_ramassage()
+
+
+## Le cœur : une vie de plus. Un coup (vies en baisse) joue son propre son (`Lion`).
+func _on_vies_changees(vies: int) -> void:
+	if vies > _vies_vues:
+		_jouer_ramassage()
+	_vies_vues = vies
+
+
+## Départ d'une partie : `nouvelle_partie` a remis les vies sans signal.
+func _on_partie_prete() -> void:
+	_vies_vues = _joueur_ecoute.vies
+	_crans_vus = _joueur_ecoute.crans
 
 
 func _on_partie_terminee(victoire: bool) -> void:

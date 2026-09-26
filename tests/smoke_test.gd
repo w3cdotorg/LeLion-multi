@@ -6,6 +6,9 @@ extends SceneTree
 var _echecs := 0
 var GS: Node
 var JL: Joueur  # le joueur local (unique en solo)
+## Les sons joués par `Audio` (un lecteur par son, ajouté comme enfant), par nom de fichier :
+## `_sons.count("pickup")` compte les sons de ramassage.
+var _sons: Array[String] = []
 
 
 func _init() -> void:
@@ -38,6 +41,12 @@ func _couleurs_peintes(image: Image) -> Dictionary:
 	return couleurs
 
 
+## Chaque lecteur ajouté à `Audio` : le nom du son qu'il joue (voir `_sons`).
+func _noter_son(noeud: Node) -> void:
+	if noeud is AudioStreamPlayer and noeud.stream != null:
+		_sons.append(noeud.stream.resource_path.get_file().get_basename())
+
+
 ## La couleur telle qu'une image RGBA8 la stocke, en `to_rgba32()`.
 func _rgba8(c: Color) -> int:
 	var pixel := Image.create(1, 1, false, Image.FORMAT_RGBA8)
@@ -54,6 +63,7 @@ func _run() -> void:
 	scores.chemin = "user://scores_test.cfg"
 	scores.effacer()
 	params.definir_langue("fr")
+	root.get_node("Audio").child_entered_tree.connect(_noter_son)
 
 	# Traductions et réglages
 	_check(tr("CONTINUER") == "Continuer", "les traductions françaises sont chargées")
@@ -225,9 +235,12 @@ func _run() -> void:
 		"cellules peignables = zones opaques de la skyline (%d / %d)" % [ville.cellules_peignables, nb_cellules])
 
 	# Pickup : le lion marche dessus
+	var sons_avant := _sons.count("pickup")
 	var pickup: Node = spawner.spawn_pickup(0, lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(pickup), "le pickup disparaît au contact")
+	_check(_sons.count("pickup") == sons_avant + 1 and JL.crans == 2,
+		"une pastille du solo débloque une couleur et donne un cran : un seul son de ramassage (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
 	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
 	_check(lion.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
@@ -242,11 +255,17 @@ func _run() -> void:
 	await _frames(30)
 	_check(lion.est_en_train_de_vomir, "le lion vomit tant que l'action est maintenue")
 	var rayon_normal: float = lion.traceuse_shape.shape.radius
+	sons_avant = _sons.count("pickup")
 	var bonus: Node = spawner.spawn_bonus(lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(bonus) and JL.bonus_actif(), "l'étoile ramassée active la gerbe XXL")
+	_check(_sons.count("pickup") == sons_avant + 1, "l'étoile joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(lion.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
 	_check(hud.etiquette_bonus.visible, "le HUD affiche le bonus")
+	var etoile_solo: Node = spawner.spawn_bonus(Vector2(-500, -500))  # loin du lion : jamais ramassée
+	etoile_solo._expirer()
+	await _frames(1)
+	_check(not is_instance_valid(etoile_solo), "en solo (son propre hôte), une étoile en fin de vie se libère elle-même")
 	JL.bonus_restant = 0.01
 	await create_timer(0.1).timeout
 	await _frames(1)
@@ -287,9 +306,11 @@ func _run() -> void:
 	JL.invulnerable_restant = 0.0
 
 	# Cœur : rend une vie, jamais au-delà du maximum
+	sons_avant = _sons.count("pickup")
 	var coeur: Node = spawner.spawn_coeur(lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(coeur) and JL.vies == 3, "un cœur ramassé rend une vie (%d)" % JL.vies)
+	_check(_sons.count("pickup") == sons_avant + 1, "le cœur joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(not GS.regles.coeur_ramasse(JL), "impossible de dépasser le maximum de vies")
 
 	# Défaite : trois coups, le doigt toujours sur le stick
@@ -340,6 +361,14 @@ func _run() -> void:
 		"une nouvelle partie repart sans couleur : ni émetteur, ni pastille allumée")
 	_check(JL.vies == 3 and JL.coups_recus == 0 and main.get_node("HUD")._coeurs[2].modulate == main.get_node("HUD").COULEUR_COEUR,
 		"après une défaite, le niveau suivant repart avec tous ses cœurs affichés")
+	# La défaite a laissé 0 vie ; `nouvelle_partie` en a remis 3 sans signal : un coup (3 → 2) n'est
+	# pas une vie regagnée.
+	sons_avant = _sons.count("pickup")
+	JL.encaisser_coup(Vector2.INF, 0.0)
+	_check(JL.vies == 2 and _sons.count("pickup") == sons_avant,
+		"un coup au départ d'une nouvelle partie (vies remises sans signal) ne joue pas le son de ramassage")
+	JL.vies = 3
+	JL.coups_recus = 0
 	ville = main.get_node("Ville")
 	_check(ville.tex_size == Vector2i(2000, 320), "la ville a chargé la skyline du niveau Métropole (%s)" % ville.tex_size)
 	GS.regles.pastille_ramassee(JL, 0)
@@ -426,13 +455,13 @@ func _run() -> void:
 	_check(JL.vies < vies_avant, "le boss blesse le lion au passage (%d → %d)" % [vies_avant, JL.vies])
 	# Les deux chemins de contact du peintre : body_entered, puis le contact continu hors repos.
 	# Un lion resté à son contact est frappé dès la fin de son invulnérabilité, sans nouveau
-	# body_entered ; le coup part de la verticale du peintre, à la hauteur du lion.
-	_check(boss.origine_du_coup(lion) == Vector2(boss.global_position.x, lion.global_position.y),
-		"le coup du peintre part de sa verticale, à la hauteur du lion")
+	# body_entered ; le coup part de la verticale du peintre, à la hauteur du lion : le recul est
+	# horizontal.
 	boss._arreter()
 	boss.etat = boss.Etat.PAUSE
 	boss.position.x = 1000.0
-	lion.global_position = Vector2(1000 - 68, boss.position.y - 66)
+	lion.global_position = Vector2(1000 - 60 - 68, boss.position.y - 120 - 66)
+	lion.direction_du_lion = -1  # dos au peintre : le repli par défaut pointerait vers lui, à l'envers
 	JL.vies = 3
 	JL.invulnerable_restant = 0.3
 	await _frames(3)
@@ -441,6 +470,10 @@ func _run() -> void:
 	await create_timer(0.4).timeout
 	await _frames(2)
 	_check(JL.vies == 2, "un lion resté au contact du peintre est frappé dès la fin de son invulnérabilité (contact continu)")
+	_check(lion._recul.normalized().is_equal_approx(Vector2(-1, 0)),
+		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal, loin du peintre (%s)" % lion._recul)
+	boss.etat = boss.Etat.REPOS  # au repos, hors de l'écran : il ne touche plus rien
+	boss.position.x = boss._x_hors_ecran()
 	GS.niveau_courant = 0
 
 	# Arcade : neuf stages, Facile → Moyen → Hardcore
@@ -636,6 +669,7 @@ func _run() -> void:
 	var pastille_autre: Node2D = load("res://Scenes/ColorPickup.tscn").instantiate()
 	pastille_autre.couleur_index = 4  # autre n'a que le rouge
 	pastille_autre.position = centre_autre
+	var sons_locaux := _sons.count("pickup")
 	root.add_child(pastille_autre)
 	await _frames(3)
 	_check(not is_instance_valid(pastille_autre) and autre.couleurs_debloquees.has(GS.couleur(4))
@@ -650,6 +684,7 @@ func _run() -> void:
 	_check(not is_instance_valid(etoile_autre) and autre.bonus_actif()
 		and is_equal_approx(autre.bonus_restant, Regles.DUREE_ETOILE) and local.bonus_actif() == bonus_local,
 		"une étoile ramassée par un lion active la gerbe XXL de son joueur, pas celle du joueur local")
+	_check(_sons.count("pickup") == sons_locaux, "ce que ramasse un autre lion ne joue pas le son de ramassage de ce poste")
 	var coeur_autre: Node2D = load("res://Scenes/CoeurPickup.tscn").instantiate()
 	coeur_autre.position = Vector2(-500, -500)  # hors d'atteinte : les contacts sont simulés à la main
 	root.add_child(coeur_autre)
@@ -662,14 +697,25 @@ func _run() -> void:
 	await _frames(1)
 	_check(not is_instance_valid(coeur_autre), "le cœur ramassé disparaît")
 
-	# Base commune des ennemis : seul un lion compte (`body is Lion`, pas le groupe « lion »), et
-	# seul l'hôte tranche un contact
+	# Bases communes des ennemis et des pastilles : seul un lion compte (`body is Lion`, pas le
+	# groupe « lion »), et seul l'hôte tranche un contact
 	var bases: Array = ["Soucoupe", "Coccinelle", "Boss"].map(func(nom: String) -> String:
 		var base: Script = load("res://Scripts/%s.gd" % nom).get_base_script()
 		return "" if base == null else base.resource_path)
 	_check(bases.all(func(p: String) -> bool: return p == "res://Scripts/Ennemi.gd"),
 		"soucoupe, coccinelle et peintre dérivent de la base Ennemi (%s)" % [bases])
+	var bases_pastilles: Array = ["ColorPickup", "BonusPickup", "CoeurPickup"].map(func(nom: String) -> String:
+		var base: Script = load("res://Scripts/%s.gd" % nom).get_base_script()
+		return "" if base == null else base.resource_path)
+	_check(bases_pastilles.all(func(p: String) -> bool: return p == "res://Scripts/Pastille.gd"),
+		"pastille de couleur, étoile et cœur dérivent de la base Pastille (%s)" % [bases_pastilles])
+	# L'intrus a un champ `joueur`, comme un lion : sous l'ancien typage (groupe « lion » puis
+	# `body.joueur`), il serait accepté.
+	var script_intrus := GDScript.new()
+	script_intrus.source_code = "extends CharacterBody2D\nvar joueur: Joueur = Joueur.new()\n"
+	script_intrus.reload()
 	var intrus := CharacterBody2D.new()  # sur la couche 1 et dans le groupe « lion », mais pas un lion
+	intrus.set_script(script_intrus)
 	intrus.add_to_group("lion")
 	var forme_intrus := CollisionShape2D.new()
 	forme_intrus.shape = CircleShape2D.new()
@@ -681,9 +727,20 @@ func _run() -> void:
 	soucoupe_intrus.position = intrus.position
 	root.add_child(soucoupe_intrus)
 	await _frames(3)
-	_check(soucoupe_intrus.get_overlapping_bodies().has(intrus) and autre.vies == 2 and local.vies == 2,
-		"un ennemi ignore un corps qui n'est pas un lion, même dans le groupe « lion »")
+	_check(soucoupe_intrus.get_overlapping_bodies().has(intrus) and autre.vies == 2 and local.vies == 2
+		and intrus.joueur.vies == 3 and not intrus.joueur.est_invulnerable(),
+		"un ennemi ignore un corps qui n'est pas un lion, même dans le groupe « lion » et avec un joueur")
 	soucoupe_intrus.free()
+	for nom in ["ColorPickup", "BonusPickup", "CoeurPickup"]:
+		var pastille_intrus: Area2D = load("res://Scenes/%s.tscn" % nom).instantiate()
+		pastille_intrus.position = intrus.position
+		root.add_child(pastille_intrus)
+		await _frames(3)
+		_check(is_instance_valid(pastille_intrus) and pastille_intrus.get_overlapping_bodies().has(intrus)
+			and intrus.joueur.couleurs_debloquees.is_empty() and intrus.joueur.crans == 1 and not intrus.joueur.bonus_actif(),
+			"%s : une pastille ignore un corps qui n'est pas un lion, même dans le groupe « lion » et avec un joueur" % nom)
+		if is_instance_valid(pastille_intrus):
+			pastille_intrus.free()
 	intrus.free()
 	autre.invulnerable_restant = 0.0
 	lion_autre._recul = Vector2.ZERO  # le recul des coups précédents l'éloigne encore
@@ -694,7 +751,7 @@ func _run() -> void:
 	root.add_child(poste_client)
 	var api_client := SceneMultiplayer.new()
 	var pair_client := ENetMultiplayerPeer.new()
-	pair_client.create_client("127.0.0.1", 7779)  # jamais connecté : un client qui attend l'hôte
+	_check(pair_client.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client, jamais connecté : un client qui attend l'hôte")
 	api_client.multiplayer_peer = pair_client
 	set_multiplayer(api_client, poste_client.get_path())
 	var coccinelle_client: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
@@ -704,6 +761,24 @@ func _run() -> void:
 	_check(not coccinelle_client.multiplayer.is_server() and coccinelle_client.get_overlapping_bodies().has(lion_autre)
 		and autre.vies == 2 and not autre.est_invulnerable(),
 		"sur un client, un ennemi au contact d'un lion ne le signale pas aux règles (seul l'hôte tranche)")
+	coccinelle_client.free()
+	var crans_client := autre.crans
+	var pastille_client: Area2D = load("res://Scenes/ColorPickup.tscn").instantiate()
+	pastille_client.couleur_index = 6
+	pastille_client.position = lion_autre.global_position + Vector2(68, 66)
+	poste_client.add_child(pastille_client)
+	var etoile_client: Area2D = load("res://Scenes/BonusPickup.tscn").instantiate()
+	etoile_client.position = Vector2(-500, -500)
+	poste_client.add_child(etoile_client)
+	await _frames(3)
+	_check(is_instance_valid(pastille_client) and pastille_client.get_overlapping_bodies().has(lion_autre)
+		and not autre.couleurs_debloquees.has(GS.couleur(6)) and autre.crans == crans_client,
+		"sur un client, une pastille au contact d'un lion n'est pas ramassée (seul l'hôte tranche)")
+	if etoile_client.has_method("_expirer"):
+		etoile_client._expirer()
+	await _frames(1)
+	_check(is_instance_valid(etoile_client) and etoile_client.has_method("_expirer"),
+		"sur un client, une étoile en fin de vie ne se libère pas d'elle-même (l'hôte la fait disparaître)")
 	set_multiplayer(null, poste_client.get_path())
 	pair_client.close()
 	poste_client.free()
@@ -810,6 +885,11 @@ func _run() -> void:
 	GS.configurer_bataille(2)
 	GS.nouvelle_partie()
 	GS.pret = true
+	# Ce test contourne l'intro (`GameState.demarrer`), qui émettrait `partie_prete` en jeu réel et
+	# resynchroniserait Audio (vies et crans) sur le joueur local après le `reinitialiser` silencieux
+	# de `nouvelle_partie` : on le fait à la main pour ne pas hériter d'un `_crans_vus` d'une section
+	# précédente.
+	root.get_node("Audio")._on_partie_prete()
 	var j_rouge: Joueur = GS.joueurs[0]
 	var j_bleu: Joueur = GS.joueurs[1]
 	var lions_bataille: Array[CharacterBody2D] = []
@@ -829,8 +909,11 @@ func _run() -> void:
 		func(e: GPUParticles2D) -> Color: return (e.process_material as ParticleProcessMaterial).color_ramp.gradient.get_color(0))
 	_check(couleurs_gerbe == j_rouge.nuances(), "un lion de bataille a trois émetteurs, aux nuances de son joueur (%s)" % [couleurs_gerbe])
 	_check(lr.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
+	var sons_bataille := _sons.count("pickup")
 	GS.regles.pastille_ramassee(j_rouge, 0)
 	_check(lr.traceuse_shape.shape.radius == 21.0 and lb.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
+	_check(GS.joueur_local() == j_rouge and _sons.count("pickup") == sons_bataille + 1,
+		"en bataille, le cran d'une pastille (aucune couleur débloquée) joue le son de ramassage du joueur local")
 	for i in range(10):
 		GS.regles.pastille_ramassee(j_rouge, 0)
 	_check(lr.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
@@ -1098,7 +1181,7 @@ func _run() -> void:
 	# Sur un client, la ville dessine le tampon mais ne touche pas au territoire : l'hôte décide
 	var api_ville := SceneMultiplayer.new()
 	var pair_ville := ENetMultiplayerPeer.new()
-	pair_ville.create_client("127.0.0.1", 7779)
+	_check(pair_ville.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la ville")
 	api_ville.multiplayer_peer = pair_ville
 	set_multiplayer(api_ville, ville_b.get_path())
 	var scores_avant := [t.cellules_de(0), t.cellules_de(1)]

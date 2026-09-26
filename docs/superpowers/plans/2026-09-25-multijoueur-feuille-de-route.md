@@ -72,7 +72,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 12 bis | **Écran Réseau** : pseudo mémorisé, Héberger, liste des parties, Rejoindre par IP, textes des refus et des échecs, bouton Multijoueur du titre, `Titre._ready` hors réseau. | ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/smoke_test.gd` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, bouton Démarrer de l'hôte (pas de compte à rebours, décision de l'utilisateur), lancement de la manche chez tous (index compactés, `configurer_bataille_reseau`), table et protocole du salon dans `Reseau`, l'écran Réseau qui passe la main, `rejoindre()` limité aux IPv4, version 0.13. Plafond de 5 fichiers levé. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ salon à 3, test réseau vert 5 fois (bash 3.2 et 5) |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
-| 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
+| 14 bis | **Pastilles vers `body is Lion`** (exécutée avant la 14) : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi, une réplique ne se libère pas d'elle-même : `_expirer`), sons de ramassage par `Audio` et les signaux du joueur local (un par frame, le cran de bataille compris), recul du peintre horizontal (il pointait vers la ville), durcissements du smoke test de la revue 8 ter. | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert, suites vertes 5 fois |
 | 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 ter (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
 | 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
@@ -147,23 +147,20 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   et les cartes du salon les tiennent (phases 12 bis et 13 : « WWWWWWWWWWWW » à 24 px dans une
   carte de 310 px) : clamper l'abscisse de l'étiquette dans l'écran, avec le décalage des
   étiquettes qui se chevauchent (point ci-dessus), et le vérifier sur capture aux deux bords ;
-- phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
-  réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
-  du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
-  `vies_changees` en hausse) et retirer `Audio.jouer` des pastilles ;
-- **phase 14 bis** : le gestionnaire de contact est copié dans `ColorPickup`, `BonusPickup` et
-  `CoeurPickup` ; en faire une base commune `Pastille` (garde hôte, `body is Lion`, premier
-  arrivé, premier servi). La désapparition répliquée reste à la phase 14 ;
+- (résolu en phase 14 bis, réaffecté de la phase 14) sons de ramassage : tout passe par `Audio` et
+  les signaux du joueur local, sur chaque poste (`couleur_debloquee`, `crans_changes`,
+  `bonus_change(true)`, `vies_changees` en hausse, la référence des vies reprise à `partie_prete`),
+  un son par frame au plus ; les pastilles ne jouent plus rien ;
+- (résolu en phase 14 bis) base commune `Pastille` (garde hôte, `body is Lion`, premier arrivé,
+  premier servi) ; la fin de vie d'une étoile ou d'un cœur passe par `Pastille._expirer`, qui ne
+  libère la pastille que sur l'hôte. **Phase 14** : la disparition répliquée (le `MultiplayerSpawner`
+  de la scène de jeu) s'appuie dessus ;
 - à la sortie des tests headless, Godot signale des ressources audio encore utilisées (sons qui
   jouent au moment de `quit()`) : bruit sans effet sur le code de sortie ; `Audio` pourrait arrêter
   ses lecteurs dans `_exit_tree` ;
-- **phase 14 bis (pastilles)** : comme la base `Ennemi` de la phase 8 ter (`Scripts/Ennemi.gd`),
-  tester `body is Lion` dans le gestionnaire de contact commun au lieu de supposer `body.joueur`.
-  Les tests `--script` (compilés avant les autoloads) continuent de typer les lions en `Node` /
-  `CharacterBody2D`, et ne nomment ni `Lion`, ni `Ennemi`, ni `Pastille` : ces scripts nomment
-  `GameState` (`Lion.gd` aussi `Audio`). Le smoke test vérifie l'héritage d'un script par
-  `load(...).get_base_script().resource_path`. Le groupe « lion » ne sert alors plus qu'au
-  Spawner ;
+- (résolu en phase 14 bis) `body is Lion` dans le gestionnaire commun des pastilles ; les tests
+  `--script` ne nomment ni `Lion`, ni `Ennemi`, ni `Pastille` et vérifient l'héritage par
+  `load(...).get_base_script().resource_path` ; le groupe « lion » ne sert plus qu'au Spawner ;
 - phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
   (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
   aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
@@ -177,13 +174,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   garde, mais en Godot 4 le `_ready` / `_physics_process` d'une sous-classe n'appelle pas celui du
   parent — utiliser `_notification(NOTIFICATION_READY)` (appelé pour chaque script de la chaîne)
   ou des appels `super()` explicites ;
-- **phase 14 bis** (qui touche `tests/smoke_test.gd` ; la phase 12 bis, première à y revenir, les a
-  laissés à la phase qui réécrit ces sections de contact) : petits durcissements issus de la revue de
-  la phase 8 ter : vérifier que `create_client` renvoie `OK` avant le test de la garde hôte ;
-  donner à l'intrus du groupe « lion » un script avec un champ `joueur` pour que la vérification
-  échoue d'elle-même sous l'ancien typage ; vérifier la direction du recul (horizontale) après le
-  contact continu du peintre au lieu d'appeler `origine_du_coup` directement ; remettre le peintre
-  au repos après sa vérification ;
+- (résolu en phase 14 bis) durcissements de la revue 8 ter : `create_client` vérifié `OK`, intrus
+  du groupe « lion » avec un champ `joueur` (ennemis et pastilles), recul du peintre vérifié
+  horizontal après le contact continu, peintre remis au repos. Le recul vérifié a révélé un défaut :
+  `Boss.origine_du_coup` prenait la hauteur du coin du lion (66 px au-dessus de son centre) et
+  poussait le lion vers la ville ; corrigé (`lion.global_position.y + Lion.CENTRE.y`) ;
 - **phase 14** : sur un client, la ville a aussi un territoire (les règles de bataille y sont
   branchées) mais `Ville.peindre` n'y touche pas (`multiplayer.is_server()`, phase 9 bis) : lui
   appliquer la liste des cellules reçue de l'hôte (`Territoire.extraire_changements()` chez
@@ -268,9 +263,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   en fin de manche ses minuteries s'arrêtent et la chaîne des pastilles s'interrompt, et son
   `_ready` (première pastille, création des minuteries) ne repasse pas ; une nouvelle manche
   recharge la scène, ou le Spawner reçoit un `relancer()` explicite ;
-- prochaine phase qui touche `Scripts/Boss.gd` : le commentaire de `acceleration_max` (« quand la
-  ville est presque peinte ») date d'avant la phase 10 bis : « facteur de durée en fin de partie
-  (avancement des règles) » ;
+- (résolu en phase 14 bis) le commentaire de `Boss.acceleration_max` suit l'avancement des règles ;
 - **phase 14** (réaffecté par la phase 13) : `Lion.appliquer_apparence()` se rappelle à la main
   quand la couleur ou le pseudo d'un joueur change. Le salon ne change jamais un `Joueur` sous un
   lion existant (son aperçu est un `TextureRect` teinté par le shader du lion, et
