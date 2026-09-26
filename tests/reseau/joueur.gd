@@ -4,9 +4,12 @@ extends SceneTree
 ## Communes : --port=N (défaut 17777), --pseudo=texte.
 ## Hôte : --places=N (joueurs, hôte compris ; défaut 6), --clients=N (clients qui doivent arriver),
 ##   --partants=N (clients qui repartiront d'eux-mêmes), --manche (manche en cours : tout nouveau
-##   venu est refusé), --attente=S (secondes gardées ouvertes après les arrivées et départs, pour
-##   les demandes qui doivent être refusées). Écrit « HOTE PRET » quand il écoute, puis quitte le
-##   réseau (ses clients doivent voir l'hôte partir).
+##   venu est refusé), --refus=N (poignées de main qui doivent échouer : demandes refusées, dont le
+##   client ferme la connexion en lisant le refus, ou jamais finies, coupées par le délai ; l'hôte
+##   les compte par `peer_authentication_failed` et reste ouvert jusqu'à la N-ième, DELAI_ETAPE au
+##   plus). Écrit « HOTE PRET » quand il écoute et « POIGNEE ECHOUEE n » à chaque poignée de main
+##   échouée (n = leur compte, après que `Reseau` a libéré la place), puis quitte le réseau (ses
+##   clients doivent voir l'hôte partir).
 ## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
 ##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
 ##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte). Écrit une
@@ -29,6 +32,7 @@ var _options := {}
 var reseau: Node
 var _arrivees: Array[int] = []
 var _departs: Array[int] = []
+var _poignees_echouees: Array[int] = []  # hôte : pairs dont la poignée de main a échoué, dans l'ordre
 var _issue := ""  # client : les signaux reçus, dans l'ordre (voir `_ajouter_issue`)
 var _raison := ""
 var _version_hote := ""
@@ -90,9 +94,13 @@ func _run() -> void:
 func _jouer_hote() -> void:
 	var nb_clients := int(_option("clients", "0"))
 	var nb_partants := int(_option("partants", "0"))
+	var nb_refus := int(_option("refus", "0"))
 	reseau.places = int(_option("places", str(EtatPartie.NB_JOUEURS_MAX)))
 	reseau.joueur_arrive.connect(_sur_arrivee)
 	reseau.joueur_parti.connect(_sur_depart)
+	# Branché après le gestionnaire de Reseau (connecté dans son _ready) : quand « POIGNEE ECHOUEE »
+	# s'écrit, la place réservée est déjà libérée.
+	root.multiplayer.peer_authentication_failed.connect(_sur_poignee_echouee)
 	var erreur: int = reseau.heberger(int(_option("port", "17777")))
 	_check(erreur == OK, "l'hôte écoute (erreur %d)" % erreur)
 	if erreur != OK:
@@ -105,6 +113,11 @@ func _jouer_hote() -> void:
 	_check(root.multiplayer.is_server() and hote.index == 0 and hote.couleur == EtatPartie.PALETTE_BATAILLE[0]
 		and hote.pseudo == reseau.pseudo, "l'hôte s'inscrit lui-même : index 0, première couleur, son pseudo")
 
+	# Les poignées de main échouées d'abord : dans le scénario 5, l'arrivée attendue ne peut venir
+	# qu'après la dernière (la place du client lent libérée par le délai). Les comptes ne font que
+	# croître : l'ordre des attentes ne change rien aux autres scénarios.
+	_check(await _attendre(func() -> bool: return _poignees_echouees.size() >= nb_refus),
+		"%d poignée(s) de main échouée(s) sur %d attendue(s) (refus lus, ou délai dépassé)" % [_poignees_echouees.size(), nb_refus])
 	_check(await _attendre(func() -> bool: return _arrivees.size() >= nb_clients),
 		"%d client(s) arrivé(s) sur %d attendu(s)" % [_arrivees.size(), nb_clients])
 	var indices: Array = reseau.inscrits.values().map(func(f: Dictionary) -> int: return f.index)
@@ -124,8 +137,8 @@ func _jouer_hote() -> void:
 		_check(reseau.premier_index_libre(reseau.inscrits, reseau.places) < nb_clients + 1,
 			"son index est de nouveau libre")
 
-	await _pause(float(_option("attente", "0")))
-	_check(_arrivees.size() == nb_clients, "aucune arrivée de trop : %d client(s) en tout" % _arrivees.size())
+	_check(_arrivees.size() == nb_clients and _poignees_echouees.size() == nb_refus,
+		"ni arrivée ni poignée de main échouée de trop : %d client(s), %d échec(s) de poignée de main" % [_arrivees.size(), _poignees_echouees.size()])
 	reseau.quitter()  # close() envoie ses paquets de façon synchrone (N7) : pas de pause à ajouter ici
 
 
@@ -232,6 +245,11 @@ func _sur_arrivee(id: int) -> void:
 
 func _sur_depart(id: int) -> void:
 	_departs.append(id)
+
+
+func _sur_poignee_echouee(id: int) -> void:
+	_poignees_echouees.append(id)
+	print("POIGNEE ECHOUEE %d (pair %d)" % [_poignees_echouees.size(), id])
 
 
 func _sur_inscription(index: int, couleur: Color) -> void:

@@ -129,7 +129,7 @@ echo "== test réseau LeLion (journaux : $JOURNAUX) =="
 # 1. Hôte + 2 clients ; un troisième se présente avec une autre version. L'un des deux clients
 #    repart de lui-même, puis l'hôte quitte : l'autre le voit partir.
 P=$((PORT_BASE + 1))
-lancer hote1 --role=hote --port=$P --pseudo=Hote --clients=2 --partants=1 --attente=1
+lancer hote1 --role=hote --port=$P --pseudo=Hote --clients=2 --partants=1 --refus=1
 if attendre_hote hote1; then
 	lancer reste1 --role=client --port=$P --pseudo=Reste --attendu=inscrit
 	lancer partant1 --role=client --port=$P --pseudo=Partant --attendu=inscrit --partir
@@ -139,7 +139,7 @@ terminer "hôte + 2 clients, départ d'un client et de l'hôte, version différe
 
 # 2. Partie à 2 places, deux demandes simultanées : exactement une acceptée, l'autre refusée.
 P=$((PORT_BASE + 2))
-lancer hote2 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --attente=2
+lancer hote2 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --refus=1
 if attendre_hote hote2; then
 	lancer rival2a --role=client --port=$P --pseudo=RivalA --attendu=inscrit_ou_plein
 	lancer rival2b --role=client --port=$P --pseudo=RivalB --attendu=inscrit_ou_plein
@@ -150,7 +150,7 @@ terminer "deux demandes pour la dernière place"
 
 # 3. Manche en cours : tout nouveau venu est refusé.
 P=$((PORT_BASE + 3))
-lancer hote3 --role=hote --port=$P --pseudo=Hote --manche --attente=3
+lancer hote3 --role=hote --port=$P --pseudo=Hote --manche --refus=1
 if attendre_hote hote3; then
 	lancer tard3 --role=client --port=$P --pseudo=Tard --attendu=refus_manche
 fi
@@ -168,7 +168,7 @@ terminer "sans hôte : échec de connexion après le délai"
 #    main (3 s), l'hôte le libère (vrai peer_authentication_failed) : un troisième client obtient
 #    la place, à l'index 1.
 P=$((PORT_BASE + 5))
-lancer hote5 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --attente=1
+lancer hote5 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --refus=2
 if attendre_hote hote5; then
 	lancer lent5 --role=lent --port=$P --pseudo=Lent --attente=6
 	if attendre_ligne lent5 "ACCEPTE"; then
