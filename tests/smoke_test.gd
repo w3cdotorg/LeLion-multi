@@ -133,6 +133,7 @@ func _run() -> void:
 	GS.niveau_courant = 0
 
 	await _tester_ecran_reseau(scores, params)
+	await _tester_titre_reseau(scores)
 
 	# Scores
 	_check(scores.enregistrer("skyline/facile", 50.0) == 0 and scores.meilleur_temps("metropole/facile") < 0.0
@@ -1320,6 +1321,70 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	ecran2.free()
 	intrus.close()
 
+	decouverte.port_balise = decouverte.PORT_BALISE
+	decouverte.destinations_forcees = PackedStringArray()
+	reseau.pseudo = ""
+	scores.effacer()
+
+
+## Phase 12 bis : le bouton Multijoueur du titre, l'aller et retour avec l'écran Réseau, et le titre
+## qui remet toujours ce poste hors réseau avant le solo.
+func _tester_titre_reseau(scores: Node) -> void:
+	print("-- Titre et réseau")
+	var reseau: Node = root.get_node("Reseau")
+	var decouverte: Node = root.get_node("Decouverte")
+	decouverte.port_balise = 17895  # l'écran Réseau ouvert ici écoute : jamais le 7778 d'une vraie partie
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+
+	# Titre : le bouton Multijoueur, dans l'écran, sans chevaucher les autres, joignable au clavier
+	var titre: Control = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
+	root.add_child(titre)
+	await _frames(1)
+	var multi: Button = titre.bouton_multijoueur
+	_check(multi != null and multi.get_parent() == titre and multi.text == "MULTIJOUEUR" and tr("MULTIJOUEUR") == "Multijoueur",
+		"l'écran titre a un bouton Multijoueur, traduit")
+	var rect_multi: Rect2 = multi.get_global_rect()
+	var autres: Array = [titre.bouton_jouer, titre.bouton_reglages, titre.bouton_arcade, titre.get_node("Centre/Colonne/Aide")]
+	_check(Rect2(Vector2.ZERO, Vector2(2000, 648)).encloses(rect_multi)
+		and autres.all(func(c: Control) -> bool: return not c.get_global_rect().intersects(rect_multi)),
+		"le bouton Multijoueur tient dans l'écran du titre sans chevaucher Jouer, Réglages, Arcade ni l'aide (%s)" % rect_multi)
+	_check(titre.bouton_jouer.get_node(titre.bouton_jouer.focus_neighbor_right) == multi
+		and multi.get_node(multi.focus_neighbor_left) == titre.bouton_jouer,
+		"clavier et manette : droite depuis Jouer mène à Multijoueur, gauche en revient")
+	multi.pressed.emit()
+	await _frames(2)
+	var ecran: Control = current_scene
+	titre.free()
+	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn", "Multijoueur ouvre l'écran Réseau")
+	if ecran == null or ecran.scene_file_path != "res://Scenes/EcranReseau.tscn":
+		return
+	ecran.bouton_retour.pressed.emit()
+	await _frames(2)
+	var titre_retour: Control = current_scene
+	_check(titre_retour != null and titre_retour.scene_file_path == "res://Scenes/Titre.tscn" and not is_instance_valid(ecran)
+		and root.content_scale_size == Vector2i(2000, 648) and not decouverte.ecoute_active() and not reseau.en_ligne(),
+		"Retour ramène au titre, en 2000×648, hors réseau et sans écoute")
+	if titre_retour != null:
+		titre_retour.free()
+
+	# Retour au titre depuis une session : hors réseau AVANT le solo (point de vigilance de la phase 12)
+	_check(reseau.heberger(17797) == OK, "(pré-condition) ce poste héberge")
+	titre = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
+	root.add_child(titre)
+	await _frames(1)
+	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer and reseau.inscrits.is_empty(),
+		"après un hébergement, le titre remet ce poste hors réseau (plus de balise ni d'arrivée)")
+	titre.free()
+	_check(reseau.rejoindre("127.0.0.1", 17796) == OK and not root.multiplayer.is_server(), "(pré-condition) ce poste est un client")
+	titre = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
+	root.add_child(titre)
+	await _frames(1)
+	_check(root.multiplayer.is_server() and not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer,
+		"après une connexion, le titre rend ce poste hôte de lui-même : le solo qui suit tranche ses contacts (« un coup coûte une vie »)")
+	titre.free()
 	decouverte.port_balise = decouverte.PORT_BALISE
 	decouverte.destinations_forcees = PackedStringArray()
 	reseau.pseudo = ""
