@@ -37,6 +37,7 @@ func _run() -> void:
 	_tester_peinture()
 	_tester_territoire_reseau()
 	_tester_joueur_replique()
+	_tester_reseau_manche()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1636,3 +1637,88 @@ func _tester_joueur_replique() -> void:
 	_check(Regles.taille_fenetre(ReglesBataille.TAILLE_ECRAN, Vector2i(1400, 454)) == Vector2i(1400, 788)
 		and Regles.taille_fenetre(Regles.TAILLE_ECRAN_SOLO, Vector2i(1400, 788)) == Vector2i(1400, 454),
 		"hors du solo, la fenêtre prend le format 16:9 (1400×788), et le reprend du solo au retour (1400×454)")
+
+
+
+## Phase 14 : ce que `Reseau` ajoute pour la manche (relais du serveur coupé, fiches revérifiées au
+## lancement, silences, barrière de chargement, départ propre).
+func _tester_reseau_manche() -> void:
+	print("-- Réseau de la manche (relais, lancement revérifié, silences, scènes chargées, départ)")
+	var reseau: Node = root.get_node("Reseau")
+	var api := root.multiplayer as SceneMultiplayer
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(17788) == OK and not api.server_relay and reseau.silence == reseau.SILENCE_SESSION,
+		"l'hôte écoute, sans relais entre clients (M5), silence de session")
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob", "arrive": true, "pret": true}
+	reseau.inscrits[9] = {"index": 3, "couleur": palette[2], "pseudo": "Chloé", "arrive": true, "pret": true}
+	var hote: Dictionary = reseau.inscrits[1]
+	reseau.inscrits.erase(1)  # une table où l'hôte n'est plus : `fiches_de_manche` la refuse
+	var lancees: Array = []
+	var sur_lancement := func(f: Array[Dictionary]) -> void: lancees.append(f)
+	reseau.manche_lancee.connect(sur_lancement)
+	_check(reseau.salon_pret(reseau.inscrits) and not reseau.lancer_manche() and not reseau.manche_en_cours and lancees.is_empty()
+		and reseau.inscrits[9].index == 3 and reseau.silence == reseau.SILENCE_SESSION,
+		"M1 : des fiches de manche incohérentes font refuser le lancement sans rien changer, même quand le salon est prêt (ligne ERROR attendue)")
+	hote.pret = true
+	reseau.inscrits[1] = hote
+	reseau.signaler_scene_chargee()
+	_check(reseau.lancer_manche() and reseau.manche_en_cours and lancees.size() == 1 and reseau.scenes_chargees.is_empty()
+		and reseau.silence == reseau.SILENCE_CHARGEMENT,
+		"au lancement : plus aucune scène chargée d'une manche précédente, silence de chargement")
+	var chargees: Array[int] = []
+	var sur_scene := func(id: int) -> void: chargees.append(id)
+	reseau.scene_chargee.connect(sur_scene)
+	reseau.signaler_scene_chargee()
+	reseau.signaler_scene_chargee()
+	_check(reseau.scenes_chargees == [1] and chargees == [1], "chez l'hôte, sa scène chargée est notée et signalée une fois")
+	reseau.scene_chargee.disconnect(sur_scene)
+	reseau.manche_lancee.disconnect(sur_lancement)
+	reseau.definir_silence(reseau.SILENCE_SESSION)
+	_check(reseau.silence == reseau.SILENCE_SESSION, "fin du chargement : silence de session")
+	reseau.quitter()
+	_check(reseau.scenes_chargees.is_empty() and reseau._partants.is_empty() and reseau.heberger(17788) == OK,
+		"quitter oublie les scènes chargées ; sans autre poste connecté, le port se libère aussitôt")
+	# Un autre poste connecté au niveau d'ENet (sa poignée de main ne finit jamais) : un départ propre
+	# le prévient par un DISCONNECT fiable, renvoyé jusqu'à son accusé de réception.
+	var autre := ENetMultiplayerPeer.new()
+	_check(autre.create_client("127.0.0.1", 17788) == OK, "(pré-condition) un autre poste se connecte à l'hôte")
+	_check(_connecter(autre, reseau), "(pré-condition) connecté au niveau d'ENet")
+	reseau.quitter()
+	_check(reseau._partants.size() == 1 and not reseau.en_ligne(), "quitter avec un poste connecté : ce poste est hors réseau, son départ part en arrière-plan")
+	var prevenu := false
+	for i in range(200):
+		autre.poll()
+		reseau._process(0.0)
+		if autre.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED and reseau._partants.is_empty():
+			prevenu = true
+			break
+		OS.delay_msec(5)
+	_check(prevenu, "l'autre poste reçoit le départ, qui est clos une fois reçu")
+	autre = ENetMultiplayerPeer.new()
+	_check(reseau.heberger(17788) == OK and autre.create_client("127.0.0.1", 17788) == OK, "(pré-condition) l'hôte rouvre, l'autre poste se reconnecte")
+	var connecte := _connecter(autre, reseau)
+	reseau.quitter()
+	_check(connecte and reseau._partants.size() == 1 and reseau.heberger(17788) == OK and reseau._partants.is_empty(),
+		"héberger aussitôt après un départ en cours : le port de la session quittée est libéré d'abord")
+	reseau.quitter()
+	autre.close()
+	reseau.pseudo = ""
+
+
+
+## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
+## côtés (l'hôte la tient pour établie à l'accusé de réception de sa réponse) ; 1 s au plus.
+func _connecter(autre: ENetMultiplayerPeer, reseau: Node) -> bool:
+	var tours_apres := -1
+	for i in range(200):
+		autre.poll()
+		reseau.multiplayer.poll()
+		if tours_apres < 0 and autre.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+			tours_apres = 0
+		if tours_apres >= 0:
+			tours_apres += 1
+			if tours_apres > 10:
+				return true
+		OS.delay_msec(5)
+	return false

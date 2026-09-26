@@ -19,7 +19,8 @@ extends SceneTree
 ##   libéré la place), puis quitte le réseau (ses clients doivent voir l'hôte partir).
 ## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
 ##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
-##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte), --feu=chemin
+##   et un autre client en vue dans la table de l'hôte, quitte de lui-même ; sinon, attend que
+##   l'hôte parte), --feu=chemin
 ##   (écrit « ATTEND LE FEU » puis ne rejoint l'hôte qu'une fois ce fichier créé par lancer.sh,
 ##   DELAI_ETAPE au plus : le démarrage de Godot est déjà fait quand la demande doit partir). Écrit
 ##   une ligne « RESULTAT … » que lancer.sh compte d'un poste à l'autre. `refus_plein` est la
@@ -261,8 +262,10 @@ func _jouer_client() -> void:
 			if _issue != "inscrit":
 				return
 			if _options.has("partir"):
-				_check(await _attendre(func() -> bool: return root.multiplayer.get_peers().size() >= 2),
-					"un autre client est en vue (pairs : %s)" % [root.multiplayer.get_peers()])
+				# Sans relais du serveur (phase 14, M5), un client ne voit que l'hôte parmi ses pairs :
+				# l'autre client est vu dans la table que l'hôte diffuse (hôte et deux clients).
+				_check(await _attendre(func() -> bool: return reseau.table_salon.size() >= 3),
+					"un autre client est en vue dans la table de l'hôte (%d joueurs)" % reseau.table_salon.size())
 				await _pause(0.5)
 				reseau.quitter()
 				_check(_issue == "inscrit", "partir de soi-même n'émet ni échec ni hôte perdu (%s)" % _issue)
