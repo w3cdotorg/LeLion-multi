@@ -67,7 +67,9 @@ extends SceneTree
 ##   de chaque poste (actions pressées comme un joueur : `Input.action_press`).
 ##   Manche-hôte : --clients=N (arrivées attendues, le muet compris), --gel=S (fige son processus S
 ##   secondes dès sa scène de jeu chargée : ses clients, qui chargent, ne doivent pas le croire
-##   parti), --delai-chargement=S (délai de la barrière), --rester=chemin. Écrit « HOTE PRET »,
+##   parti), --delai-chargement=S (délai de la barrière), --rester=chemin, --mesurer-exclusion (I1,
+##   revue finale phase 14 : chronomètre l'écart entre l'exclusion d'un absent et la barrière,
+##   « ECART_EXCLUSION <ms> »). Écrit « HOTE PRET »,
 ##   « BARRIERE prets=… exclus=… », « DEPART VU », puis, une fois les lions arrêtés et les coulures
 ##   finies, fige la manche (`terminer_partie`) : « EMPREINTE <territoire, scores, tampons,
 ##   lions, apparitions> » et « FIGE ».
@@ -77,7 +79,10 @@ extends SceneTree
 ##   le départ de l'hôte (« L'hôte a quitté la partie », puis le titre).
 ##   Manche-muet : rejoint l'hôte sans scène (pas de salon ni de scène de jeu), se dit prêt, reçoit le
 ##   lancement de la manche mais ne charge jamais sa scène : l'hôte doit l'exclure après le délai de
-##   la barrière (« EXCLU »).
+##   la barrière (« EXCLU »). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
+##   reçu, fige tout le processus S secondes (« FIGE_MUET ») avant de reprendre et sortir en 0, sans
+##   rien vérifier lui-même : son ENet ne peut acquitter aucun DISCONNECT pendant ce temps, comme un
+##   poste dont le fil principal compile ses shaders.
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -670,7 +675,17 @@ func _jouer_manche(hote: bool) -> void:
 		# chargent pendant ce temps, et leurs « scène chargée » l'attendent.
 		print("GEL")
 		OS.delay_msec(int(float(_option("gel", "0")) * 1000.0))
+	# I1 (revue finale phase 14) : avec --mesurer-exclusion, l'hôte chronomètre lui-même l'écart
+	# entre l'exclusion d'un absent et la barrière qui passe (ECART_EXCLUSION, en ms) : le
+	# correctif d'`_exclure` doit le tenir bien sous le silence de chargement par défaut.
+	var mesurer_exclusion := hote and _options.has("mesurer-exclusion")
+	var ticks_exclu := -1
+	if mesurer_exclusion:
+		_check(await _attendre(func() -> bool: return not manche._exclus.is_empty()), "(I1) un poste est exclu de la barrière")
+		ticks_exclu = Time.get_ticks_msec()
 	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	if mesurer_exclusion and ticks_exclu >= 0:
+		print("ECART_EXCLUSION %d" % (Time.get_ticks_msec() - ticks_exclu))
 	_check(_issue.is_empty(), "personne ne s'est cru abandonné pendant le chargement (%s)" % _issue)
 	if hote:
 		var exclus: Array = manche._exclus
@@ -821,6 +836,12 @@ func _jouer_muet() -> void:
 		"le muet est à la table du salon")
 	reseau.demander_pret(true)
 	_check(await _attendre(func() -> bool: return lancee[0] > 0), "le muet reçoit le lancement de la manche, sans charger de scène")
+	if _options.has("figer"):
+		# I1 (revue finale phase 14) : le fil principal se fige tout entier, comme un poste qui
+		# compile ses shaders : son ENet n'acquitte plus rien, y compris le DISCONNECT de l'hôte qui
+		# l'exclut (le correctif d'`_exclure` ne doit pas en dépendre pour autant).
+		print("FIGE_MUET")
+		OS.delay_msec(int(float(_option("figer", "0")) * 1000.0))
 	var fin := Time.get_ticks_msec() + int((DELAI_ETAPE + float(_option("gel", "0"))) * 1000.0)
 	while _issue != "inscrit+hote_perdu" and Time.get_ticks_msec() < fin:
 		await process_frame

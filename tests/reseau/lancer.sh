@@ -146,6 +146,30 @@ terminer() {
 	[ "$ECHECS" -eq "$avant" ] && echo "  ✅ $titre"
 }
 
+# tuer <nom…> : arrête tout de suite les postes nommés (scénario 10, I1) au lieu d'attendre leur
+# fin : on ne vérifie ni leur code de sortie ni leur journal, seulement le repère déjà mesuré avant
+# l'arrêt (aucune manche n'y est jouée jusqu'au bout). SIGTERM (défaut de `kill`, comme `nettoyer`),
+# puis KILL passé 0,3 s pour un muet qui dormirait encore dans son délai --figer.
+tuer() {
+	local nom i cibles=()
+	for nom in "$@"; do
+		for i in "${!NOMS[@]}"; do
+			if [ "${NOMS[$i]}" = "$nom" ]; then
+				cibles+=("${PIDS[$i]}")
+				kill "${PIDS[$i]}" 2>/dev/null
+				unset "PIDS[$i]" "NOMS[$i]"
+			fi
+		done
+	done
+	PIDS=(${PIDS[@]+"${PIDS[@]}"})
+	NOMS=(${NOMS[@]+"${NOMS[@]}"})
+	sleep 0.3
+	for i in ${cibles[@]+"${cibles[@]}"}; do
+		kill -9 "$i" 2>/dev/null
+	done
+	wait 2>/dev/null
+}
+
 # compter <motif> <nom…> : nombre de lignes qui contiennent le motif dans les journaux nommés.
 compter() {
 	local motif="$1" nom total=0 n
@@ -319,8 +343,10 @@ if attendre_hote hote9; then
 	lancer a9 --role=manche-client --port=$P --port-balise=$B --pseudo=Anna --sens=1 --fige="$JOURNAUX/fige9"
 	lancer b9 --role=manche-client --port=$P --port-balise=$B --pseudo=Bruno --sens=-1 --partir
 	lancer c9 --role=manche-muet --port=$P --port-balise=$B --pseudo=Muet --gel=$GEL9 --delai-chargement=$DELAI_CHARGEMENT9
-	# Chaque étape de l'hôte dans ses 15 s : la manche entière en prend plus (le gel, l'intro, les passes).
-	if attendre_ligne hote9 "INTRO" && attendre_ligne hote9 "DEPART VU" && attendre_ligne hote9 "FIGE"; then
+	# Chaque étape de l'hôte dans ses 15 s : la manche entière en prend plus (le gel, l'intro, les
+	# passes). M6 (revue finale) : « BARRIERE » d'abord, pour que la fenêtre de 15 s d'« INTRO »
+	# ne couvre plus, à elle seule, le plancher fixe du scénario (gel + délai de barrière + intro).
+	if attendre_ligne hote9 "BARRIERE" && attendre_ligne hote9 "INTRO" && attendre_ligne hote9 "DEPART VU" && attendre_ligne hote9 "FIGE"; then
 		touch "$JOURNAUX/fige9"
 		attendre_ligne a9 "EMPREINTE" && touch "$JOURNAUX/rester9"
 	fi
@@ -330,6 +356,31 @@ terminer "manche : barrière de chargement (hôte figé, muet exclu), commandes 
 [ "$(grep -h "^EMPREINTE " "$JOURNAUX/hote9.log" "$JOURNAUX/a9.log" 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
 	&& [ "$(compter "^EMPREINTE " hote9 a9)" -eq 2 ] || echec "manche : l'hôte et Anna doivent finir avec la même empreinte"
 [ "$(compter "^PARTI" b9)" -eq 1 ] && [ "$(compter "^EXCLU" c9)" -eq 1 ] || echec "manche : Bruno doit partir, le muet être exclu"
+
+# 10. I1 (revue finale phase 14) : un muet dont le fil principal se fige tout entier (ENet muet,
+#     comme un poste qui compile ses shaders) après le lancement de la manche. Le correctif
+#     d'_exclure (silence ENet raccourci avant disconnect_peer, sans force) doit faire passer la
+#     barrière bien avant le silence de chargement par défaut (20 à 30 s) : l'hôte chronomètre
+#     lui-même l'écart entre l'exclusion et la barrière (--mesurer-exclusion, ECART_EXCLUSION en
+#     ms). Aucune manche n'est jouée ici : les deux postes sont arrêtés dès la mesure prise.
+DELAI_CHARGEMENT10=3
+P=$((PORT_BASE + 10))
+B=$((PORT_BASE + 1010))
+avant10=$ECHECS
+lancer hote10 --role=manche-hote --port=$P --port-balise=$B --pseudo=Hote10 --clients=1 \
+	--delai-chargement=$DELAI_CHARGEMENT10 --mesurer-exclusion
+if attendre_hote hote10; then
+	lancer muet10 --role=manche-muet --port=$P --port-balise=$B --pseudo=Muet10 \
+		--delai-chargement=$DELAI_CHARGEMENT10 --figer=10
+	if attendre_ligne hote10 "ECART_EXCLUSION"; then
+		ecart=$(grep -o "ECART_EXCLUSION [0-9]*" "$JOURNAUX/hote10.log" | head -1 | awk '{print $2}')
+		echo "  (I1) écart exclusion -> barrière : ${ecart} ms"
+		[ -n "$ecart" ] && [ "$ecart" -lt 2000 ] 2>/dev/null \
+			|| echec "I1 : écart exclusion -> barrière de ${ecart:-?} ms (attendu bien sous 2000 ms : le correctif doit raccourcir le silence ENet du pair figé avant de le déconnecter)"
+	fi
+fi
+tuer hote10 muet10
+[ "$ECHECS" -eq "$avant10" ] && echo "  ✅ I1 : un poste figé (ENet muet) est exclu, la barrière passe sans attendre le silence par défaut de la barrière"
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then
