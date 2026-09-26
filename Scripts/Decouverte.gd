@@ -55,22 +55,61 @@ var erreur_ecoute := OK
 var _ecouteur: PacketPeerUDP
 var _emetteur: PacketPeerUDP
 var _destinations := PackedStringArray()
+## Vrai entre un `ecouter()` et son `arreter_ecoute()`, même si le port était pris au moment de
+## l'appel : la minuterie réessaie tant que ce souhait tient (Minor 5, deux fenêtres sur un PC).
+var _ecoute_voulue := false
 static var _motif_version: RegEx = RegEx.create_from_string(_MOTIF_VERSION)
+## Le préfixe exact de toute balise, en octets : un datagramme qui ne commence pas par ces octets
+## n'est jamais passé à `get_string_from_utf8()` (Minor 2 : pas de ligne ERROR pour un autre
+## programme, ou un déluge, sur le port des balises).
+static var _prefixe_octets: PackedByteArray = "LELION|".to_ascii_buffer()
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var minuterie := Timer.new()
 	minuterie.wait_time = PERIODE_BALISE
-	minuterie.timeout.connect(_emettre_balise)
+	minuterie.timeout.connect(_sur_minuterie)
 	add_child(minuterie)
 	minuterie.start()
 
 
+## Chaque PERIODE_BALISE : la balise (si ce poste héberge), puis un nouvel essai d'écoute (si le
+## port était pris à la dernière tentative et l'est peut-être libéré depuis, Minor 5).
+func _sur_minuterie() -> void:
+	_emettre_balise()
+	_reessayer_ecoute()
+
+
 ## Ouvre l'écoute des balises sur `port_balise` (repart d'une liste vide). Renvoie OK, ou l'erreur
-## si le port est déjà pris : rien ne plante, `ecoute_active()` reste faux, `erreur_ecoute` la garde.
+## si le port est déjà pris : rien ne plante, `ecoute_active()` reste faux, `erreur_ecoute` la
+## garde, et la minuterie réessaie toute seule (Minor 5) tant qu'`arreter_ecoute()` n'a pas annulé
+## ce souhait : une seconde fenêtre lancée pendant que la première héberge encore n'a pas besoin de
+## revenir à l'accueil pour profiter du port libéré.
 func ecouter() -> Error:
-	arreter_ecoute()
+	_fermer_socket_ecoute()
+	_ecoute_voulue = true
+	return _essayer_ecoute()
+
+
+## Ferme l'écoute et oublie les parties entendues. Sans effet si rien n'écoute.
+func arreter_ecoute() -> void:
+	_ecoute_voulue = false
+	_fermer_socket_ecoute()
+
+
+func _fermer_socket_ecoute() -> void:
+	if _ecouteur != null:
+		_ecouteur.close()
+		_ecouteur = null
+	if not parties.is_empty():
+		parties.clear()
+		parties_changees.emit()
+
+
+## Une tentative de `bind()`, sans toucher à `_ecoute_voulue` ni à la liste des parties (appelée par
+## `ecouter()` comme par la minuterie).
+func _essayer_ecoute() -> Error:
 	var ecouteur := PacketPeerUDP.new()
 	# Une socket IPv4 (et non « * », à double pile sous Windows) : les diffusions IPv4 y arrivent.
 	erreur_ecoute = ecouteur.bind(port_balise, "0.0.0.0")
@@ -79,13 +118,11 @@ func ecouter() -> Error:
 	return erreur_ecoute
 
 
-## Ferme l'écoute et oublie les parties entendues. Sans effet si rien n'écoute.
-func arreter_ecoute() -> void:
-	if _ecouteur != null:
-		_ecouteur.close()
-		_ecouteur = null
-	if not parties.is_empty():
-		parties.clear()
+## Rien tant que l'écoute n'est pas voulue, ou qu'elle écoute déjà. Sinon, un nouvel essai (le port
+## d'un autre LeLion sur ce PC, ou d'un autre programme, a pu se libérer depuis) ; la liste affichée
+## change si l'essai réussit.
+func _reessayer_ecoute() -> void:
+	if _ecoute_voulue and _ecouteur == null and _essayer_ecoute() == OK:
 		parties_changees.emit()
 
 
@@ -135,7 +172,9 @@ func _emettre_balise() -> void:
 		reseau.inscrits.size(), reseau.places, reseau.manche_en_cours,
 		partie.niveau_courant if partie != null else 0, hote.get("pseudo", ""))
 	for destination in _destinations:
-		# Une destination injoignable (interface tombée, pas de route) n'empêche pas les autres.
+		# set_dest_address() n'échoue que pour un nom à résoudre (jamais ici, des adresses
+		# littérales) ; une destination injoignable (interface tombée, pas de route) fait échouer
+		# put_packet(), dont l'erreur est ignorée : elle n'empêche pas les autres destinations.
 		if _emetteur.set_dest_address(destination, port_balise) == OK:
 			_emetteur.put_packet(balise)
 
@@ -165,16 +204,21 @@ static func encoder_balise(version: String, port: int, nb_joueurs: int, places: 
 ## La fiche d'une balise reçue : {version, port, nb_joueurs, places, manche_en_cours, niveau,
 ## pseudo} ; un dictionnaire vide pour tout ce qui n'est pas une balise valide (autre programme,
 ## datagramme tronqué ou forgé). Le pseudo est nettoyé comme l'hôte nettoie ceux de ses joueurs.
+## Le préfixe `LELION|` est vérifié en octets avant tout décodage UTF-8 (Minor 2) : un datagramme
+## d'un autre programme, ou invalide en UTF-8, n'imprime donc aucune ligne ERROR dans le journal.
 static func decoder_balise(donnees: PackedByteArray) -> Dictionary:
-	if donnees.is_empty() or donnees.size() > TAILLE_BALISE_MAX:
+	if donnees.size() < _prefixe_octets.size() or donnees.size() > TAILLE_BALISE_MAX \
+			or donnees.slice(0, _prefixe_octets.size()) != _prefixe_octets:
 		return {}
 	var champs := donnees.get_string_from_utf8().split("|", true, _NB_CHAMPS - 1)
 	if champs.size() != _NB_CHAMPS or champs[0] != _Reseau.JEU:
 		return {}
 	if _motif_version.search(champs[1]) == null:
 		return {}
+	# Au plus 5 caractères (le port va jusqu'à 65535) avant `is_valid_int()` : un entier hors de
+	# l'int64 forgé dans un champ ne passe plus par `to_int()`, qui imprimerait une ligne ERROR.
 	for i in [2, 3, 4, 6]:
-		if not champs[i].is_valid_int():
+		if champs[i].length() > 5 or not champs[i].is_valid_int():
 			return {}
 	var port := champs[2].to_int()
 	var nb_joueurs := champs[3].to_int()
@@ -224,10 +268,12 @@ static func purger_parties(liste: Dictionary[String, Dictionary], maintenant_ms:
 ## diffusion limitée, plus la diffusion dirigée de chaque réseau privé IPv4 (a.b.c.255, en
 ## supposant un /24, le cas des box ; 169.254.255.255 pour une liaison directe sans DHCP). Sous
 ## Windows, 255.255.255.255 ne sort que par une interface, pas forcément celle du Wi-Fi de la LAN
-## (VPN, cartes virtuelles) : la diffusion dirigée couvre les autres.
+## (VPN, cartes virtuelles) : la diffusion dirigée couvre les autres. N'utilise jamais l'ordre trié
+## ni le filtre 169.254 de `adresses_privees` (Minor 6) : elle vise tous les réseaux privés, quel
+## que soit ce que l'hôte doit lire à voix haute (revue de la phase 12, constat 6).
 static func destinations_balise(adresses: PackedStringArray) -> PackedStringArray:
 	var destinations := PackedStringArray([DIFFUSION])
-	for adresse in adresses_privees(adresses):
+	for adresse in _adresses_privees_brutes(adresses):
 		var octets := adresse.split(".")
 		var dirigee := "169.254.255.255" if octets[0] == "169" else "%s.%s.%s.255" % [octets[0], octets[1], octets[2]]
 		if not destinations.has(dirigee):
@@ -236,9 +282,10 @@ static func destinations_balise(adresses: PackedStringArray) -> PackedStringArra
 
 
 ## Les adresses IPv4 privées ou de liaison locale parmi `adresses` (10/8, 172.16/12, 192.168/16,
-## 169.254/16), dans leur ordre : celles qu'un autre PC de la LAN peut joindre, que l'écran Réseau
-## affiche à l'hôte pour la saisie par IP.
-static func adresses_privees(adresses: PackedStringArray) -> PackedStringArray:
+## 169.254/16), dans l'ordre reçu : la matière première commune à `destinations_balise` (chaque
+## réseau reçoit sa diffusion dirigée, sans tri d'affichage) et à `adresses_privees` (triées pour
+## l'hôte).
+static func _adresses_privees_brutes(adresses: PackedStringArray) -> PackedStringArray:
 	var privees := PackedStringArray()
 	for adresse in adresses:
 		var normale := adresse_ipv4(adresse)
@@ -250,6 +297,38 @@ static func adresses_privees(adresses: PackedStringArray) -> PackedStringArray:
 		if a == 10 or (a == 172 and b >= 16 and b <= 31) or (a == 192 and b == 168) or (a == 169 and b == 254):
 			if not privees.has(normale):
 				privees.append(normale)
+	return privees
+
+
+## Les adresses IPv4 privées ou de liaison locale de `adresses`, triées pour l'affichage à l'hôte
+## (l'écran Réseau, « ton adresse : … ») : les cartes réelles d'une LAN domestique d'abord
+## (192.168/16, hors 192.168.56/24 réservé à VirtualBox Host-Only), puis 10/8, puis 172.16/12
+## (souvent une carte virtuelle sous Windows : vEthernet Hyper-V, WSL2, Docker Desktop — groupée
+## avec 192.168.56/24), enfin 169.254/16 (liaison directe sans DHCP), affichée seulement s'il n'y a
+## rien d'autre. Ordre stable au sein d'un même rang (revue de la phase 12, constat 6). Sous
+## Windows, `GetAdaptersAddresses` liste souvent les cartes virtuelles avant le Wi-Fi ; sans ce tri,
+## l'hôte lisait à voix haute une adresse que le client ne pouvait pas joindre.
+static func adresses_privees(adresses: PackedStringArray) -> PackedStringArray:
+	var rangs: Array[PackedStringArray] = [PackedStringArray(), PackedStringArray(), PackedStringArray(), PackedStringArray()]
+	for normale in _adresses_privees_brutes(adresses):
+		var octets := normale.split(".")
+		var a := octets[0].to_int()
+		var b := octets[1].to_int()
+		var c := octets[2].to_int()
+		if a == 192 and b == 168:
+			rangs[2 if c == 56 else 0].append(normale)
+		elif a == 10:
+			rangs[1].append(normale)
+		elif a == 172:
+			rangs[2].append(normale)
+		else:  # 169.254
+			rangs[3].append(normale)
+	if not (rangs[0].is_empty() and rangs[1].is_empty() and rangs[2].is_empty()):
+		rangs[3] = PackedStringArray()
+	var privees := PackedStringArray()
+	for rang in rangs:
+		for normale in rang:
+			privees.append(normale)
 	return privees
 
 

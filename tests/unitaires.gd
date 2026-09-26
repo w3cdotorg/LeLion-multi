@@ -1096,16 +1096,22 @@ func _tester_decouverte() -> void:
 	var trop_longue := PackedByteArray()
 	trop_longue.resize(decouverte.TAILLE_BALISE_MAX + 1)
 	trop_longue.fill(65)
-	var invalides: Array[PackedByteArray] = [PackedByteArray(), trop_longue]
+	# Préfixe corrompu (premier octet), mais assez long pour comparer les 7 premiers : rejeté sur les
+	# octets, jamais passé à get_string_from_utf8() (Minor 2 : pas de ligne ERROR pour ce genre de
+	# datagramme, mesuré au scénario 6 du test réseau).
+	var prefixe_corrompu := PackedByteArray([0xFF, 69, 76, 73, 79, 78, 124, 65, 66])
+	var invalides: Array[PackedByteArray] = [PackedByteArray(), trop_longue, prefixe_corrompu]
 	for texte: String in ["LELION", "AUTRE|0.11|7777|1|6|0|0|x", "LELION|0.11|7777|1|6|0|0",
 			"LELION|0.11|0|1|6|0|0|x", "LELION|0.11|65536|1|6|0|0|x", "LELION|0.11|port|1|6|0|0|x",
 			"LELION|0.11|7777|0|6|0|0|x", "LELION|0.11|7777|7|6|0|0|x", "LELION|0.11|7777|1|1|0|0|x",
 			"LELION|0.11|7777|3|2|0|0|x", "LELION|0.11|7777|1|7|0|0|x", "LELION|0.11|7777|1|6|2|0|x",
 			"LELION|0.11|7777|1|6|0|-1|x", "LELION|0.11|7777|1|6|0|%d|x" % EtatPartie.NIVEAUX.size(),
-			"LELION||7777|1|6|0|0|x", "LELION|0.11 beta|7777|1|6|0|0|x", "LELION|0123456789abcdefg|7777|1|6|0|0|x"]:
+			"LELION||7777|1|6|0|0|x", "LELION|0.11 beta|7777|1|6|0|0|x", "LELION|0123456789abcdefg|7777|1|6|0|0|x",
+			# Champ numérique hors de l'int64 (Minor 2) : rejeté sur sa longueur, jamais passé à to_int().
+			"LELION|0.11|999999999999999999999|1|6|0|0|x"]:
 		invalides.append(texte.to_utf8_buffer())
 	var acceptees := invalides.filter(func(d: PackedByteArray) -> bool: return not decouverte.decoder_balise(d).is_empty())
-	_check(acceptees.is_empty(), "%d datagrammes invalides, aucun pris pour une balise (%s)"
+	_check(acceptees.is_empty(), "%d datagrammes invalides, aucun pris pour une balise, dont un préfixe étranger invalide en UTF-8 et un entier hors int64 (%s)"
 		% [invalides.size(), acceptees.map(func(d: PackedByteArray) -> String: return d.get_string_from_utf8())])
 
 	# La liste : une partie par adresse et port de jeu, rafraîchie, changée, expirée, plafonnée
@@ -1129,15 +1135,26 @@ func _tester_decouverte() -> void:
 		and not decouverte.enregistrer_partie(liste, "10.0.0.1", fiche, 10) and liste["10.0.0.1:7777"].vue_a == 10,
 		"liste pleine (%d parties) : une nouvelle est ignorée, les connues se rafraîchissent encore" % decouverte.PARTIES_MAX)
 
-	# Destinations de la balise et adresses de l'hôte
+	# Destinations de la balise : tous les réseaux privés, dans l'ordre reçu (jamais triés, jamais
+	# privés de 169.254 : Minor 6, destinations_balise n'en dépend pas)
 	var adresses := PackedStringArray(["fe80:0:0:0:0:0:0:1", "127.0.0.1", "192.168.1.17", "10.0.3.4", "172.20.1.2",
 		"172.32.0.1", "8.8.8.8", "169.254.10.20", "192.168.1.30"])
-	_check(decouverte.adresses_privees(adresses) == PackedStringArray(["192.168.1.17", "10.0.3.4", "172.20.1.2", "169.254.10.20", "192.168.1.30"]),
-		"les adresses de l'hôte à afficher : IPv4 privées ou de liaison locale seulement (%s)" % decouverte.adresses_privees(adresses))
 	_check(decouverte.destinations_balise(adresses) == PackedStringArray(["255.255.255.255", "192.168.1.255", "10.0.3.255", "172.20.1.255", "169.254.255.255"]),
 		"la balise part en diffusion limitée et dirigée, une fois par réseau privé (%s)" % decouverte.destinations_balise(adresses))
 	_check(decouverte.destinations_balise(PackedStringArray()) == PackedStringArray(["255.255.255.255"]),
 		"sans adresse privée connue, la diffusion limitée seule")
+
+	# Adresses de l'hôte à afficher (Minor 6) : IPv4 privées seulement, mais triées pour la lecture à
+	# voix haute — 192.168/16 réel d'abord (hors 192.168.56/24, VirtualBox Host-Only), puis 10/8, puis
+	# 172.16/12 (souvent une carte virtuelle sous Windows, 192.168.56/24 avec elle), 169.254 en tout
+	# dernier recours (jamais si une autre adresse existe)
+	var adresses_tri := PackedStringArray(["fe80:0:0:0:0:0:0:1", "127.0.0.1", "172.20.1.2", "10.0.3.4",
+		"172.32.0.1", "8.8.8.8", "192.168.56.1", "192.168.1.17", "169.254.10.20", "192.168.1.30"])
+	_check(decouverte.adresses_privees(adresses_tri) == PackedStringArray(["192.168.1.17", "192.168.1.30", "10.0.3.4", "172.20.1.2", "192.168.56.1"]),
+		"les adresses de l'hôte à afficher, filtrées (IPv4 privées, IPv6/loopback/publique/hors-plage exclues) puis triées : cartes réelles d'abord, virtuelles ensuite, 169.254 tue si une autre existe (%s)"
+			% decouverte.adresses_privees(adresses_tri))
+	_check(decouverte.adresses_privees(PackedStringArray(["169.254.10.20", "169.254.1.2", "8.8.8.8"])) == PackedStringArray(["169.254.10.20", "169.254.1.2"]),
+		"169.254 s'affiche s'il n'y a vraiment rien d'autre à lire")
 
 	# Adresse saisie : IPv4 seulement, normalisée ; jamais un nom (résolution bloquante)
 	var valides := {"192.168.1.20": "192.168.1.20", " 192.168.001.010 ": "192.168.1.10", "127.0.0.1": "127.0.0.1", "10.0.0.255": "10.0.0.255"}
@@ -1167,7 +1184,20 @@ func _tester_decouverte() -> void:
 	var erreur: int = decouverte.ecouter()
 	_check(erreur != OK and not decouverte.ecoute_active() and decouverte.erreur_ecoute == erreur,
 		"port déjà pris : ecouter() renvoie l'erreur (%d) sans planter ni écouter" % erreur)
+
+	# Nouvel essai périodique (Minor 5, appelé en vrai jeu par la minuterie) : le port libéré profite
+	# à l'écoute qui le voulait encore, sans repasser par ecouter() ni revenir à l'accueil
 	intrus.close()
+	signaux[0] = 0
+	decouverte._reessayer_ecoute()
+	_check(decouverte.ecoute_active() and decouverte.erreur_ecoute == OK and signaux[0] == 1,
+		"le port libéré par un autre poste profite au prochain essai (deux fenêtres sur un même PC), signalé")
+	decouverte._reessayer_ecoute()
+	_check(signaux[0] == 1, "un nouvel essai alors que l'écoute est déjà ouverte ne fait rien de plus")
+	decouverte.arreter_ecoute()
+	signaux[0] = 0
+	decouverte._reessayer_ecoute()
+	_check(not decouverte.ecoute_active() and signaux[0] == 0, "un nouvel essai ne fait rien si l'écoute n'est plus voulue (arreter_ecoute() l'a annulée)")
 	decouverte.parties_changees.disconnect(compter)
 
 	# Balise de l'hôte : ce qu'émet `Reseau` en ligne et hôte, rien hors réseau ni chez un client
