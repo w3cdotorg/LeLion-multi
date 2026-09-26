@@ -342,3 +342,41 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
+- **phase 11 bis** (revue finale de la phase 11, M1) : `tests/reseau/lancer.sh` refuse les nouveaux
+  venus après des fenêtres d'attente fixes (`--attente=1/2/3`), pas après un compte de refus réels :
+  sur un runner de CI chargé (plusieurs processus Godot en parallèle), un démarrage lent donne
+  « échec » au lieu du refus attendu, et la consigne interdit d'élargir les délais. Ajouter à
+  l'hôte de test une option `--refus=N` qui compte les `peer_authentication_failed` réels et
+  attend N refus au plus (borné par `DELAI_ETAPE`) avant sa vérification finale, plutôt qu'une
+  pause fixe ;
+- **phase 13** (salon, M4 de la revue de la phase 11) : `Reseau.inscrits` mêle les places réservées
+  (dès la réponse de l'hôte) et les joueurs réellement arrivés (poignée de main finie) : un accepté
+  peut y rester jusqu'à 3 s sans être connecté. Un salon qui construit ses cartes ou envoie des RPC
+  en parcourant `inscrits` tel quel afficherait une carte fantôme et déclencherait
+  `Attempt to call RPC with unknown peer ID`. Ajouter `"arrive": false` à la fiche à la réponse,
+  le passer à `true` dans `_sur_pair_connecte` (ou tenir une table de réservations à part) ;
+- **phase 14** (M6 de la revue de la phase 11) : `ENetMultiplayerPeer.close()` (dans `quitter()`)
+  envoie `peer_disconnect_now`, un seul datagramme non fiable : en Wi-Fi avec pertes, ou avec un
+  poste planté ou en veille, la détection d'un départ repose sur le délai par défaut d'un pair ENet
+  (32 essais, 5 à 30 s), donc « l'hôte a quitté la partie » ou la libération d'une carte peuvent
+  arriver très en retard. À l'inverse, un hôte dont le thread principal bloque plus de ~5 s (le
+  chargement de la scène de manche, la première compilation de shaders sous Windows) déconnecte
+  tous ses clients. Régler explicitement `ENetPacketPeer.set_timeout(...)` (court au salon, plus
+  tolérant pendant les chargements) et, pour un départ volontaire, utiliser
+  `peer_disconnect_later()` (ou un RPC « je pars » fiable avant la fermeture) ;
+- **phase 19** (protocole, M7 de la revue de la phase 11) : la version présentée à la poignée de
+  main est `application/config/version` (« 0.11 » depuis la phase 11), figée jusqu'à cette phase.
+  Les phases 12 à 18 changent l'ensemble des RPC sans que cette version bouge : un `.exe` de CI
+  (Windows) et une version locale (Mac) de phases différentes s'accepteraient à la poignée de main,
+  puis échoueraient en silence sur des RPC ou des caches de nœuds incompatibles, au lieu d'un refus
+  « version différente ». Ajouter une constante `PROTOCOLE` envoyée dans la demande, comparée avec
+  le même refus `REFUS_VERSION`, augmentée par chaque phase qui change les RPC (à partir de la
+  phase 13, premiers RPC) ; ou, plus simple, augmenter `config/version` à chaque phase réseau ;
+- **phase 12** (écran Réseau, M8 de la revue de la phase 11) : `rejoindre()` passe un nom d'hôte tel
+  quel à `create_client`, qui le résout de façon bloquante (`IP::resolve_hostname`) : une faute de
+  frappe gèle le jeu plusieurs secondes sous Windows (NetBIOS/LLMNR). N'accepter que
+  `adresse.is_valid_ip_address()` (ou résoudre hors du thread principal), et ajouter l'indice
+  « Pare-feu de l'hôte ? Réseau Privé ? » au texte de `connexion_echouee`. Le premier `heberger()`
+  déclenche aussi la fenêtre du pare-feu Windows Defender : si le joueur clique « Annuler », ou si
+  le réseau est classé Public, les clients ne voient que `connexion_echouee` après 5 s, sans
+  indice ; en phase 19, le README doit expliquer comment retirer une règle de blocage.
