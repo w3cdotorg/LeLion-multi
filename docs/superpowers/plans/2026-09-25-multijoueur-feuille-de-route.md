@@ -228,9 +228,15 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   ses signaux `joueur_arrive` / `joueur_parti` ; le salon les synchronise chez les clients (`Reseau`
   est dans ses fichiers), change les couleurs parmi les libres (`Reseau.premiere_couleur_libre`,
   l'hôte arbitre), pose `Reseau.manche_en_cours = true` au lancement (et `false` au retour au salon,
-  phase 18), puis reporte la table dans la partie : `id_reseau`, pseudo et couleur de chaque joueur
-  par index (phase 11 bis : `Joueur.id_reseau`, `configurer_bataille(n, couleurs)`). Ajouter ses
-  scénarios à `tests/reseau/joueur.gd` et `lancer.sh` ;
+  phase 18). Au lancement de la manche, AVANT `configurer_bataille` (revue finale phase 11 bis, I1) :
+  le salon compacte d'abord les index de `Reseau.inscrits` sur `0..n-1` (des départs ont pu laisser
+  des trous, `premier_index_libre` ne les comble jamais — voir `Reseau.gd:189-195,321-323`) et
+  diffuse le nouvel `index_local` de chaque poste, puis reporte la table dans la partie : `id_reseau`
+  et pseudo de CHAQUE index, y compris l'index 0 (qui porte l'identifiant de l'hôte, 1, sur tous les
+  postes — c'est le sien en solo) (phase 11 bis : `Joueur.id_reseau`, `configurer_bataille(n,
+  couleurs)`). Sans cette compaction, un index laissé libre par un départ tronque le joueur qui le
+  suit et son poste retombe sur `joueurs[0]` (le défaut du point de vigilance ci-dessous). Ajouter
+  ses scénarios à `tests/reseau/joueur.gd` et `lancer.sh` ;
 - **phase 14** : un client qui part en cours de manche arrive chez l'hôte par
   `Reseau.joueur_parti(id)` (id réseau, à retrouver par `Joueur.id_reseau`) ; un hôte perdu, chez
   chaque client, par `Reseau.hote_perdu` (le poste est alors déjà hors réseau) ;
@@ -254,13 +260,26 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
   tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
-- **phase 13** : `GameState.configurer_bataille(nb_joueurs, couleurs)` (phase 11 bis) garde les
-  couleurs qu'on lui passe, par index (la palette sinon) : le salon lui passe les siennes, après
-  avoir posé `id_reseau` et pseudo de chaque joueur depuis `Reseau.inscrits`. `configurer_bataille`
-  et `nouvelle_partie` annoncent alors le joueur local (`joueur_local_change`, qu'`Audio` suit), et
-  `configurer_solo` garde au retour au titre le dernier joueur local annoncé. Son `assert` sur le
-  nombre de joueurs doit devenir un clamp ou un `push_error` (un salon mal formé ne doit pas planter
-  la partie) : reporté faute d'appelant hors des tests ;
+- **phase 13** : ordre corrigé par la revue finale phase 11 bis (I1) — les identifiants ne peuvent
+  s'écrire que sur un tableau déjà à la bonne taille, donc le salon appelle D'ABORD
+  `GameState.configurer_bataille(nb_joueurs, couleurs)` (phase 11 bis), qui dimensionne `joueurs`
+  par index et lui donne ses couleurs (celles du salon, la palette sinon), PUIS écrit `id_reseau` et
+  pseudo de chaque joueur (tous les index, y compris 0) depuis `Reseau.inscrits` (compactés, voir le
+  point ci-dessus). C'est `nouvelle_partie` (appelée par `Main._enter_tree`, jamais
+  `configurer_bataille`) qui annonce alors le joueur local une fois ces identifiants posés
+  (`joueur_local_change`, qu'`Audio` suit) ; `configurer_solo` garde au retour au titre le dernier
+  joueur local annoncé. Meilleure API à considérer pour cette phase :
+  `configurer_bataille(fiches: Array[Dictionary])`, une fiche `{id_reseau, pseudo, couleur}` par
+  joueur, triée et compactée par index à l'intérieur — regroupe identité, couleur et index en un
+  seul appel au lieu de deux écritures séparées (garder le chemin `n` local pour les tests). Son
+  `assert` sur le nombre de joueurs doit devenir un clamp ou un `push_error` (un salon mal formé ne
+  doit pas planter la partie) : reporté faute d'appelant hors des tests ; à la même occasion (M4,
+  revue finale phase 11 bis) : si `couleurs` est plus court que `nb_joueurs`, compléter les entrées
+  manquantes avec la première couleur de la palette pas déjà utilisée (même règle que
+  `Reseau.premiere_couleur_libre`), et `push_error` + repli si une couleur passée a `a < 1` ou si
+  `couleurs.size() > nb_joueurs` (aujourd'hui deux joueurs peuvent hériter de la même couleur, une
+  couleur transparente casse `a_une_couleur()`, et les couleurs surnuméraires sont perdues en
+  silence) ;
 - **phase 13** : `Regles` ne s'exécute sur l'hôte que pour ses événements ; ses requêtes de
   mode (`taille_ecran`, `compte_le_territoire`) sont lues sur chaque poste (spec §3.1). Chaque
   client doit donc appeler `GameState.configurer_bataille(n)` (sans écraser les couleurs déjà
@@ -268,10 +287,15 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sans quoi il reste sur `ReglesSolo` (posé par `EtatPartie._init`) : écran 2000×648 et aucun
   territoire créé par sa `Ville` ;
 - **phase 17** (HUD) : la palette de bataille est réglée pour la deutéranopie depuis la phase 11 bis
-  (écart OKLab minimal 0,186 entre couleurs simulées, vérifié par `tests/unitaires.gd`), mais sur la
-  crinière (couleur × luminance du sprite) rouge et vert restent deux kakis que seule la clarté
-  sépare, magenta et cyan deux gris bleutés : les vignettes du HUD portent le pseudo, pas seulement
-  la couleur, comme l'étiquette au-dessus du lion ;
+  (écart OKLab minimal 0,186 entre couleurs pures simulées, vérifié par `tests/unitaires.gd`), mais
+  sur la crinière (couleur × luminance du sprite) rouge et vert restent deux kakis que seule la
+  clarté sépare, magenta et cyan deux gris bleutés : les vignettes du HUD portent le pseudo, pas
+  seulement la couleur, comme l'étiquette au-dessus du lion. Sur le territoire (les trois nuances de
+  chaque joueur, `Joueur.nuances`), la confusion se rapproche encore plus entre joueurs différents en
+  deutéranopie (magenta pur ≈ cyan foncé 0,028 ; rouge clair ≈ jaune foncé 0,046 ; rouge pur ≈ vert
+  foncé 0,047 — M2, revue finale phase 11 bis, garde-fou sur la moyenne des nuances par joueur dans
+  `tests/unitaires.gd`) : la propriété d'une cellule se lit au score du HUD (avec le pseudo), jamais
+  à sa teinte ;
 - **phase 13** (aperçu du salon) : attribuer la couleur d'un joueur **avant** l'ajout de son lion à
   l'arbre, ou rappeler `Lion.appliquer_apparence()` quand elle change (voir le point des phases 13
   et 14 sur `apparence_changee`) ;
