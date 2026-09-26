@@ -20,9 +20,11 @@ godot --headless --import . 2>&1 | grep -E "SCRIPT ERROR|Parse Error|Compile Err
 godot --headless --script tests/unitaires.gd     # à partir de la phase 1
 godot --headless --script tests/smoke_test.gd
 godot --headless --fixed-fps 60 --script tests/bataille_test.gd  # à partir de la phase 10 bis
+bash tests/reseau/lancer.sh                                      # à partir de la phase 11
 ```
 
-Les trois derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0.
+Les quatre derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0 (chaque commande
+Godot sous `timeout`, que `tests/reseau/lancer.sh` applique lui-même à chacun de ses processus).
 
 Leur sortie ne doit contenir ni `SCRIPT ERROR` ni `SHADER ERROR` : en headless, le rendu factice
 compile quand même les shaders et signale leurs erreurs sans changer le code de sortie.
@@ -61,12 +63,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
-| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main, version, attribution des index et couleurs). | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
+| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis. | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
+| 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie, test réseau en CI. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` ✏️ `.github/workflows/ci.yml` | tests verts, CI verte, ◉ planche de la palette |
 | 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
 | 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
-| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Ajouté à la CI. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test vert en CI |
+| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 bis (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
 | 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
