@@ -34,6 +34,8 @@ func _run() -> void:
 	_tester_decouverte()
 	_tester_bataille_reseau()
 	_tester_salon()
+	_tester_peinture()
+	_tester_territoire_reseau()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1477,3 +1479,97 @@ func _tester_salon() -> void:
 	_check(reseau.table_salon.is_empty() and reseau.niveau_salon == 0 and reseau.places_salon == EtatPartie.NB_JOUEURS_MAX,
 		"quitter() oublie la table du salon")
 	reseau.pseudo = ""
+
+
+## Phase 14 : la peinture identique sur chaque poste (jeux de tampons tirés de leur clé, tirage d'un
+## tampon par sa graine) et le format réseau des tampons.
+func _tester_peinture() -> void:
+	print("-- Peinture (jeux de tampons, tirage, format réseau des tampons)")
+	var nuances: Array[Color] = [Color(0.5, 0.1, 0.0), Color(0.81, 0.14, 0.01), Color(0.9, 0.5, 0.4)]
+	seed(1)
+	var jeu_a := Peinture.generer_tampons(21, nuances)
+	seed(2)
+	randi()
+	var jeu_b := Peinture.generer_tampons(21, nuances)
+	var memes := jeu_a.size() == Peinture.NB_TAMPONS and jeu_b.size() == Peinture.NB_TAMPONS
+	for i in range(mini(jeu_a.size(), jeu_b.size())):
+		memes = memes and jeu_a[i].get_data() == jeu_b[i].get_data()
+	_check(memes and jeu_a[0].get_width() == 43, "un jeu de tampons est le même d'un poste à l'autre, quel que soit le hasard global (graine tirée de sa clé)")
+	_check(jeu_a[0].get_data() != jeu_a[1].get_data(), "les variantes d'un même jeu diffèrent")
+	var autres: Array[Color] = [Color(0.1, 0.2, 0.6), Color(0.24, 0.38, 1.0), Color(0.5, 0.6, 1.0)]
+	_check(Peinture.generer_tampons(21, autres)[0].get_data() != jeu_a[0].get_data(), "un autre jeu de couleurs donne d'autres tampons")
+	seed(3)
+	var etat_global := randi()
+	seed(3)
+	Peinture.generer_tampons(16, nuances)
+	Peinture.tirage(12345, 16, 3)
+	_check(randi() == etat_global, "générer un jeu et tirer un tampon ne consomment pas le hasard global (Spawner, ennemis)")
+	_check(Peinture.tirage(40000, 30, 3) == Peinture.tirage(40000, 30, 3) and Peinture.tirage(40000, 30, 3) != Peinture.tirage(40001, 30, 3),
+		"le tirage d'un tampon ne dépend que de sa graine (le même sur chaque poste)")
+	var coulures := 0
+	var bornes := true
+	for graine in range(2000):
+		var t := Peinture.tirage(graine, 30, 3)
+		coulures += 1 if t.coulure else 0
+		bornes = bornes and t.variante >= 0 and t.variante < Peinture.NB_TAMPONS and t.dx >= -30 and t.dx <= 30 \
+			and t.dy >= 0 and t.dy <= 30 and t.longueur >= 14 and t.longueur <= 44 and t.couleur >= 0 and t.couleur < 3
+	_check(bornes and absf(coulures / 2000.0 - Peinture.CHANCE_COULURE) < 0.04,
+		"tirages dans leurs bornes, une coulure pour %.0f %% des tampons (%d sur 2000)" % [Peinture.CHANCE_COULURE * 100.0, coulures])
+	var lot: Array[Dictionary] = [
+		{"index": 0, "x": 1000, "y": 150, "rayon": 16, "graine": 0},
+		{"index": 5, "x": -40, "y": -12, "rayon": 92, "graine": Peinture.GRAINE_MAX},
+		{"index": 3, "x": 2010, "y": 330, "rayon": 46, "graine": 777},
+	]
+	var octets := Peinture.encoder_tampons(lot)
+	_check(octets.size() == 3 * Peinture.OCTETS_PAR_TAMPON and Peinture.decoder_tampons(octets) == lot,
+		"un lot de tampons fait 8 octets par tampon et se relit à l'identique, dans l'ordre, centres négatifs compris (i16)")
+	var hors_plage: Array[Dictionary] = [{"index": 1, "x": 40000, "y": -40000, "rayon": 300, "graine": 70000}]
+	_check(Peinture.decoder_tampons(Peinture.encoder_tampons(hors_plage)) == [{"index": 1, "x": 32767, "y": -32768, "rayon": 255, "graine": 65535}],
+		"des valeurs hors de leur plage sont ramenées dans leurs bornes, jamais bouclées")
+	var tronque := octets.slice(0, 7)
+	var mauvais_joueur := octets.duplicate()
+	mauvais_joueur.encode_u8(Peinture.OCTETS_PAR_TAMPON, EtatPartie.NB_JOUEURS_MAX)
+	_check(Peinture.decoder_tampons(tronque).is_empty() and Peinture.decoder_tampons(mauvais_joueur).is_empty()
+		and Peinture.decoder_tampons("tampons").is_empty() and Peinture.decoder_tampons(PackedByteArray()).is_empty(),
+		"un lot tronqué, un index de joueur hors plage ou autre chose qu'un lot d'octets est ignoré en entier")
+
+
+## Phase 14 : le territoire d'un client suit celui de l'hôte par la liste des cellules changées.
+func _tester_territoire_reseau() -> void:
+	print("-- Territoire en réseau (cellules changées, scores)")
+	var taille := Vector2i(20, 6)
+	var peignables := PackedByteArray()
+	peignables.resize(taille.x * taille.y)
+	peignables.fill(1)
+	peignables[0] = 0
+	var hote := Territoire.new(taille, peignables, 8)
+	var client := Territoire.new(taille, peignables, 8)
+	for i in range(3):
+		hote.tamponner(0, Vector2i(40, 24), 20)
+		hote.tamponner(1, Vector2i(100, 24), 20)
+	var premier := hote.extraire_changements()
+	_check(client.appliquer_changements(hote.encoder_changements(premier)) and premier.size() > 0,
+		"(pré-condition) des cellules changées chez l'hôte, appliquées chez le client")
+	for i in range(6):
+		hote.tamponner(1, Vector2i(56, 24), 20)  # le joueur 1 vole une partie des cellules du joueur 0
+	hote.tamponner(2, Vector2i(140, 30), 12)  # une passe qui ne suffit pas à compter
+	var second := hote.extraire_changements()
+	var octets := hote.encoder_changements(second)
+	_check(octets.size() == second.size() * Territoire.OCTETS_PAR_CHANGEMENT and client.appliquer_changements(octets),
+		"3 octets par cellule changée (index u16, propriétaire compté u8)")
+	var memes := true
+	for i in range(peignables.size()):
+		memes = memes and client.proprietaire_compte(i) == hote.proprietaire_compte(i)
+	_check(memes and client.scores() == hote.scores() and client.cellules_de(0) == hote.cellules_de(0)
+		and client.cellules_de(1) == hote.cellules_de(1) and hote.cellules_de(0) > 0 and hote.cellules_de(1) > 0,
+		"le client a le même propriétaire compté par cellule et les mêmes scores que l'hôte (%s)" % [client.scores()])
+	var avant := client.scores()
+	var mauvaise_cellule := PackedByteArray([0, 0, 1])  # la cellule 0 n'est pas peignable
+	var hors_grille := PackedByteArray([0xFF, 0xFF, 1])
+	var mauvais_joueur := PackedByteArray([5, 0, EtatPartie.NB_JOUEURS_MAX + 1])
+	_check(not client.appliquer_changements(mauvaise_cellule) and not client.appliquer_changements(hors_grille)
+		and not client.appliquer_changements(mauvais_joueur) and not client.appliquer_changements(PackedByteArray([1, 0]))
+		and not client.appliquer_changements(octets.slice(0, 3) + PackedByteArray([0xFF, 0xFF, 1])) and client.scores() == avant,
+		"un lot mal formé (cellule non peignable ou hors grille, joueur hors plage, taille tronquée) est refusé sans rien changer")
+	var vide := client.extraire_changements()
+	_check(vide.is_empty(), "appliquer les changements de l'hôte n'en crée pas d'autres chez le client")
