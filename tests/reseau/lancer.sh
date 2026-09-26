@@ -202,4 +202,9 @@ if [ "$ECHECS" -eq 0 ]; then
 	exit 0
 fi
 echo "journaux gardés dans $JOURNAUX"
+# Recopiés dans la sortie : en CI, c'est tout ce qui reste d'un échec.
+for f in "$JOURNAUX"/*.log; do
+	echo "----- $(basename "$f")"
+	cat "$f"
+done
 exit 1

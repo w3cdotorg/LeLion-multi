@@ -53,6 +53,13 @@ jobs:
           timeout 300 godot --headless --fixed-fps 60 --script tests/bataille_test.gd 2>&1 | tee bataille_test.log
           if grep -nE "SCRIPT ERROR|SHADER ERROR" bataille_test.log; then echo "::error::erreur de script dans le test de bataille"; exit 1; fi
 
+      - name: Test réseau (transport, plusieurs processus sur localhost)
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 300 bash tests/reseau/lancer.sh 2>&1 | tee reseau.log
+          if grep -nE "SCRIPT ERROR|SHADER ERROR" reseau.log; then echo "::error::erreur de script dans le test réseau"; exit 1; fi
+
       - name: Exporter en Web
         shell: bash
         run: |
