@@ -322,7 +322,10 @@ func _jouer_ecouteur() -> void:
 		brouilleur.put_packet(donnees)
 	brouilleur.close()
 	await _pause(0.3)
-	_check(decouverte.ecoute_active() and decouverte.parties.is_empty(), "des datagrammes qui ne sont pas des balises n'ajoutent aucune partie")
+	var hote_seul: bool = decouverte.parties.values().all(func(p: Dictionary) -> bool:
+		return p.pseudo == _option("hote", "Hote") and p.port == int(_option("port", "17777")))
+	_check(decouverte.ecoute_active() and hote_seul,
+		"des datagrammes qui ne sont pas des balises n'ajoutent aucune partie autre que celle de l'hôte (%s)" % [decouverte.parties])
 	print("ECOUTE PRETE")
 
 	var hote := _option("hote", "Hote")
@@ -363,7 +366,10 @@ func _jouer_ecouteur() -> void:
 		return not decouverte.parties.has(cle))
 	var apres: float = (Time.get_ticks_msec() - int(derniere_vue[0])) / 1000.0
 	print("PARTIE EXPIREE apres=%.2f s" % apres)
-	_check(expiree and apres >= decouverte.DELAI_EXPIRATION and apres <= decouverte.DELAI_EXPIRATION + 0.5,
+	# Marge à 1,0 s (au lieu de 0,5 s) : Godot headless dort ~7 ms par image, sûr sauf si le runner
+	# cale plus de 0,5 s entre deux images (constat 4 de la revue finale de la phase 12) ; la
+	# frontière exacte reste verrouillée par les tests unitaires (« 3 s pile reste », 3001 ms disparaît).
+	_check(expiree and apres >= decouverte.DELAI_EXPIRATION and apres <= decouverte.DELAI_EXPIRATION + 1.0,
 		"la partie disparaît de la liste %.0f s après sa dernière balise (%.2f s)" % [decouverte.DELAI_EXPIRATION, apres])
 	if depart >= 0:
 		var depuis_depart := (Time.get_ticks_msec() - depart) / 1000.0

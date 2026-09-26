@@ -230,7 +230,10 @@ if attendre_hote hote6; then
 	lancer ecouteur6 --role=ecouteur --port=$P --port-balise=$B --hote=Hote6 --places=4 --rejoindre
 	if attendre_ligne ecouteur6 "ECOUTE PRETE"; then
 		lancer occupe6 --role=ecouteur --port-balise=$B --occupe
-		attendre_ligne ecouteur6 "PARTIE A 2" && touch "$JOURNAUX/rester6"
+		# occupe6 doit tenter son bind() pendant qu'ecouteur6 tient encore le port (le second bind
+		# doit échouer, pas juste arriver après coup) : on attend sa vérification avant de laisser
+		# partir ecouteur6 (constat 4 de la revue finale de la phase 12).
+		attendre_ligne occupe6 "RESULTAT occupe" && attendre_ligne ecouteur6 "PARTIE A 2" && touch "$JOURNAUX/rester6"
 	fi
 fi
 terminer "découverte : partie vue et rejointe par sa balise, comptée à 2, expirée après le départ de l'hôte ; port des balises occupé sans plantage"
@@ -241,7 +244,7 @@ terminer "découverte : partie vue et rejointe par sa balise, comptée à 2, exp
 if [ "${DIFFUSION:-0}" = "1" ]; then
 	P=$((PORT_BASE + 7))
 	B=$((PORT_BASE + 1007))
-	lancer hote7 --role=hote --port=$P --pseudo=Hote7 --diffusion --rester="$JOURNAUX/rester7"
+	lancer hote7 --role=hote --port=$P --port-balise=$B --pseudo=Hote7 --diffusion --rester="$JOURNAUX/rester7"
 	if attendre_hote hote7; then
 		lancer ecouteur7 --role=ecouteur --port=$P --port-balise=$B --hote=Hote7 --diffusion
 		attendre_ligne ecouteur7 "PARTIE VUE" && touch "$JOURNAUX/rester7"
