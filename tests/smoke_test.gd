@@ -451,9 +451,8 @@ func _run() -> void:
 	_check(JL.vies < vies_avant, "le boss blesse le lion au passage (%d → %d)" % [vies_avant, JL.vies])
 	# Les deux chemins de contact du peintre : body_entered, puis le contact continu hors repos.
 	# Un lion resté à son contact est frappé dès la fin de son invulnérabilité, sans nouveau
-	# body_entered ; le coup part de la verticale du peintre, à la hauteur du lion.
-	_check(boss.origine_du_coup(lion) == Vector2(boss.global_position.x, lion.global_position.y),
-		"le coup du peintre part de sa verticale, à la hauteur du lion")
+	# body_entered ; le coup part de la verticale du peintre, à la hauteur du lion : le recul est
+	# horizontal.
 	boss._arreter()
 	boss.etat = boss.Etat.PAUSE
 	boss.position.x = 1000.0
@@ -466,6 +465,10 @@ func _run() -> void:
 	await create_timer(0.4).timeout
 	await _frames(2)
 	_check(JL.vies == 2, "un lion resté au contact du peintre est frappé dès la fin de son invulnérabilité (contact continu)")
+	_check(lion._recul.length() > 0.0 and absf(lion._recul.normalized().y) < 0.01,
+		"le coup du peintre part de sa verticale, à la hauteur du lion : le recul est horizontal (%s)" % lion._recul)
+	boss.etat = boss.Etat.REPOS  # au repos, hors de l'écran : il ne touche plus rien
+	boss.position.x = boss._x_hors_ecran()
 	GS.niveau_courant = 0
 
 	# Arcade : neuf stages, Facile → Moyen → Hardcore

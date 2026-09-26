@@ -12,7 +12,7 @@ signal etat_change(etat: Etat)
 @export var duree_pause := 1.0
 @export var duree_sortie := 3.0
 @export var duree_repos := 2.0
-@export var acceleration_max := 0.65     # facteur de durée quand la ville est presque peinte
+@export var acceleration_max := 0.65     # facteur de durée en fin de partie (avancement des règles)
 @export var depassement_annonce := 40.0  # pixels visibles pendant l'annonce
 
 @onready var sprite: Sprite2D = $Sprite2D
@@ -54,10 +54,12 @@ func _physics_process(delta: float) -> void:
 		_signaler_les_lions_au_contact()
 
 
-## Le coup du peintre part de sa verticale, à la hauteur du lion (et non de son centre, bien plus
-## haut ou plus bas que le lion) : le lion est repoussé sur le côté.
+## Le coup du peintre part de sa verticale, à la hauteur du centre du lion (et non du centre du
+## peintre, bien plus haut ou plus bas) : le lion est repoussé sur le côté, jamais vers le bas.
+## `lion.global_position` est le coin du lion : sans `Lion.CENTRE.y`, le recul pointait vers le bas
+## (vers la ville), et tout droit vers le bas pour un lion centré sur le peintre.
 func origine_du_coup(lion: Lion) -> Vector2:
-	return Vector2(global_position.x, lion.global_position.y)
+	return Vector2(global_position.x, lion.global_position.y + Lion.CENTRE.y)
 
 
 ## Facteur appliqué aux durées : 1 au début, `acceleration_max` en fin de partie. L'avancement
