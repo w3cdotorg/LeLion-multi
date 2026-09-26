@@ -4,7 +4,8 @@ extends SceneTree
 ## un lion par joueur, apparitions et peintre à l'échelle de l'écran, puis une manche de 90 s
 ## pilotée par le test, dont les mesures (territoire, couverture, vols, crans, jeux de tampons)
 ## s'affichent en lignes « MESURE ». Avec `--fixed-fps 60`, chaque frame avance d'un tick sans
-## attendre l'horloge : la manche entière prend quelques secondes.
+## attendre l'horloge : la manche entière prend quelques secondes. Avec le rendu (sans
+## `--headless`) et `-- --captures=<dossier>`, la manche est aussi capturée en PNG (contrôle ◉).
 ## Compilé avant les autoloads : ne nomme ni `GameState`, ni `Lion`, ni `Ennemi`, ni la ville.
 
 const NB_LIONS := 4
@@ -17,14 +18,19 @@ const DISTANCE_PASTILLE_TENTANTE := 900.0  # le pilote de la manche va chercher 
 ## part.
 const CIBLE_RAPPORT_COUVERTURE := Vector2(0.7, 1.3)
 const CIBLE_PART_VOLEE := 0.4
+const INSTANTS_CAPTURES: Array[float] = [5.0, 45.0, 88.0]  # secondes de manche
 
 var _echecs := 0
 var GS: Node
+var _dossier_captures := ""
 ## Les règles branchées par `configurer_bataille`, avant le chargement de la scène.
 var _regles_branchees: Regles
 
 
 func _init() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--captures="):
+			_dossier_captures = arg.trim_prefix("--captures=")
 	call_deferred("_run")
 
 
@@ -317,6 +323,9 @@ func _piloter(lion: Node2D, couloir: Dictionary, haut: float, lions: Array, past
 
 func _tester_manche() -> void:
 	print("-- Manche à 4 lions, pilotée")
+	GS.configurer_bataille(NB_LIONS)  # les joueurs existent avant la scène : leurs pseudos aussi
+	for i in range(NB_LIONS):
+		GS.joueurs[i].pseudo = "Joueur %d" % (i + 1)  # pour les captures : chaque lion porte son pseudo
 	var main := await _charger_bataille(0)
 	var ville: Node2D = main.get_node("Ville")
 	var t: Territoire = ville.territoire
@@ -340,6 +349,9 @@ func _tester_manche() -> void:
 		var jeux_avant: int = ville._tampons.size()
 		await physics_frame
 		jeux_max_par_frame = maxi(jeux_max_par_frame, ville._tampons.size() - jeux_avant)
+		for k in range(INSTANTS_CAPTURES.size()):
+			if f == int(INSTANTS_CAPTURES[k] * Engine.physics_ticks_per_second):
+				await _capturer("bataille_%d" % (k + 1))
 		var maintenant := Time.get_ticks_usec()
 		pire_frame_ms = maxf(pire_frame_ms, (maintenant - instant) / 1000.0)
 		instant = maintenant
@@ -366,6 +378,8 @@ func _tester_manche() -> void:
 	_check(GS.joueurs.any(func(j: Joueur) -> bool: return j.crans > 1), "des pastilles sont ramassées en cours de manche")
 	_check(paused and main.get_node_or_null("GameOver") == null, "la fin de manche fige la bataille, sans le bilan du solo")
 	await _liberer(main)
+	for j: Joueur in GS.joueurs:
+		j.pseudo = ""
 
 
 ## Passe pleine vitesse d'un lion en vomissant, de la gauche vers x = 1700, à la hauteur de jet
@@ -507,3 +521,13 @@ func _tester_retour_au_titre() -> void:
 	_check(root.get_visible_rect().size == Vector2(2000, 648), "l'écran titre est en 2000×648")
 	titre.free()
 	scores.effacer()
+
+
+## Avec le rendu et `--captures=<dossier>` seulement : en headless, le viewport n'a pas d'image.
+func _capturer(nom: String) -> void:
+	if _dossier_captures.is_empty():
+		return
+	await RenderingServer.frame_post_draw
+	var chemin := _dossier_captures.path_join(nom + ".png")
+	root.get_texture().get_image().save_png(chemin)
+	print("  📸 ", chemin)

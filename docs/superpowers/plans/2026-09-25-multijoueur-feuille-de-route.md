@@ -182,7 +182,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   amorcer `_generer_tampons` avec un `RandomNumberGenerator` dont la graine est dérivée de
   `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
   tampon (spec §6) ;
-- **phase 10** : rerégler `GAIN` / `SEUIL_POSSESSION` / `CHARGE_MAX` sur une vraie manche à 4 lions ;
+- **prochaine phase qui touche `Scripts/Territoire.gd`** (phase 14, méthode d'affichage) : le
+  commentaire de `CHARGE_MAX` annonce encore « La phase 10 rerègle ces constantes sur une vraie
+  manche » ; la phase 10 ter les a gardées (4, 12, 12) et réglé l'empreinte du tampon dans la ville
+  (`Ville.EMPREINTE_TERRITOIRE`, spec §6, cibles vérifiées par `tests/bataille_test.gd`) : le
+  corriger ;
 - **phase 14** : jeux de tampons (`Ville._generer_tampons`), mesurés en phase 10 : 0,5 ms (16 px)
   à 3,7 ms (46 px), 14,6 ms pour l'étoile XXL (92 px), 65 ms pour les 14 jeux d'un joueur ; sur la
   manche à 4 pilotée de `tests/bataille_test.gd` (ligne `MESURE jeux de tampons`, 5 passages), 16 à
@@ -195,14 +199,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   quand `joueur_local()` choisira le joueur par `id_reseau`, `Audio` (et tout abonnement pris une
   seule fois) devra se réabonner quand le joueur local change (signal dédié, ou abonnement par
   partie depuis `Main`) ;
-- **phase 10 (obligatoire avant la première partie de bataille)** : `GameState.configurer_solo()` /
-  `configurer_bataille(n)` existent depuis la phase 8 (règles, joueurs redimensionnés en place,
-  index et couleurs ; testés). Les appeler **avant** le changement de scène, jamais depuis la scène
-  de jeu : `Main._enter_tree` appelle `GameState.nouvelle_partie()`, puis Lion, Spawner, HUD et Main
-  s'abonnent à `joueur_local()` dans leur `_ready`. `configurer_bataille(n)` avant la scène de
-  bataille, et `configurer_solo()` avant toute partie solo, démo ou arcade lancée depuis le titre
-  (sans quoi une partie solo jouée après une bataille garderait les règles et la couleur de la
-  bataille) ;
+- **phase 13** : le salon appelle `GameState.configurer_bataille(n)` juste avant de charger la
+  scène de bataille, jamais depuis elle (`Main._enter_tree` appelle `nouvelle_partie()`, puis Lion,
+  Spawner, HUD et Main s'abonnent à `joueur_local()` dans leur `_ready`) ; l'écran titre remet le
+  solo avant toute partie (`configurer_solo()` et l'écran 2000×648, phase 10 ter) ; le salon et
+  l'écran Réseau passent eux-mêmes en 16:9 (spec §7 : `ReglesBataille.TAILLE_ECRAN`) ;
 - **phase 14** : les réactions du `Joueur` sont des appels de méthode qui émettent des signaux
   (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`, `gagner_cran`, `etourdir`, et `avancer`
   pour `etourdissement_fini`). Un `MultiplayerSynchronizer` qui écrit les champs bruts n'émettrait
@@ -218,9 +219,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
   tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
-- **phase 10** : le pseudo est une étiquette au-dessus du sprite (38 px au-dessus du lion) : un
-  lion collé en haut de l'écran la cache. En bataille, borner `y` à la hauteur de l'étiquette ou la
-  passer sous le lion près du bord ;
 - **phase 13** : `GameState.configurer_bataille(nb_joueurs)` attribue l'index et la couleur de
   chaque joueur depuis `PALETTE_BATAILLE`, par position ; une fois que le salon attribue les
   couleurs (choix des joueurs), `configurer_bataille` ne doit plus les écraser : lui passer les
@@ -291,12 +289,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `joueur.est_etourdi()` (spec §4.1) ;
 - **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
-- **phase 10 ter** : `GameState.prochain_index_couleur()` n'a plus d'appelant depuis la phase 10 bis
-  (le Spawner lit `GameState.regles.pastille_a_offrir()`, que `ReglesSolo` tient depuis la phase 10,
-  vérifications unitaires comprises) : la retirer ;
-- **phase 10 ter** : quand `Titre._ready` applique `taille_ecran()` (retour au titre en solo
-  2000×648), étendre le docstring de `Regles.taille_ecran()` ("appliquée par `Main` en entrant
-  dans la scène de jeu") avec "et par le titre" ;
+- **prochaine phase qui touche `Scripts/Regles.gd`** : `Titre._ready` applique aussi
+  `taille_ecran()` (retour au titre en solo 2000×648) : étendre le docstring de
+  `Regles.taille_ecran()` ("appliquée par `Main` en entrant dans la scène de jeu") avec "et par le
+  titre" ;
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
