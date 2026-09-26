@@ -49,6 +49,7 @@ func _run() -> void:
 	await _tester_scene()
 	await _tester_apparitions()
 	await _tester_peintre()
+	await _tester_pseudos_et_chocs()
 	await _tester_reglage_territoire()
 	await _tester_manche()
 	await _tester_solo_apres_bataille()
@@ -438,3 +439,50 @@ func _tester_reglage_territoire() -> void:
 	_check(part_volee_min >= CIBLE_PART_VOLEE,
 		"une passe pleine vitesse vole au moins %.0f %% des cellules d'un adversaire, dès le premier cran (%.0f %%)"
 			% [100.0 * CIBLE_PART_VOLEE, 100.0 * part_volee_min])
+
+
+func _tester_pseudos_et_chocs() -> void:
+	print("-- Pseudos et chocs")
+	GS.configurer_bataille(NB_LIONS)  # les joueurs existent avant la scène : leurs pseudos aussi
+	for i in range(NB_LIONS):
+		GS.joueurs[i].pseudo = "" if i == 3 else "Joueur %d" % (i + 1)
+	var main := await _charger_bataille(0)
+	var lions: Array = main.lions
+	await _attendre_depart()
+	# Un lion qui monte tout en haut de l'écran garde son pseudo visible ; sans pseudo, il monte jusqu'au bord
+	for i in [1, 3]:
+		lions[i].commandes.direction_voulue = Vector2.UP
+	await _frames(90)
+	var etiquette: Label = lions[1].etiquette_pseudo
+	_check(etiquette.visible and etiquette.get_global_rect().position.y >= -0.5,
+		"un lion collé en haut de l'écran n'y cache pas son pseudo (haut de l'étiquette à %.1f px)" % etiquette.get_global_rect().position.y)
+	_check(not lions[3].etiquette_pseudo.visible and lions[3].global_position.y == 0.0,
+		"un lion sans pseudo monte jusqu'au bord de l'écran")
+	for i in [1, 3]:
+		lions[i].commandes.direction_voulue = Vector2.ZERO
+
+	# Deux chocs à 0,5 s de jeu d'écart comptent tous les deux (délai anti-rafale : 0,3 s de jeu).
+	# En --fixed-fps, 0,5 s de jeu passent en quelques millisecondes : un délai mesuré à
+	# l'horloge murale bloquait le second.
+	var l1: CharacterBody2D = lions[1]
+	var l2: CharacterBody2D = lions[2]
+	var j1: Joueur = GS.joueurs[1]
+	var j2: Joueur = GS.joueurs[2]
+	for essai in range(2):
+		for l: CharacterBody2D in [l1, l2]:
+			l._recul = Vector2.ZERO
+			l._vitesse = Vector2.ZERO
+		l1.global_position = Vector2(600, 400)
+		l2.global_position = Vector2(800, 400)
+		await _frames(2)
+		l1.commandes.direction_voulue = Vector2.RIGHT
+		for i in range(90):
+			await physics_frame
+			if j1.chocs > essai:
+				break
+		l1.commandes.direction_voulue = Vector2.ZERO
+		await _frames(30)
+	_check(j1.chocs == 2 and j2.chocs == 2, "deux chocs à une demi-seconde de jeu d'écart comptent tous les deux (%d, %d)" % [j1.chocs, j2.chocs])
+	await _liberer(main)
+	for j: Joueur in GS.joueurs:
+		j.pseudo = ""
