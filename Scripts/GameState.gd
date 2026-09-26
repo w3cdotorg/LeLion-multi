@@ -16,11 +16,14 @@ const COULEURS_ARC_EN_CIEL: Array[Color] = [
 ]
 const VIES_MAX := 3
 const NB_JOUEURS_MAX := 6
-## Palette de bataille, attribuée par index de joueur (planche de la phase 7). Provisoire : la
-## phase 11 en fait l'attribution du salon et règle les luminosités (deutéranopie).
+## Palette de bataille : rouge, bleu, jaune, vert, magenta, cyan. L'hôte attribue la première
+## libre à chaque arrivant (`Reseau`), `configurer_bataille` la donne par index hors salon. Réglée
+## en phase 11 bis pour la deutéranopie (Machado 2009) : l'écart OKLab minimal entre deux couleurs
+## simulées passe de 0,115 (planche de la phase 7 : rouge et vert confondus) à 0,186, sans
+## s'éloigner de plus de 0,06 des teintes de la planche, et chacune reste claire (OKLab L >= 0,54).
 const PALETTE_BATAILLE: Array[Color] = [
-	Color(0.90, 0.16, 0.16), Color(0.16, 0.39, 0.95), Color(0.98, 0.82, 0.10),
-	Color(0.18, 0.78, 0.25), Color(0.90, 0.20, 0.85), Color(0.10, 0.85, 0.90),
+	Color(0.81, 0.14, 0.01), Color(0.24, 0.38, 1.00), Color(1.00, 0.91, 0.09),
+	Color(0.19, 0.82, 0.34), Color(0.87, 0.26, 0.73), Color(0.23, 0.92, 1.00),
 ]
 const NB_ETAPES_ARCADE := 9  # 3 niveaux × 3 difficultés
 const DIFFICULTES: Array[Dictionary] = [

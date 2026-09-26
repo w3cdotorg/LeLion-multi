@@ -30,6 +30,7 @@ func _run() -> void:
 	_tester_territoire()
 	_tester_reseau()
 	_tester_joueur_local()
+	_tester_palette()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -971,3 +972,48 @@ func _tester_joueur_local() -> void:
 	gs.nouvelle_partie()
 	gs.partie_en_cours = false
 	gs.pret = false
+
+
+func _tester_palette() -> void:
+	print("-- Palette de bataille (deutéranopie)")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var normales: Array[Vector3] = []
+	var deuteranopes: Array[Vector3] = []
+	for c in palette:
+		var lineaire := c.srgb_to_linear()
+		normales.append(_oklab(Vector3(lineaire.r, lineaire.g, lineaire.b)))
+		deuteranopes.append(_oklab(_deuteranopie(Vector3(lineaire.r, lineaire.g, lineaire.b))))
+	var min_normale := INF
+	var min_deuteranope := INF
+	for i in range(palette.size()):
+		for k in range(i + 1, palette.size()):
+			min_normale = minf(min_normale, normales[i].distance_to(normales[k]))
+			min_deuteranope = minf(min_deuteranope, deuteranopes[i].distance_to(deuteranopes[k]))
+	_check(palette.size() == EtatPartie.NB_JOUEURS_MAX and palette.all(func(c: Color) -> bool: return c.a == 1.0),
+		"une couleur opaque par joueur possible")
+	_check(normales.all(func(v: Vector3) -> bool: return v.x >= 0.5), "chaque couleur reste claire (OKLab L >= 0,5) : lisible sur le haut du ciel, bleu nuit")
+	_check(min_normale >= 0.2, "deux couleurs se distinguent nettement (écart OKLab minimal %.3f, au moins 0,2)" % min_normale)
+	_check(min_deuteranope >= 0.18,
+		"en deutéranopie simulée aussi (écart OKLab minimal %.3f, au moins 0,18 ; 0,115 pour la planche de la phase 7)" % min_deuteranope)
+
+
+## Deutéranopie simulée (Machado 2009, sévérité 1), en RVB linéaire.
+func _deuteranopie(l: Vector3) -> Vector3:
+	return Vector3(
+		0.367322 * l.x + 0.860646 * l.y - 0.227968 * l.z,
+		0.280085 * l.x + 0.672501 * l.y + 0.047413 * l.z,
+		-0.011820 * l.x + 0.042940 * l.y + 0.968881 * l.z).clamp(Vector3.ZERO, Vector3.ONE)
+
+
+## OKLab (Ottosson 2020) d'une couleur en RVB linéaire : la distance entre deux couleurs y suit
+## l'écart perçu.
+func _oklab(l: Vector3) -> Vector3:
+	var lms := Vector3(
+		0.4122214708 * l.x + 0.5363325363 * l.y + 0.0514459929 * l.z,
+		0.2119034982 * l.x + 0.6806995451 * l.y + 0.1073969566 * l.z,
+		0.0883024619 * l.x + 0.2817188376 * l.y + 0.6299787005 * l.z)
+	var r := Vector3(pow(lms.x, 1.0 / 3.0), pow(lms.y, 1.0 / 3.0), pow(lms.z, 1.0 / 3.0))
+	return Vector3(
+		0.2104542553 * r.x + 0.7936177850 * r.y - 0.0040720468 * r.z,
+		1.9779984951 * r.x - 2.4285922050 * r.y + 0.4505937099 * r.z,
+		0.0259040371 * r.x + 0.7827717662 * r.y - 0.8086757660 * r.z)
