@@ -1,6 +1,6 @@
 class_name Joueur
 extends Resource
-## État d'un lion : identité (index, pseudo, couleur) et, pendant une partie, couleurs
+## État d'un lion : identité (poste, index, pseudo, couleur) et, pendant une partie, couleurs
 ## débloquées, crans de gerbe, vies, invulnérabilité, étourdissement, bonus et statistiques.
 ## Ne dépend de rien : ce sont les règles qui décident quand appeler ces méthodes.
 
@@ -18,7 +18,13 @@ signal etourdissement_fini()
 const CRANS_MAX := 7
 ## Écart des nuances foncée et claire autour de la couleur du joueur (voir `nuances`).
 const ECART_NUANCES := 0.35
+## `id_reseau` d'un joueur qu'aucun poste ne joue (les lions pilotés d'une bataille locale).
+const SANS_PAIR := 0
 
+## Identifiant réseau du poste qui joue ce lion (`multiplayer.get_unique_id()` de ce poste), par
+## lequel `GameState.joueur_local()` reconnaît le joueur de ce poste. Le joueur du solo porte
+## celui de l'hôte (1) : hors réseau, ce poste est son propre hôte.
+@export var id_reseau := SANS_PAIR
 @export var index := 0
 @export var pseudo := ""
 ## Couleur du lion en bataille. Transparente (alpha 0) = pas de couleur de lion : c'est le cas

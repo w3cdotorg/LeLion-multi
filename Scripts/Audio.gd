@@ -35,6 +35,9 @@ var _musique: AudioStreamPlayer  # la piste de base, toujours audible
 var ensemble_courant := ""
 var intensite := -1
 var _fondus: Array = [null, null, null]
+## Le joueur local, dont chaque couleur débloquée joue le son de pastille. Suivi pour toute la
+## session : il change sur un client réseau et au retour au solo (`GameState.joueur_local_change`).
+var _joueur_ecoute: Joueur
 
 
 func _ready() -> void:
@@ -59,9 +62,8 @@ func _ready() -> void:
 	Parametres.volumes_changes.connect(appliquer_volumes)
 	demarrer_musique("ville", 1)
 
-	# Son de pastille : le joueur local vient de débloquer une couleur. Le Joueur vit aussi
-	# longtemps que GameState, l'abonnement est pris une fois pour toute la session.
-	GameState.joueur_local().couleur_debloquee.connect(func(_c: Color) -> void: jouer("pickup"))
+	_ecouter(GameState.joueur_local())
+	GameState.joueur_local_change.connect(_ecouter)
 	GameState.partie_terminee.connect(_on_partie_terminee)
 
 
@@ -123,6 +125,19 @@ func demarrer_vomi() -> void:
 
 func arreter_vomi() -> void:
 	_vomi.stop()
+
+
+## Écoute le joueur local `joueur` à la place du précédent.
+func _ecouter(joueur: Joueur) -> void:
+	if _joueur_ecoute != null:
+		_joueur_ecoute.couleur_debloquee.disconnect(_on_couleur_debloquee)
+	_joueur_ecoute = joueur
+	joueur.couleur_debloquee.connect(_on_couleur_debloquee)
+
+
+## Son de pastille : le joueur local vient de débloquer une couleur.
+func _on_couleur_debloquee(_couleur: Color) -> void:
+	jouer("pickup")
 
 
 func _on_partie_terminee(victoire: bool) -> void:
