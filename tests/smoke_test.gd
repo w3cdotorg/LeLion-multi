@@ -1429,6 +1429,8 @@ func _run() -> void:
 	GS.partie_en_cours = false
 	GS.pret = false
 
+	await _tester_manche_reseau()
+
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1911,3 +1913,115 @@ func _appuyer(action: StringName, appuye: bool) -> void:
 	evenement.pressed = appuye
 	root.push_input(evenement)
 	await process_frame
+
+
+## Phase 14 : la scène de jeu d'une bataille en réseau, chez un hôte (ce poste héberge ; l'autre
+## joueur est simulé dans `Reseau.inscrits`, comme au salon) : lion de la scène retiré, lions par le
+## MultiplayerSpawner après la barrière de chargement, exclusion d'un absent, départ en cours de
+## manche, commandes reçues et leur silence, menu local sans pause. Les échanges entre postes sont
+## couverts par tests/reseau/lancer.sh (scénario 9).
+func _tester_manche_reseau() -> void:
+	print("-- Manche en réseau (hôte)")
+	var reseau: Node = root.get_node("Reseau")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	var delai_du_jeu: float = script_manche.delai_chargement
+	for essai in ["charge", "absent"]:
+		reseau.pseudo = "Hôte"
+		_check(reseau.heberger(17798) == OK, "(pré-condition, %s) ce poste héberge" % essai)
+		reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+		reseau.manche_en_cours = true
+		GS.niveau_courant = 0
+		GS.configurer_bataille_reseau([{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[0]},
+			{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[3]}] as Array[Dictionary])
+		script_manche.delai_chargement = 0.5
+		var main: Node = load("res://Scenes/Main.tscn").instantiate()
+		root.add_child(main)
+		current_scene = main
+		await _frames(3)
+		var manche: Node = main.get_node("Manche")
+		_check(main.en_reseau and main.get_node_or_null("Lion") == null and main.lions.is_empty() and main.lion == null
+			and not manche.barriere and reseau.scenes_chargees == [1] and not main.get_node("Intro")._lancee
+			and not main.get_node("Spawner")._demarre,
+			"(%s) en réseau, la scène retire le lion du solo et attend la barrière : ni lion, ni intro, ni apparition" % essai)
+		if essai == "charge":
+			reseau._noter_scene_chargee(7)  # comme la RPC de Bob
+			await _frames(2)
+		else:
+			await create_timer(0.7).timeout
+			await _frames(2)
+			_check(manche._exclus == [7] and not manche.barriere,
+				"(absent) délai passé : Bob est exclu, et la barrière attend son départ")
+			reseau._sur_pair_deconnecte(7)  # son départ, vu par Reseau
+			await _frames(2)
+		var noms: Array = main.lions.map(func(l: Node) -> String: return str(l.name))
+		var attendus_noms: Array = ["Lion1", "Lion2"] if essai == "charge" else ["Lion1"]
+		_check(manche.barriere and noms == attendus_noms and main.lion == main.lions[0] and main.lion.joueur == GS.joueur_local()
+			and main.lion.commandes.source == Commandes.Source.LOCALES and main.get_node("Intro")._lancee and main.get_node("Spawner")._demarre,
+			"(%s) barrière passée : un lion par joueur encore là (%s), celui de ce poste lit ses commandes, l'intro et les apparitions commencent" % [essai, noms])
+		if essai == "absent":
+			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
+			main.free()
+			await _frames(1)
+			reseau.quitter()
+			continue
+		var lion_bob: CharacterBody2D = main.lions[1]
+		_check(lion_bob.joueur == GS.joueurs[1] and lion_bob.commandes.source == Commandes.Source.MANUELLES
+			and lion_bob.position.x < main.lion.position.x + 2000.0 and lion_bob.position.y == main.lion.position.y,
+			"le lion de Bob porte son joueur et des commandes manuelles, à sa place de départ")
+		# Commandes reçues de Bob, numérotées, puis son silence
+		var maintenant := Time.get_ticks_msec()
+		_check(manche.recevoir_commandes_de(1, 5, Vector2(0.5, 0.0), true, maintenant) and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0)
+			and lion_bob.commandes.vomir_voulu, "une commande de Bob est écrite dans les commandes de son lion")
+		_check(not manche.recevoir_commandes_de(1, 4, Vector2(-1, 0), false, maintenant) and not manche.recevoir_commandes_de(1, 5, Vector2(-1, 0), false, maintenant)
+			and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0),
+			"une commande plus ancienne ou déjà vue est ignorée")
+		_check(not manche.recevoir_commandes_de(1, 6, "gauche", false, maintenant) and not manche.recevoir_commandes_de(1, 6, Vector2(INF, 0), false, maintenant)
+			and not manche.recevoir_commandes_de(0, 6, Vector2(1, 0), false, maintenant) and main.lion.commandes.direction() == Vector2.ZERO,
+			"une commande mal formée, non finie ou pour le lion de l'hôte est refusée")
+		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES - 10)
+		_check(lion_bob.commandes.vomir_voulu, "pas encore de silence : la dernière commande tient")
+		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES + 10)
+		_check(lion_bob.commandes.direction_voulue == Vector2.ZERO and not lion_bob.commandes.vomir_voulu,
+			"sans commande de Bob depuis %d ms, son lion revient au repos" % manche.SILENCE_COMMANDES)
+		# Chaque tampon de la ville de l'hôte part avec la manche
+		var avant: int = manche.tampons_diffuses
+		GS.pret = true
+		var ville: Node2D = main.get_node("Ville")
+		ville.peindre(ville.position, 21, GS.joueurs[0])
+		await _frames(2)
+		_check(manche.tampons_diffuses == avant + 1, "la manche diffuse chaque tampon de la ville de l'hôte")
+		# Menu local : la partie continue, les commandes de ce poste sont suspendues
+		var menu: CanvasLayer = main.get_node("PauseMenu")
+		menu.ouvrir()
+		await _frames(1)
+		_check(menu.visible and not paused and main.lion.commandes.suspendues
+			and menu.get_node("Centre/Colonne/Titre").text == "PAUSE_RESEAU" and menu.get_node("Centre/Colonne/Menu").text == "QUITTER_PARTIE",
+			"en réseau, Échap ouvre un menu local : la partie continue, les commandes de ce poste sont suspendues, « Quitter la partie »")
+		menu.reprendre()
+		await _frames(1)
+		_check(not menu.visible and not paused and not main.lion.commandes.suspendues, "le menu fermé, les commandes reprennent")
+		# Bob part en pleine manche : son lion disparaît, ses cellules restent
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		var cellules_bob: int = ville.territoire.cellules_de(1)
+		reseau._sur_pair_deconnecte(7)
+		await _frames(2)
+		_check(not is_instance_valid(lion_bob) and main.lions.size() == 1 and ville.territoire.cellules_de(1) == cellules_bob and cellules_bob > 0,
+			"un joueur parti en pleine manche perd son lion, ses cellules restent au territoire (%d)" % cellules_bob)
+		# Un hôte perdu (chez un client) : message, tout se fige
+		main._sur_hote_perdu()
+		var message: Label = main.get_node("HotePerdu/Message")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused, "l'hôte perdu : « L'hôte a quitté la partie », la partie se fige")
+		paused = false
+		main.free()
+		await _frames(1)
+		reseau.quitter()
+	script_manche.delai_chargement = delai_du_jeu
+	reseau.pseudo = ""
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+	GS.niveau_courant = 0

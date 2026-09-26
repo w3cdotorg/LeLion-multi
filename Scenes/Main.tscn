@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://dlelionmain00"]
+[gd_scene load_steps=13 format=3 uid="uid://dlelionmain00"]
 
 [ext_resource type="Script" path="res://Scripts/Main.gd" id="1_main"]
 [ext_resource type="PackedScene" uid="uid://c8c7a634fe6ju" path="res://Scenes/Ville.tscn" id="2_ville"]
@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" uid="uid://dlelionpause0" path="res://Scenes/PauseMenu.tscn" id="7_pause"]
 [ext_resource type="PackedScene" uid="uid://dleliontactil" path="res://Scenes/ControlesTactiles.tscn" id="8_tactile"]
 [ext_resource type="PackedScene" uid="uid://dlelionintro0" path="res://Scenes/Intro.tscn" id="9_intro"]
+[ext_resource type="Script" path="res://Scripts/Manche.gd" id="10_manche"]
 
 [sub_resource type="Gradient" id="Gradient_ciel"]
 offsets = PackedFloat32Array(0, 0.55, 1)
@@ -46,3 +47,10 @@ script = ExtResource("4_spawner")
 [node name="ControlesTactiles" parent="." instance=ExtResource("8_tactile")]
 
 [node name="Intro" parent="." instance=ExtResource("9_intro")]
+
+[node name="Apparitions" type="MultiplayerSpawner" parent="."]
+_spawnable_scenes = PackedStringArray("res://Scenes/Soucoupe.tscn", "res://Scenes/Coccinelle.tscn", "res://Scenes/Boss.tscn", "res://Scenes/ColorPickup.tscn", "res://Scenes/BonusPickup.tscn", "res://Scenes/CoeurPickup.tscn")
+spawn_path = NodePath("..")
+
+[node name="Manche" type="Node" parent="."]
+script = ExtResource("10_manche")

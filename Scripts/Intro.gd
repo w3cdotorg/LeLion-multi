@@ -2,11 +2,24 @@ extends CanvasLayer
 ## Intro de niveau façon arcade : nom du stage, « PRÊT ? », « VOMISSEZ ! », puis départ.
 
 @export var duree_etape := 0.7
+## Vrai : l'intro se lance d'elle-même (solo, bataille locale). En réseau, la scène de jeu la lance
+## chez tous une fois la barrière de chargement passée (`lancer`).
+var automatique := true
 
 @onready var texte: Label = $Texte
 
+var _lancee := false
+
 
 func _ready() -> void:
+	if automatique:
+		lancer()
+
+
+func lancer() -> void:
+	if _lancee:
+		return
+	_lancee = true
 	var etapes: Array[String] = [GameState.titre_etape(), tr("PRET"), tr("VOMISSEZ")]
 	var tween := create_tween()
 	for i in range(etapes.size()):
