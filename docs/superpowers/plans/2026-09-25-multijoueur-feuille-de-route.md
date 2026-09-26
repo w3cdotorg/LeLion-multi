@@ -20,9 +20,11 @@ godot --headless --import . 2>&1 | grep -E "SCRIPT ERROR|Parse Error|Compile Err
 godot --headless --script tests/unitaires.gd     # à partir de la phase 1
 godot --headless --script tests/smoke_test.gd
 godot --headless --fixed-fps 60 --script tests/bataille_test.gd  # à partir de la phase 10 bis
+bash tests/reseau/lancer.sh                                      # à partir de la phase 11
 ```
 
-Les trois derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0.
+Les quatre derniers doivent finir sur `== 0 échec(s) ==` et un code de sortie 0 (chaque commande
+Godot sous `timeout`, que `tests/reseau/lancer.sh` applique lui-même à chacun de ses processus).
 
 Leur sortie ne doit contenir ni `SCRIPT ERROR` ni `SHADER ERROR` : en headless, le rendu factice
 compile quand même les shaders et signale leurs erreurs sans changer le code de sortie.
@@ -61,12 +63,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
-| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main, version, attribution des index et couleurs). | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
+| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis. | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
+| 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie, test réseau en CI. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` ✏️ `.github/workflows/ci.yml` | tests verts, CI verte, ◉ planche de la palette |
 | 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
 | 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
-| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Ajouté à la CI. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test vert en CI |
+| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 bis (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
 | 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
@@ -137,8 +140,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 13** (salon) : le pseudo choisi au salon peut être plus large que le sprite du lion
   (l'étiquette de bataille est centrée, `offset_left -42 … offset_right 178`, sur un lion borné à
   `x ∈ [0, 2000 - sprite_w]`) ; au-delà d'une douzaine de caractères à 26 px, elle est coupée par le
-  bord de l'écran : plafonner la longueur du pseudo au salon, ou clamper l'abscisse de l'étiquette
-  dans l'écran ;
+  bord de l'écran. L'hôte coupe déjà tout pseudo à `Reseau.PSEUDO_MAX` (12 caractères, phase 11) :
+  borner aussi le champ de saisie à `Reseau.PSEUDO_MAX`, et vérifier sur capture qu'un pseudo de 12
+  caractères larges (« MMMMMMMMMMMM ») tient dans l'écran à chaque bord, sinon clamper l'abscisse de
+  l'étiquette ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -217,14 +222,29 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   au titre avec le `Joueur` d'un autre (pseudo, `id_reseau`) comme joueur solo : `configurer_solo()`
   doit garder ou déplacer le joueur local en case 0 et réinitialiser son `index` ; le réabonnement
   d'`Audio` (point ci-dessus) doit couvrir ce chemin ;
-- **phases 12/13** : le retour au titre remet les règles (`configurer_solo()`, phase 10 ter) mais
-  pas le pair multijoueur. Après « hôte perdu → retour au titre » (spec §4/§9), un pair ENet client
-  qui traîne ou vient de se fermer laisse `multiplayer.is_server()` à faux, et le solo relancé depuis
-  ce titre casse silencieusement (ennemis qui ne touchent jamais, pastilles ignorées, gerbe et chocs
-  non signalés) : chaque chemin de retour au titre doit restaurer
-  `multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()`, dans `Titre._ready` à côté de
-  `configurer_solo()` ou dans `Reseau.quitter()`, avec une vérification que le solo fonctionne après
-  la fermeture d'un pair client ;
+- **phase 12** : `Reseau.quitter()` (phase 11) ferme le pair et remet `OfflineMultiplayerPeer` ;
+  `Reseau` le fait déjà de lui-même avant d'émettre `refuse`, `connexion_echouee` et `hote_perdu`
+  (vérifié par `tests/reseau/lancer.sh`). `Titre._ready` doit encore appeler `Reseau.quitter()` à
+  côté de `configurer_solo()` (retour au titre depuis l'écran Réseau, le salon, ou une manche
+  quittée par le menu local, sans signal de `Reseau`), avec une vérification que le solo relancé
+  depuis le titre après un hébergement fonctionne (`multiplayer.is_server()` vrai, un ennemi touche
+  le lion) ; sans quoi ennemis, pastilles, gerbe et chocs cessent en silence ;
+- **phase 12** (écran Réseau) : `Reseau` ne donne que des clés : les textes de `REFUS_VERSION`
+  (« Version différente de l'hôte (%s) », avec `version_hote`), `REFUS_PLEIN`, `REFUS_MANCHE` et
+  `REFUS_DEMANDE`, celui de `connexion_echouee` (spec §9 : après 5 s, retour à l'écran Réseau), de
+  `hote_perdu` (« L'hôte a quitté la partie ») et d'un `heberger` qui renvoie une erreur
+  (`ERR_CANT_CREATE` : « Impossible d'héberger : port 7777 occupé ») vont dans `traductions.csv` ;
+  le pseudo mémorisé dans `Scores` est donné à `Reseau.pseudo` avant `heberger` / `rejoindre` ;
+- **phase 13** (salon) : l'hôte tient `Reseau.inscrits` (id réseau → index, couleur, pseudo) et
+  ses signaux `joueur_arrive` / `joueur_parti` ; le salon les synchronise chez les clients (`Reseau`
+  est dans ses fichiers), change les couleurs parmi les libres (`Reseau.premiere_couleur_libre`,
+  l'hôte arbitre), pose `Reseau.manche_en_cours = true` au lancement (et `false` au retour au salon,
+  phase 18), puis reporte la table dans la partie : `id_reseau`, pseudo et couleur de chaque joueur
+  par index (phase 11 bis : `Joueur.id_reseau`, `configurer_bataille(n, couleurs)`). Ajouter ses
+  scénarios à `tests/reseau/joueur.gd` et `lancer.sh` ;
+- **phase 14** : un client qui part en cours de manche arrive chez l'hôte par
+  `Reseau.joueur_parti(id)` (id réseau, à retrouver par `Joueur.id_reseau`) ; un hôte perdu, chez
+  chaque client, par `Reseau.hote_perdu` (le poste est alors déjà hors réseau) ;
 - **phase 13** : le salon appelle `GameState.configurer_bataille(n)` juste avant de charger la
   scène de bataille, jamais depuis elle (`Main._enter_tree` appelle `nouvelle_partie()`, puis Lion,
   Spawner, HUD et Main s'abonnent à `joueur_local()` dans leur `_ready`) ; l'écran titre remet le
@@ -322,3 +342,45 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
+- **phase 11 bis** (revue finale de la phase 11, M1) : `tests/reseau/lancer.sh` refuse les nouveaux
+  venus après des fenêtres d'attente fixes (`--attente=1/2/3`), pas après un compte de refus réels :
+  sur un runner de CI chargé (plusieurs processus Godot en parallèle), un démarrage lent donne
+  « échec » au lieu du refus attendu, et la consigne interdit d'élargir les délais. Ajouter à
+  l'hôte de test une option `--refus=N` qui compte les `peer_authentication_failed` réels et
+  attend N refus au plus (borné par `DELAI_ETAPE`) avant sa vérification finale, plutôt qu'une
+  pause fixe. Même chose pour le scénario 5 (client « lent ») : le rival doit arriver avant
+  l'expiration de la poignée de main du client lent (3 s depuis sa connexion) sans marge
+  construite ; sur un runner lent il pourrait être accepté au lieu d'être refusé. Avant que le
+  test entre en CI, donner au rival une marge garantie (par exemple un délai de poignée de main
+  réglable par l'hôte de test, porté à 8 s dans ce scénario, et le client tardif lancé après) ;
+- **phase 13** (salon, M4 de la revue de la phase 11) : `Reseau.inscrits` mêle les places réservées
+  (dès la réponse de l'hôte) et les joueurs réellement arrivés (poignée de main finie) : un accepté
+  peut y rester jusqu'à 3 s sans être connecté. Un salon qui construit ses cartes ou envoie des RPC
+  en parcourant `inscrits` tel quel afficherait une carte fantôme et déclencherait
+  `Attempt to call RPC with unknown peer ID`. Ajouter `"arrive": false` à la fiche à la réponse,
+  le passer à `true` dans `_sur_pair_connecte` (ou tenir une table de réservations à part) ;
+- **phase 14** (M6 de la revue de la phase 11) : `ENetMultiplayerPeer.close()` (dans `quitter()`)
+  envoie `peer_disconnect_now`, un seul datagramme non fiable : en Wi-Fi avec pertes, ou avec un
+  poste planté ou en veille, la détection d'un départ repose sur le délai par défaut d'un pair ENet
+  (32 essais, 5 à 30 s), donc « l'hôte a quitté la partie » ou la libération d'une carte peuvent
+  arriver très en retard. À l'inverse, un hôte dont le thread principal bloque plus de ~5 s (le
+  chargement de la scène de manche, la première compilation de shaders sous Windows) déconnecte
+  tous ses clients. Régler explicitement `ENetPacketPeer.set_timeout(...)` (court au salon, plus
+  tolérant pendant les chargements) et, pour un départ volontaire, utiliser
+  `peer_disconnect_later()` (ou un RPC « je pars » fiable avant la fermeture) ;
+- **phase 19** (protocole, M7 de la revue de la phase 11) : la version présentée à la poignée de
+  main est `application/config/version` (« 0.11 » depuis la phase 11), figée jusqu'à cette phase.
+  Les phases 12 à 18 changent l'ensemble des RPC sans que cette version bouge : un `.exe` de CI
+  (Windows) et une version locale (Mac) de phases différentes s'accepteraient à la poignée de main,
+  puis échoueraient en silence sur des RPC ou des caches de nœuds incompatibles, au lieu d'un refus
+  « version différente ». Ajouter une constante `PROTOCOLE` envoyée dans la demande, comparée avec
+  le même refus `REFUS_VERSION`, augmentée par chaque phase qui change les RPC (à partir de la
+  phase 13, premiers RPC) ; ou, plus simple, augmenter `config/version` à chaque phase réseau ;
+- **phase 12** (écran Réseau, M8 de la revue de la phase 11) : `rejoindre()` passe un nom d'hôte tel
+  quel à `create_client`, qui le résout de façon bloquante (`IP::resolve_hostname`) : une faute de
+  frappe gèle le jeu plusieurs secondes sous Windows (NetBIOS/LLMNR). N'accepter que
+  `adresse.is_valid_ip_address()` (ou résoudre hors du thread principal), et ajouter l'indice
+  « Pare-feu de l'hôte ? Réseau Privé ? » au texte de `connexion_echouee`. Le premier `heberger()`
+  déclenche aussi la fenêtre du pare-feu Windows Defender : si le joueur clique « Annuler », ou si
+  le réseau est classé Public, les clients ne voient que `connexion_echouee` après 5 s, sans
+  indice ; en phase 19, le README doit expliquer comment retirer une règle de blocage.

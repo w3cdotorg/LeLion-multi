@@ -94,6 +94,16 @@ de jeu.
   les parties (expiration après 3 s sans balise). Saisie d'IP en secours.
 - **Poignée de main** : le client envoie version + pseudo. Version différente : refus avec message
   « Version différente de l'hôte (x.y) ». Salon plein ou manche en cours : refus explicite.
+  Elle passe par l'authentification de `SceneMultiplayer` (octets bruts avant tout RPC : deux
+  versions différentes se comprennent encore assez pour se refuser). La version est
+  `application/config/version`. L'hôte refuse dans l'ordre : demande mal formée (autre programme),
+  version différente, manche en cours, partie pleine ; il inscrit l'accepté au moment de répondre
+  (deux demandes simultanées ne prennent pas la même place), lui donne le plus petit index libre et
+  la première couleur libre de la palette, et coupe son pseudo à 12 caractères. Un refusé ferme
+  lui-même la connexion après avoir lu la raison (couper du côté de l'hôte viderait la file d'envoi
+  d'ENet, raison comprise) ; un pair muet est coupé au bout de 3 s. Après un refus, un échec ou le
+  départ de l'hôte, le poste revient de lui-même hors réseau (`OfflineMultiplayerPeer`) avant de le
+  signaler (`Reseau`, phase 11).
 - **Parcours** : Titre → *Multijoueur* → écran Réseau (pseudo mémorisé dans `Scores`,
   *Héberger*, liste des parties, *Rejoindre par IP*) → **Salon**.
 - **Salon** : 6 cartes synchronisées par l'hôte (pseudo, aperçu du lion teinté, état Prêt).
@@ -260,10 +270,14 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 - **Tests de prédiction** : un lion prédit sans pertes reste à moins de 4 px de l'hôte ; avec
   80 ms de latence, 40 ms de gigue et 5 % de pertes, l'écart converge sous 4 px en 150 ms après
   l'arrêt des commandes, et aucune commande n'est appliquée deux fois par l'hôte.
-- **Test réseau de bout en bout** (`tests/reseau/lancer.sh` + `tests/reseau/joueur.gd`) : 1 hôte +
-  3 clients headless sur localhost, commandes scriptées. Vérifie à la fin : empreinte identique
-  des propriétaires de cellules chez tous, scores identiques, même nombre de tampons reçus,
-  déconnexion d'un client en cours de manche gérée.
+- **Test réseau** (`tests/reseau/lancer.sh` + `tests/reseau/joueur.gd`) : un processus Godot
+  headless par poste, sur localhost (ports 17778 et suivants), chacun sous `timeout`, tous tués en
+  sortie ; verdict par les codes de sortie et les journaux. Depuis la phase 11, le transport : hôte
+  + 2 clients inscrits, version différente, partie pleine (deux demandes pour la dernière place),
+  manche en cours, départ d'un client, départ de l'hôte, échec de connexion. De bout en bout (phase
+  15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
+  propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
+  déconnexion d'un client en cours de manche.
 - **Visuel** : `tests/screenshots.gd` étendu (salon, manche à 6 couleurs, résultats), deux vraies
   fenêtres en localhost pour une partie manuelle.
 - **Windows** : test manuel de l'`.exe` issu de la CI sur un PC de la LAN (le développement se fait
