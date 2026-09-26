@@ -140,8 +140,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 13** (salon) : le pseudo choisi au salon peut être plus large que le sprite du lion
   (l'étiquette de bataille est centrée, `offset_left -42 … offset_right 178`, sur un lion borné à
   `x ∈ [0, 2000 - sprite_w]`) ; au-delà d'une douzaine de caractères à 26 px, elle est coupée par le
-  bord de l'écran : plafonner la longueur du pseudo au salon, ou clamper l'abscisse de l'étiquette
-  dans l'écran ;
+  bord de l'écran. L'hôte coupe déjà tout pseudo à `Reseau.PSEUDO_MAX` (12 caractères, phase 11) :
+  borner aussi le champ de saisie à `Reseau.PSEUDO_MAX`, et vérifier sur capture qu'un pseudo de 12
+  caractères larges (« MMMMMMMMMMMM ») tient dans l'écran à chaque bord, sinon clamper l'abscisse de
+  l'étiquette ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -220,14 +222,29 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   au titre avec le `Joueur` d'un autre (pseudo, `id_reseau`) comme joueur solo : `configurer_solo()`
   doit garder ou déplacer le joueur local en case 0 et réinitialiser son `index` ; le réabonnement
   d'`Audio` (point ci-dessus) doit couvrir ce chemin ;
-- **phases 12/13** : le retour au titre remet les règles (`configurer_solo()`, phase 10 ter) mais
-  pas le pair multijoueur. Après « hôte perdu → retour au titre » (spec §4/§9), un pair ENet client
-  qui traîne ou vient de se fermer laisse `multiplayer.is_server()` à faux, et le solo relancé depuis
-  ce titre casse silencieusement (ennemis qui ne touchent jamais, pastilles ignorées, gerbe et chocs
-  non signalés) : chaque chemin de retour au titre doit restaurer
-  `multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()`, dans `Titre._ready` à côté de
-  `configurer_solo()` ou dans `Reseau.quitter()`, avec une vérification que le solo fonctionne après
-  la fermeture d'un pair client ;
+- **phase 12** : `Reseau.quitter()` (phase 11) ferme le pair et remet `OfflineMultiplayerPeer` ;
+  `Reseau` le fait déjà de lui-même avant d'émettre `refuse`, `connexion_echouee` et `hote_perdu`
+  (vérifié par `tests/reseau/lancer.sh`). `Titre._ready` doit encore appeler `Reseau.quitter()` à
+  côté de `configurer_solo()` (retour au titre depuis l'écran Réseau, le salon, ou une manche
+  quittée par le menu local, sans signal de `Reseau`), avec une vérification que le solo relancé
+  depuis le titre après un hébergement fonctionne (`multiplayer.is_server()` vrai, un ennemi touche
+  le lion) ; sans quoi ennemis, pastilles, gerbe et chocs cessent en silence ;
+- **phase 12** (écran Réseau) : `Reseau` ne donne que des clés : les textes de `REFUS_VERSION`
+  (« Version différente de l'hôte (%s) », avec `version_hote`), `REFUS_PLEIN`, `REFUS_MANCHE` et
+  `REFUS_DEMANDE`, celui de `connexion_echouee` (spec §9 : après 5 s, retour à l'écran Réseau), de
+  `hote_perdu` (« L'hôte a quitté la partie ») et d'un `heberger` qui renvoie une erreur
+  (`ERR_CANT_CREATE` : « Impossible d'héberger : port 7777 occupé ») vont dans `traductions.csv` ;
+  le pseudo mémorisé dans `Scores` est donné à `Reseau.pseudo` avant `heberger` / `rejoindre` ;
+- **phase 13** (salon) : l'hôte tient `Reseau.inscrits` (id réseau → index, couleur, pseudo) et
+  ses signaux `joueur_arrive` / `joueur_parti` ; le salon les synchronise chez les clients (`Reseau`
+  est dans ses fichiers), change les couleurs parmi les libres (`Reseau.premiere_couleur_libre`,
+  l'hôte arbitre), pose `Reseau.manche_en_cours = true` au lancement (et `false` au retour au salon,
+  phase 18), puis reporte la table dans la partie : `id_reseau`, pseudo et couleur de chaque joueur
+  par index (phase 11 bis : `Joueur.id_reseau`, `configurer_bataille(n, couleurs)`). Ajouter ses
+  scénarios à `tests/reseau/joueur.gd` et `lancer.sh` ;
+- **phase 14** : un client qui part en cours de manche arrive chez l'hôte par
+  `Reseau.joueur_parti(id)` (id réseau, à retrouver par `Joueur.id_reseau`) ; un hôte perdu, chez
+  chaque client, par `Reseau.hote_perdu` (le poste est alors déjà hors réseau) ;
 - **phase 13** : le salon appelle `GameState.configurer_bataille(n)` juste avant de charger la
   scène de bataille, jamais depuis elle (`Main._enter_tree` appelle `nouvelle_partie()`, puis Lion,
   Spawner, HUD et Main s'abonnent à `joueur_local()` dans leur `_ready`) ; l'écran titre remet le
