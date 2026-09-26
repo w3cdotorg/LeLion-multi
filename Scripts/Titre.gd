@@ -1,9 +1,11 @@
 extends Control
-## Écran titre : difficulté et niveau se choisissent (mémorisés), Jouer lance la partie.
-## Les niveaux affichent le record pour la difficulté choisie. `_ready` remet aussi le solo
-## (`GameState.configurer_solo()` et l'écran 2000×648), même au retour d'une bataille.
+## Écran titre : difficulté et niveau se choisissent (mémorisés), Jouer lance la partie,
+## Multijoueur ouvre l'écran Réseau. Les niveaux affichent le record pour la difficulté choisie.
+## `_ready` remet aussi ce poste hors réseau et le solo (`GameState.configurer_solo()` et l'écran
+## 2000×648), même au retour d'une bataille ou de l'écran Réseau.
 
 const SCENE_JEU := "res://Scenes/Main.tscn"
+const SCENE_RESEAU := "res://Scenes/EcranReseau.tscn"
 const DELAI_DEMO := 15.0
 const SCENE_REGLAGES := preload("res://Scenes/Reglages.tscn")
 
@@ -12,6 +14,8 @@ const SCENE_REGLAGES := preload("res://Scenes/Reglages.tscn")
 @onready var bouton_jouer: Button = $Centre/Colonne/Jouer
 @onready var bouton_reglages: Button = $BoutonReglages
 @onready var bouton_arcade: Button = $BoutonArcade
+## Créé par `_ready`, en bas à droite (la colonne centrale remplit déjà les 648 px de haut).
+var bouton_multijoueur: Button
 
 var boutons_difficulte: Array[Button] = []
 var boutons: Array[Button] = []
@@ -21,6 +25,11 @@ var demo_autorisee := true
 
 func _ready() -> void:
 	get_tree().paused = false
+	# Retour depuis l'écran Réseau, le salon ou une manche quittée par le menu local, sans signal de
+	# `Reseau` : ce poste revient hors réseau AVANT de remettre le solo. Sinon un ancien client
+	# relancerait un solo où `multiplayer.is_server()` est faux (ennemis, pastilles, gerbe et chocs
+	# inertes), et un ancien hôte émettrait encore sa balise et accepterait des joueurs.
+	Reseau.quitter()
 	# L'écran titre est celui du solo : Jouer, la démo et l'arcade y lancent des parties solo, dont
 	# les règles doivent être branchées avant le changement de scène (Main._enter_tree appelle
 	# nouvelle_partie), même au retour d'une bataille ; l'écran repasse en 2000×648.
@@ -44,6 +53,7 @@ func _ready() -> void:
 		niveaux.add_child(bouton)
 		boutons.append(bouton)
 
+	bouton_multijoueur = _creer_bouton_multijoueur()
 	Parametres.langue_changee.connect(func(_l: String) -> void: rafraichir_textes())
 	choisir_difficulte(GameState.difficulte_courante)
 	choisir_niveau(GameState.niveau_courant)
@@ -64,6 +74,31 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and event.relative.length() < 2.0:
 		return
 	inactivite = 0.0
+
+
+## Le bouton Multijoueur, en bas à droite, dans le style des boutons de coin (Arcade, Réglages) ;
+## au clavier et à la manette, droite depuis Jouer y mène, gauche en revient.
+func _creer_bouton_multijoueur() -> Button:
+	var bouton := Button.new()
+	bouton.name = "BoutonMultijoueur"
+	bouton.text = "MULTIJOUEUR"
+	bouton.add_theme_font_size_override("font_size", 26)
+	bouton.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	bouton.offset_left = -284.0
+	bouton.offset_top = -100.0
+	bouton.offset_right = -24.0
+	bouton.offset_bottom = -24.0
+	bouton.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	bouton.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	bouton.pressed.connect(ouvrir_reseau)
+	add_child(bouton)
+	bouton_jouer.focus_neighbor_right = bouton_jouer.get_path_to(bouton)
+	bouton.focus_neighbor_left = bouton.get_path_to(bouton_jouer)
+	return bouton
+
+
+func ouvrir_reseau() -> void:
+	get_tree().change_scene_to_file(SCENE_RESEAU)
 
 
 func lancer_demo(changer_scene := true) -> void:

@@ -115,8 +115,11 @@ de jeu.
   d'ENet, raison comprise) ; un pair muet est coupé au bout de 3 s. Après un refus, un échec ou le
   départ de l'hôte, le poste revient de lui-même hors réseau (`OfflineMultiplayerPeer`) avant de le
   signaler (`Reseau`, phase 11).
-- **Parcours** : Titre → *Multijoueur* → écran Réseau (pseudo mémorisé dans `Scores`,
-  *Héberger*, liste des parties, *Rejoindre par IP*) → **Salon**.
+- **Parcours** : Titre → *Multijoueur* (bouton en bas à droite, voisin de droite de *Jouer*) →
+  écran Réseau, en 16:9 (pseudo mémorisé dans `Scores`, 12 caractères au plus, *Héberger*, liste
+  des parties où les pleines, en cours ou d'une autre version sont grisées avec la raison,
+  *Rejoindre par IP*, IPv4 seulement) → **Salon**. Le titre remet toujours le poste hors réseau
+  (`Reseau.quitter()`) avant le solo.
 - **Salon** : 6 cartes synchronisées par l'hôte (pseudo, aperçu du lion teinté, état Prêt).
   Gauche/droite change de couleur parmi les libres, l'hôte arbitre les conflits. L'hôte choisit le
   niveau (haut/bas). Vomir bascule Prêt. Dès que ≥ 2 joueurs sont inscrits et que tous sont prêts,
@@ -265,10 +268,12 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 | Situation | Comportement |
 |---|---|
 | Port 7777 déjà utilisé à l'hébergement | Message « Impossible d'héberger : port 7777 occupé » |
-| Connexion à une IP qui ne répond pas | Délai de 5 s puis message, retour à l'écran Réseau |
-| Version différente, salon plein, manche en cours | Refus explicite côté client |
+| Port 7778 déjà utilisé (deux LeLion sur un PC) | Liste impossible : « Recherche impossible : port 7778 déjà utilisé (un autre LeLion ouvert ?). Rejoins par IP. » |
+| Adresse saisie qui n'est pas une IPv4 (nom, faute de frappe) | Refusée sans rien tenter : « Adresse IP invalide (exemple : 192.168.1.20) » |
+| Connexion à une IP qui ne répond pas | Délai de 5 s puis « Pas de réponse de l'hôte. Pare-feu de l'hôte ? Réseau Privé ? », retour à l'accueil de l'écran Réseau |
+| Version différente, salon plein, manche en cours | Refus explicite côté client (textes traduits, clés `Reseau.REFUS_*`) |
 | Aucune balise reçue | Liste vide avec l'indice « Pare-feu ? Réseau Privé ? Essaie par IP » |
-| Hôte perdu | Message puis retour au titre |
+| Hôte perdu | Message « L'hôte a quitté la partie » puis retour au titre (salon, manche) ; sur l'écran Réseau, retour à son accueil |
 | Client perdu | Voir section 4 |
 
 ## 10. Tests

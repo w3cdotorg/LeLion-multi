@@ -1156,6 +1156,42 @@ func _tester_decouverte() -> void:
 	_check(decouverte.adresses_privees(PackedStringArray(["169.254.10.20", "169.254.1.2", "8.8.8.8"])) == PackedStringArray(["169.254.10.20", "169.254.1.2"]),
 		"169.254 s'affiche s'il n'y a vraiment rien d'autre à lire")
 
+	# I1 (revue finale 12 bis) : adresses de l'hôte triées par interface (physique d'abord, virtuelle
+	# en dernier recours), à rang IPv4 égal — IP.get_local_interfaces() donne {name, friendly, index,
+	# addresses}, friendly == name sur ce Mac et sur Linux
+	var mac := [
+		{"name": "en0", "friendly": "en0", "index": 4, "addresses": PackedStringArray(["192.168.1.17"])},
+		{"name": "bridge100", "friendly": "bridge100", "index": 12, "addresses": PackedStringArray(["192.168.139.3"])},
+		{"name": "bridge101", "friendly": "bridge101", "index": 13, "addresses": PackedStringArray(["192.168.215.0"])},
+	]
+	_check(decouverte.adresses_hote(mac) == PackedStringArray(["192.168.1.17"]),
+		"sur ce Mac, en0 (physique) passe devant les bridges virtuels, même si les trois sont en 192.168/16 (%s)"
+			% decouverte.adresses_hote(mac))
+	var windows := [
+		{"name": "{GUID-WIFI}", "friendly": "Wi-Fi", "index": 12, "addresses": PackedStringArray(["192.168.1.23"])},
+		{"name": "{GUID-WSL}", "friendly": "vEthernet (WSL)", "index": 45, "addresses": PackedStringArray(["172.29.144.1"])},
+		{"name": "{GUID-VMWARE}", "friendly": "VMware Network Adapter VMnet8", "index": 22, "addresses": PackedStringArray(["192.168.47.1"])},
+		{"name": "{GUID-VBOX}", "friendly": "VirtualBox Host-Only Network", "index": 30, "addresses": PackedStringArray(["192.168.56.1"])},
+	]
+	_check(decouverte.adresses_hote(windows) == PackedStringArray(["192.168.1.23"]),
+		"sous Windows, le Wi-Fi passe devant vEthernet (WSL), VMware et VirtualBox, même rang IPv4 privé (%s)"
+			% decouverte.adresses_hote(windows))
+	var inconnue := [
+		{"name": "{GUID-LAN}", "friendly": "Connexion au réseau local", "index": 8, "addresses": PackedStringArray(["10.0.0.5"])},
+		{"name": "{GUID-WSL2}", "friendly": "vEthernet (WSL)", "index": 50, "addresses": PackedStringArray(["172.20.0.1"])},
+	]
+	_check(decouverte.adresses_hote(inconnue) == PackedStringArray(["10.0.0.5"]),
+		"un nom d'interface non reconnu (ancien Windows localisé) passe quand même devant une carte virtuelle identifiée (%s)"
+			% decouverte.adresses_hote(inconnue))
+	var tout_virtuel := [
+		{"name": "vEthernet (WSL)", "friendly": "vEthernet (WSL)", "index": 50, "addresses": PackedStringArray(["172.20.0.1"])},
+		{"name": "VirtualBox Host-Only Network", "friendly": "VirtualBox Host-Only Network", "index": 30, "addresses": PackedStringArray(["192.168.56.1"])},
+	]
+	_check(decouverte.adresses_hote(tout_virtuel) == PackedStringArray(["172.20.0.1", "192.168.56.1"]),
+		"si tout est virtuel, la liste sort quand même (dernier recours), dans l'ordre de rang IPv4 existant (%s)"
+			% decouverte.adresses_hote(tout_virtuel))
+	_check(decouverte.adresses_hote([]).is_empty(), "aucune interface : aucune adresse à lire")
+
 	# Adresse saisie : IPv4 seulement, normalisée ; jamais un nom (résolution bloquante)
 	var valides := {"192.168.1.20": "192.168.1.20", " 192.168.001.010 ": "192.168.1.10", "127.0.0.1": "127.0.0.1", "10.0.0.255": "10.0.0.255"}
 	_check(valides.keys().all(func(t: String) -> bool: return decouverte.adresse_ipv4(t) == valides[t]),
