@@ -4,19 +4,27 @@ extends SceneTree
 ## Communes : --port=N (défaut 17777), --pseudo=texte.
 ## Hôte : --places=N (joueurs, hôte compris ; défaut 6), --clients=N (clients qui doivent arriver),
 ##   --partants=N (clients qui repartiront d'eux-mêmes), --manche (manche en cours : tout nouveau
-##   venu est refusé), --attente=S (secondes gardées ouvertes après les arrivées et départs, pour
-##   les demandes qui doivent être refusées). Écrit « HOTE PRET » quand il écoute, puis quitte le
-##   réseau (ses clients doivent voir l'hôte partir).
+##   venu est refusé), --refus=N (poignées de main qui doivent échouer : demandes refusées, dont le
+##   client ferme la connexion en lisant le refus, ou jamais finies, coupées par le délai ; l'hôte
+##   les compte par `peer_authentication_failed` et reste ouvert jusqu'à la N-ième, DELAI_ETAPE au
+##   plus), --delai-poignee=S (délai de poignée de main de cette session, en secondes, au lieu de
+##   `Reseau.DELAI_POIGNEE_DE_MAIN`). Écrit « HOTE PRET » quand il écoute et « POIGNEE ECHOUEE n »
+##   à chaque poignée de main échouée (n = leur compte, après que `Reseau` a libéré la place), puis
+##   quitte le réseau (ses clients doivent voir l'hôte partir).
 ## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
 ##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
-##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte). Écrit une
-##   ligne « RESULTAT … » que lancer.sh compte d'un poste à l'autre. `refus_plein` est la version
-##   déterministe d'`inscrit_ou_plein` (un seul dénouement possible, pas une course).
+##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte), --feu=chemin
+##   (écrit « ATTEND LE FEU » puis ne rejoint l'hôte qu'une fois ce fichier créé par lancer.sh,
+##   DELAI_ETAPE au plus : le démarrage de Godot est déjà fait quand la demande doit partir). Écrit
+##   une ligne « RESULTAT … » que lancer.sh compte d'un poste à l'autre. `refus_plein` est la
+##   version déterministe d'`inscrit_ou_plein` (un seul dénouement possible, pas une course).
 ## Lent : présente sa demande sur sa propre poignée de main (son propre `ENetMultiplayerPeer` et
 ##   `SceneMultiplayer`, posé par `set_multiplayer` sur un nœud à lui : le `SceneTree` interroge
 ##   aussi ces API), mais n'appelle jamais `complete_auth` — sa poignée de main ne finit donc
-##   jamais. Écrit « ACCEPTE index=N » dès la réponse de l'hôte, puis reste ouvert --attente=S
-##   secondes (défaut 6) avant de se fermer. Preuve de bout en bout (Focus 2, Focus 5) que la place
+##   jamais, et son propre délai de poignée de main est coupé (`auth_timeout` à 0) : seul l'hôte
+##   peut y mettre fin. Écrit « ACCEPTE index=N » dès la réponse de l'hôte, puis attend que l'hôte
+##   le coupe et vérifie que c'est au bout de --delai-poignee=S secondes (le délai de l'hôte ;
+##   défaut `Reseau.DELAI_POIGNEE_DE_MAIN`). Preuve de bout en bout (Focus 2, Focus 5) que la place
 ##   d'un accepté est réservée dès la réponse et libérée par le vrai `auth_timeout` de l'hôte.
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau` par `root.get_node`, ne nomme ni `Reseau` ni `GameState` (il peut nommer
@@ -29,6 +37,7 @@ var _options := {}
 var reseau: Node
 var _arrivees: Array[int] = []
 var _departs: Array[int] = []
+var _poignees_echouees: Array[int] = []  # hôte : pairs dont la poignée de main a échoué, dans l'ordre
 var _issue := ""  # client : les signaux reçus, dans l'ordre (voir `_ajouter_issue`)
 var _raison := ""
 var _version_hote := ""
@@ -90,9 +99,13 @@ func _run() -> void:
 func _jouer_hote() -> void:
 	var nb_clients := int(_option("clients", "0"))
 	var nb_partants := int(_option("partants", "0"))
+	var nb_refus := int(_option("refus", "0"))
 	reseau.places = int(_option("places", str(EtatPartie.NB_JOUEURS_MAX)))
 	reseau.joueur_arrive.connect(_sur_arrivee)
 	reseau.joueur_parti.connect(_sur_depart)
+	# Branché après le gestionnaire de Reseau (connecté dans son _ready) : quand « POIGNEE ECHOUEE »
+	# s'écrit, la place réservée est déjà libérée.
+	root.multiplayer.peer_authentication_failed.connect(_sur_poignee_echouee)
 	var erreur: int = reseau.heberger(int(_option("port", "17777")))
 	_check(erreur == OK, "l'hôte écoute (erreur %d)" % erreur)
 	if erreur != OK:
@@ -100,11 +113,26 @@ func _jouer_hote() -> void:
 	# manche_en_cours après heberger() : quitter() (que heberger() appelle en premier) le remet à
 	# faux à chaque nouvelle session (I1).
 	reseau.manche_en_cours = _options.has("manche")
+	# heberger() vient de poser DELAI_POIGNEE_DE_MAIN sur l'API (avant toute poignée de main, avant
+	# « HOTE PRET ») : c'est le vrai délai de poignée de main du jeu, couvert ici même quand
+	# --delai-poignee l'écrase ensuite pour ce scénario (Scripts/Reseau.gd non touché).
+	var api := root.multiplayer as SceneMultiplayer
+	_check(api.auth_timeout == reseau.DELAI_POIGNEE_DE_MAIN and reseau.DELAI_POIGNEE_DE_MAIN > 0.0,
+		"heberger() pose le délai de poignée de main du jeu (%.1f s)" % api.auth_timeout)
+	if _options.has("delai-poignee"):
+		# Après cette vérification et avant « HOTE PRET » : aucune poignée de main n'a commencé.
+		# SceneMultiplayer relit auth_timeout à chaque image.
+		api.auth_timeout = float(_option("delai-poignee", ""))
 	print("HOTE PRET")
 	var hote: Dictionary = reseau.inscrits[root.multiplayer.get_unique_id()]
 	_check(root.multiplayer.is_server() and hote.index == 0 and hote.couleur == EtatPartie.PALETTE_BATAILLE[0]
 		and hote.pseudo == reseau.pseudo, "l'hôte s'inscrit lui-même : index 0, première couleur, son pseudo")
 
+	# Les poignées de main échouées d'abord : dans le scénario 5, l'arrivée attendue ne peut venir
+	# qu'après la dernière (la place du client lent libérée par le délai). Les comptes ne font que
+	# croître : l'ordre des attentes ne change rien aux autres scénarios.
+	_check(await _attendre(func() -> bool: return _poignees_echouees.size() >= nb_refus),
+		"%d poignée(s) de main échouée(s) sur %d attendue(s) (refus lus, ou délai dépassé)" % [_poignees_echouees.size(), nb_refus])
 	_check(await _attendre(func() -> bool: return _arrivees.size() >= nb_clients),
 		"%d client(s) arrivé(s) sur %d attendu(s)" % [_arrivees.size(), nb_clients])
 	var indices: Array = reseau.inscrits.values().map(func(f: Dictionary) -> int: return f.index)
@@ -124,8 +152,8 @@ func _jouer_hote() -> void:
 		_check(reseau.premier_index_libre(reseau.inscrits, reseau.places) < nb_clients + 1,
 			"son index est de nouveau libre")
 
-	await _pause(float(_option("attente", "0")))
-	_check(_arrivees.size() == nb_clients, "aucune arrivée de trop : %d client(s) en tout" % _arrivees.size())
+	_check(_arrivees.size() == nb_clients and _poignees_echouees.size() == nb_refus,
+		"ni arrivée ni poignée de main échouée de trop : %d client(s), %d échec(s) de poignée de main" % [_arrivees.size(), _poignees_echouees.size()])
 	reseau.quitter()  # close() envoie ses paquets de façon synchrone (N7) : pas de pause à ajouter ici
 
 
@@ -138,6 +166,10 @@ func _jouer_client() -> void:
 	reseau.refuse.connect(_sur_refus)
 	reseau.connexion_echouee.connect(_ajouter_issue.bind("echec"))
 	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+	if _options.has("feu"):
+		var feu := _option("feu", "")
+		print("ATTEND LE FEU")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(feu)), "lancer.sh donne le feu (%s)" % feu)
 	var debut := Time.get_ticks_msec()
 	var erreur: int = reseau.rejoindre("127.0.0.1", int(_option("port", "17777")))
 	_check(erreur == OK, "le client est créé (erreur %d)" % erreur)
@@ -217,9 +249,22 @@ func _jouer_lent() -> void:
 				etat.accepte = true
 				print("ACCEPTE index=%d" % reponse.index)
 			# Jamais de complete_auth ici : la poignée de main ne finit pas, exprès.
+		# Son propre délai coupé (0 = aucun) : sinon ce poste abandonnerait lui-même la poignée de
+		# main au bout de 3 s (le défaut de SceneMultiplayer), et la coupure ne prouverait plus rien
+		# du délai de l'hôte.
+		# Pris avant la connexion (le délai de l'hôte ne peut démarrer qu'après) : « duree >= delai »
+		# est une borne exacte, sans tolérance.
+		var accepte_a := Time.get_ticks_msec()
+		api.auth_timeout = 0.0
 		api.multiplayer_peer = pair
 		_check(await _attendre(func() -> bool: return etat.accepte), "le client lent reçoit une acceptation, sans jamais finir sa poignée de main")
-		await _pause(float(_option("attente", "6")))
+		if etat.accepte:
+			var delai := float(_option("delai-poignee", str(reseau.DELAI_POIGNEE_DE_MAIN)))
+			var coupe := await _attendre(func() -> bool: return pair.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED)
+			var duree := (Time.get_ticks_msec() - accepte_a) / 1000.0
+			print("COUPE apres=%.1f s" % duree)
+			_check(coupe and duree >= delai,
+				"l'hôte coupe le client lent au bout de son délai de poignée de main (%.1f s, attendu %.0f s)" % [duree, delai])
 	pair.close()
 	noeud.queue_free()
 
@@ -232,6 +277,11 @@ func _sur_arrivee(id: int) -> void:
 
 func _sur_depart(id: int) -> void:
 	_departs.append(id)
+
+
+func _sur_poignee_echouee(id: int) -> void:
+	_poignees_echouees.append(id)
+	print("POIGNEE ECHOUEE %d (pair %d)" % [_poignees_echouees.size(), id])
 
 
 func _sur_inscription(index: int, couleur: Color) -> void:

@@ -4,6 +4,10 @@
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie).
 # Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40).
+# Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
+# 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici) ; seules restent, côté client
+# (joueur.gd), de courtes fenêtres de vérification d'absence (1 s après un refus, 0,5 s avant un
+# départ volontaire) : elles ne peuvent pas donner de faux rouge.
 # Sortie 0 si chaque poste sort en 0, sans ❌ ni SCRIPT ERROR ni SHADER ERROR dans son journal, et
 # si les comptes croisés entre postes tombent juste. Tous les processus lancés sont tués en sortie.
 set -u
@@ -16,7 +20,15 @@ command -v timeout >/dev/null || { echo "il faut la commande GNU 'timeout' (core
 GODOT="${GODOT:-godot}"
 PORT_BASE="${1:-17777}"
 DELAI="${DELAI:-40}"
-JOURNAUX="$(mktemp -d "${TMPDIR:-/tmp}/lelion-reseau.XXXXXX")"
+JOURNAUX="$(mktemp -d "${TMPDIR:-/tmp}/lelion-reseau.XXXXXX")" || { echo "mktemp impossible (TMPDIR plein ou non inscriptible ?)" >&2; exit 2; }
+# Délai de poignée de main de l'hôte du scénario 5, en secondes (Reseau.DELAI_POIGNEE_DE_MAIN, 3 s,
+# reste celui du jeu). Deux marges en dépendent. Le rival doit être refusé avant qu'il expire :
+# démarré d'avance, il part au feu, donné dans les 0,1 s qui suivent « ACCEPTE » (refus mesuré
+# 0,07 à 0,16 s après), soit plus de 7,8 s de marge, sans démarrage de Godot dedans. L'hôte doit
+# voir la coupure du lent dans son attente des poignées échouées (15 s depuis « HOTE PRET ») :
+# 15 - 8 = 7 s pour démarrer le lent (mesuré 0,3 à 0,6 s). Plus long mange la seconde marge, plus
+# court la première.
+DELAI_POIGNEE_LENT=8
 PIDS=()
 NOMS=()
 ECHECS=0
@@ -29,11 +41,28 @@ nettoyer() {
 	wait 2>/dev/null
 }
 trap nettoyer EXIT
-trap 'echo "interrompu"; exit 130' INT TERM
+# Deux pièges séparés (plutôt qu'un INT TERM commun) : TERM sort en 143, la convention, sans changer
+# le 130 attendu sur INT. Les deux recopient les journaux (recopier_journaux, définie plus bas) :
+# c'est le timeout 300 de la CI qui envoie TERM, et sans ça les journaux restaient dans le mktemp du
+# runner, perdus.
+trap 'echo "interrompu"; recopier_journaux; exit 130' INT
+trap 'echo "interrompu"; recopier_journaux; exit 143' TERM
 
 echec() {
 	echo "  ❌ $1"
 	ECHECS=$((ECHECS + 1))
+}
+
+# recopier_journaux : recopie chaque journal de poste dans la sortie du lanceur (JOURNAUX est gardé,
+# pas supprimé). En CI, c'est tout ce qui reste d'un échec, y compris d'une interruption (INT/TERM,
+# par exemple le timeout 300 du pas de CI) : appelée à la fois en sortie normale et depuis les pièges.
+recopier_journaux() {
+	echo "journaux gardés dans $JOURNAUX"
+	for f in "$JOURNAUX"/*.log; do
+		[ -e "$f" ] || continue
+		echo "----- $(basename "$f")"
+		cat "$f"
+	done
 }
 
 # lancer <nom> <arguments de joueur.gd…> : un poste en arrière-plan, borné par timeout (TERM au
@@ -85,8 +114,8 @@ attendre_fin() {
 			fi
 			grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/$nom.log" && echec "erreurs dans le journal de $nom"
 			unset "PIDS[$i]" "NOMS[$i]"
-			PIDS=("${PIDS[@]}")
-			NOMS=("${NOMS[@]}")
+			PIDS=(${PIDS[@]+"${PIDS[@]}"})
+			NOMS=(${NOMS[@]+"${NOMS[@]}"})
 			return
 		fi
 	done
@@ -129,7 +158,7 @@ echo "== test réseau LeLion (journaux : $JOURNAUX) =="
 # 1. Hôte + 2 clients ; un troisième se présente avec une autre version. L'un des deux clients
 #    repart de lui-même, puis l'hôte quitte : l'autre le voit partir.
 P=$((PORT_BASE + 1))
-lancer hote1 --role=hote --port=$P --pseudo=Hote --clients=2 --partants=1 --attente=1
+lancer hote1 --role=hote --port=$P --pseudo=Hote --clients=2 --partants=1 --refus=1
 if attendre_hote hote1; then
 	lancer reste1 --role=client --port=$P --pseudo=Reste --attendu=inscrit
 	lancer partant1 --role=client --port=$P --pseudo=Partant --attendu=inscrit --partir
@@ -137,12 +166,14 @@ if attendre_hote hote1; then
 fi
 terminer "hôte + 2 clients, départ d'un client et de l'hôte, version différente refusée"
 
-# 2. Partie à 2 places, deux demandes simultanées : exactement une acceptée, l'autre refusée.
+# 2. Partie à 2 places, deux demandes simultanées : exactement une acceptée, l'autre refusée. Les
+#    deux rivaux démarrent, puis partent au même feu : la course ne dépend pas de leurs démarrages.
 P=$((PORT_BASE + 2))
-lancer hote2 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --attente=2
+lancer hote2 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --refus=1
 if attendre_hote hote2; then
-	lancer rival2a --role=client --port=$P --pseudo=RivalA --attendu=inscrit_ou_plein
-	lancer rival2b --role=client --port=$P --pseudo=RivalB --attendu=inscrit_ou_plein
+	lancer rival2a --role=client --port=$P --pseudo=RivalA --attendu=inscrit_ou_plein --feu="$JOURNAUX/feu2"
+	lancer rival2b --role=client --port=$P --pseudo=RivalB --attendu=inscrit_ou_plein --feu="$JOURNAUX/feu2"
+	attendre_ligne rival2a "ATTEND LE FEU" && attendre_ligne rival2b "ATTEND LE FEU" && touch "$JOURNAUX/feu2"
 fi
 terminer "deux demandes pour la dernière place"
 [ "$(compter "RESULTAT inscrit" rival2a rival2b)" -eq 1 ] || echec "dernière place : il fallait exactement un client inscrit"
@@ -150,7 +181,7 @@ terminer "deux demandes pour la dernière place"
 
 # 3. Manche en cours : tout nouveau venu est refusé.
 P=$((PORT_BASE + 3))
-lancer hote3 --role=hote --port=$P --pseudo=Hote --manche --attente=3
+lancer hote3 --role=hote --port=$P --pseudo=Hote --manche --refus=1
 if attendre_hote hote3; then
 	lancer tard3 --role=client --port=$P --pseudo=Tard --attendu=refus_manche
 fi
@@ -163,19 +194,23 @@ terminer "sans hôte : échec de connexion après le délai"
 
 # 5. Réservation à la réponse, vrai auth_timeout (I2, Focus 2 et 5) : un client lent est accepté
 #    mais ne finit jamais sa poignée de main. Pendant sa réservation (place prise dès la réponse de
-#    l'hôte, avant toute arrivée), un rival est refusé « plein » sans course possible (le rival ne
-#    part qu'après l'acceptation du lent, vue dans son journal). Après le vrai délai de poignée de
-#    main (3 s), l'hôte le libère (vrai peer_authentication_failed) : un troisième client obtient
-#    la place, à l'index 1.
+#    l'hôte, avant toute arrivée), un rival est refusé « plein » sans course possible : démarré en
+#    même temps que le lent, il ne part qu'au feu, donné après l'acceptation du lent (vue dans son
+#    journal), bien avant la fin du délai de poignée de main de l'hôte (DELAI_POIGNEE_LENT). Ce
+#    délai passé, l'hôte coupe le lent et libère sa place (vrai peer_authentication_failed, la
+#    deuxième de l'hôte après le refus du rival) : un troisième client, lancé seulement alors,
+#    obtient la place, à l'index 1.
 P=$((PORT_BASE + 5))
-lancer hote5 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --attente=1
+lancer hote5 --role=hote --port=$P --pseudo=Hote --places=2 --clients=1 --refus=2 --delai-poignee=$DELAI_POIGNEE_LENT
 if attendre_hote hote5; then
-	lancer lent5 --role=lent --port=$P --pseudo=Lent --attente=6
-	if attendre_ligne lent5 "ACCEPTE"; then
-		lancer rival5 --role=client --port=$P --pseudo=Rival --attendu=refus_plein
+	lancer lent5 --role=lent --port=$P --pseudo=Lent --delai-poignee=$DELAI_POIGNEE_LENT
+	lancer rival5 --role=client --port=$P --pseudo=Rival --attendu=refus_plein --feu="$JOURNAUX/feu5"
+	if attendre_ligne lent5 "ACCEPTE" && attendre_ligne rival5 "ATTEND LE FEU"; then
+		touch "$JOURNAUX/feu5"
 		attendre_fin rival5
-		sleep 3.5  # laisse passer le vrai auth_timeout (3 s) avant le troisième client
-		lancer tard5 --role=client --port=$P --pseudo=Tard --attendu=inscrit
+		if attendre_ligne hote5 "POIGNEE ECHOUEE 2"; then
+			lancer tard5 --role=client --port=$P --pseudo=Tard --attendu=inscrit
+		fi
 	fi
 fi
 terminer "poignée de main jamais finie : réservation à la réponse, puis libération par le vrai délai"
@@ -185,5 +220,5 @@ if [ "$ECHECS" -eq 0 ]; then
 	rm -rf "$JOURNAUX"
 	exit 0
 fi
-echo "journaux gardés dans $JOURNAUX"
+recopier_journaux
 exit 1
