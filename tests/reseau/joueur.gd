@@ -130,9 +130,10 @@ func _option(nom: String, defaut: String) -> String:
 	return _options.get(nom, defaut)
 
 
-## Attend (au plus DELAI_ETAPE) que `condition` soit vraie ; renvoie sa dernière valeur.
-func _attendre(condition: Callable) -> bool:
-	var fin := Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+## Attend (au plus `delai` secondes, DELAI_ETAPE par défaut) que `condition` soit vraie ; renvoie sa
+## dernière valeur.
+func _attendre(condition: Callable, delai := DELAI_ETAPE) -> bool:
+	var fin := Time.get_ticks_msec() + int(delai * 1000.0)
 	while not condition.call() and Time.get_ticks_msec() < fin:
 		await process_frame
 	return condition.call()
@@ -631,44 +632,10 @@ func _ajouter_issue(quoi: String) -> void:
 ## Rôles « manche-hote » et « manche-client » (phase 14, voir l'en-tête) : du salon à une manche
 ## jouée, jusqu'au départ de l'hôte.
 func _jouer_manche(hote: bool) -> void:
-	var scores: Node = root.get_node("Scores")
+	var main := await _rejoindre_la_manche(hote)
+	if main == null:
+		return
 	var gs: Node = root.get_node("GameState")
-	scores.chemin = "user://scores_reseau_%s.cfg" % reseau.pseudo
-	scores.effacer()
-	var script_manche: Script = load("res://Scripts/Manche.gd")
-	script_manche.delai_chargement = float(_option("delai-chargement", str(script_manche.DELAI_CHARGEMENT)))
-	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
-	reseau.joueur_parti.connect(_sur_depart)
-	change_scene_to_file("res://Scenes/EcranReseau.tscn")
-	_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")), "l'écran Réseau s'ouvre")
-	var ecran: Node = current_scene
-	ecran.port_jeu = int(_option("port", "17777"))
-	ecran.champ_pseudo.text = reseau.pseudo
-	if hote:
-		ecran.heberger()
-	else:
-		ecran.champ_ip.text = "127.0.0.1"
-		ecran.rejoindre_par_ip()
-	_check(await _attendre(func() -> bool: return _scene_est("Salon")), "l'écran Réseau passe la main au salon")
-	if not _scene_est("Salon"):
-		reseau.quitter()
-		return
-	var salon: Node = current_scene
-	if hote:
-		print("HOTE PRET")
-		var nb := 1 + int(_option("clients", "0"))
-		_check(await _attendre(func() -> bool: return reseau.table_salon.size() == nb), "%d joueurs au salon" % nb)
-		salon.basculer_pret()
-		var bouton: Button = salon.bouton_demarrer
-		_check(await _attendre(func() -> bool: return not bouton.disabled), "tous prêts : « Démarrer la partie » s'active")
-		salon.demarrer()
-	else:
-		salon.basculer_pret()
-	_check(await _attendre(func() -> bool: return _scene_est("Main")), "le salon charge la scène de jeu")
-	if not _scene_est("Main"):
-		reseau.quitter()
-		return
-	var main: Node = current_scene
 	var manche: Node = main.get_node("Manche")
 	if hote and _options.has("gel"):
 		# Tout le processus se fige, comme un hôte qui charge ou compile ses shaders : ses clients
@@ -714,6 +681,65 @@ func _jouer_manche(hote: bool) -> void:
 		print("PARTI")
 	else:
 		await _finir_manche_client(main, manche)
+	_effacer_scores()
+
+
+## Du salon à la scène de jeu d'une manche (rôles « manche-… » et « bout-… »), par les vraies scènes :
+## l'écran Réseau (Héberger, ou Rejoindre par IP vers 127.0.0.1), le salon (l'hôte y choisit
+## --niveau, attend 1 + --clients joueurs et démarre quand tous sont prêts), puis la scène de jeu.
+## Renvoie la scène de jeu, ou null si ce poste n'y arrive pas (il a alors quitté le réseau).
+func _rejoindre_la_manche(hote: bool) -> Node:
+	var scores: Node = root.get_node("Scores")
+	scores.chemin = "user://scores_reseau_%s.cfg" % reseau.pseudo  # jamais les préférences du joueur
+	scores.effacer()
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	script_manche.delai_chargement = float(_option("delai-chargement", str(script_manche.DELAI_CHARGEMENT)))
+	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+	reseau.joueur_parti.connect(_sur_depart)
+	change_scene_to_file("res://Scenes/EcranReseau.tscn")
+	_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")), "l'écran Réseau s'ouvre")
+	var ecran: Node = current_scene
+	ecran.port_jeu = int(_option("port", "17777"))
+	ecran.champ_pseudo.text = reseau.pseudo
+	if hote:
+		ecran.heberger()
+	else:
+		ecran.champ_ip.text = "127.0.0.1"
+		ecran.rejoindre_par_ip()
+	_check(await _attendre(func() -> bool: return _scene_est("Salon")), "l'écran Réseau passe la main au salon")
+	if not _scene_est("Salon"):
+		reseau.quitter()
+		return null
+	var salon: Node = current_scene
+	if hote:
+		var niveau := int(_option("niveau", "0"))
+		while reseau.niveau_salon != niveau:
+			salon.changer_niveau(1)
+		print("HOTE PRET")
+		var nb := 1 + int(_option("clients", "0"))
+		_check(await _attendre(func() -> bool: return reseau.table_salon.size() == nb), "%d joueurs au salon" % nb)
+		salon.basculer_pret()
+		var bouton: Button = salon.bouton_demarrer
+		_check(await _attendre(func() -> bool: return not bouton.disabled), "tous prêts : « Démarrer la partie » s'active")
+		salon.demarrer()
+	else:
+		# Se déclarer prêt une fois à la table seulement : avant que la table de l'hôte arrive, le salon
+		# n'a pas la fiche de ce poste et `basculer_pret` ne fait rien (vu une fois sur dix, 3 clients).
+		var ma_fiche := func() -> bool:
+			return reseau.table_salon.any(func(f: Dictionary) -> bool: return f.id == root.multiplayer.get_unique_id())
+		_check(await _attendre(ma_fiche), "ce poste est à la table du salon")
+		salon.basculer_pret()
+		_check(await _attendre(_ma_fiche_pret), "l'hôte enregistre ce poste prêt")
+	_check(await _attendre(func() -> bool: return _scene_est("Main")), "le salon charge la scène de jeu")
+	if not _scene_est("Main"):
+		reseau.quitter()
+		return null
+	return current_scene
+
+
+## Les scores de test de ce poste (`_rejoindre_la_manche`) : effacés, fichier compris.
+func _effacer_scores() -> void:
+	var scores: Node = root.get_node("Scores")
 	scores.effacer()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
 

@@ -90,11 +90,11 @@ attendre_hote() {
 	return 1
 }
 
-# attendre_ligne <nom> <motif> : attend qu'une ligne contenant <motif> apparaisse dans le journal de
-# <nom>, 15 s au plus (par exemple « ACCEPTE » du rôle lent, I2).
+# attendre_ligne <nom> <motif> [secondes] : attend qu'une ligne contenant <motif> apparaisse dans le
+# journal de <nom>, 15 s au plus par défaut (par exemple « ACCEPTE » du rôle lent, I2).
 attendre_ligne() {
 	local i
-	for i in $(seq 1 150); do
+	for i in $(seq 1 $((${3:-15} * 10))); do
 		grep -q -- "$2" "$JOURNAUX/$1.log" 2>/dev/null && return 0
 		sleep 0.1
 	done
@@ -168,6 +168,23 @@ tuer() {
 		kill -9 "$i" 2>/dev/null
 	done
 	wait 2>/dev/null
+}
+
+# arracher <nom> : tue sur-le-champ (KILL) le processus Godot du poste nommé, enfant de son timeout,
+# puis ce timeout : le poste n'envoie plus rien, pas même un DISCONNECT, comme un PC planté ou un
+# Wi-Fi coupé (scénario 11). Comme tuer(), ni son code de sortie ni son journal ne sont vérifiés ici.
+arracher() {
+	local nom="$1" i
+	for i in "${!NOMS[@]}"; do
+		if [ "${NOMS[$i]}" = "$nom" ]; then
+			pkill -KILL -P "${PIDS[$i]}" 2>/dev/null
+			kill -KILL "${PIDS[$i]}" 2>/dev/null
+			wait "${PIDS[$i]}" 2>/dev/null
+			unset "PIDS[$i]" "NOMS[$i]"
+		fi
+	done
+	PIDS=(${PIDS[@]+"${PIDS[@]}"})
+	NOMS=(${NOMS[@]+"${NOMS[@]}"})
 }
 
 # compter <motif> <nom…> : nombre de lignes qui contiennent le motif dans les journaux nommés.
