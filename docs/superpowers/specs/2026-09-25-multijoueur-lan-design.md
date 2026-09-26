@@ -346,8 +346,8 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   même empreinte : propriétaires des cellules, scores, nombre et suite des tampons reçus, lions,
   apparitions, niveau, et les réactions de chaque joueur (étourdissements, crans, gerbes XXL)
   comptées sur chaque poste (aucune perdue ni doublée). Les statistiques de bataille ne sont tenues
-  que par l'hôte (phase 18 : les envoyer aux clients). `DUREE11=45` (ruling du contrôleur, pas 90 s :
-  marge CI sous le `timeout 300`).
+  que par l'hôte (phase 18 : les envoyer aux clients). `DUREE11=45` (décision de l'utilisateur, pas
+  90 s : marge CI sous le `timeout 300`).
 - **Visuel** : `tests/screenshots.gd` étendu (salon, manche à 6 couleurs, résultats), deux vraies
   fenêtres en localhost pour une partie manuelle.
 - **Windows** : test manuel de l'`.exe` issu de la CI sur un PC de la LAN (le développement se fait

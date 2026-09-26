@@ -88,14 +88,15 @@ extends SceneTree
 ##   voir `Programme`), sur le niveau --niveau=L choisi par l'hôte au salon ; chaque poste mesure sa
 ##   frame la plus longue (« MESURE ») et compte les réactions de chaque joueur reçues ou décidées.
 ##   Bout-hôte : --clients=N, --niveau=L, --duree=S (défaut : la manche entière,
-##   `ReglesBataille.DUREE_MANCHE`), --partant=pseudo, --tue=chemin, --rester=chemin. Après
-##   DEBUT_RENCONTRES s de jeu, orchestre les rencontres (il ne décide que des lieux : il déplace des
-##   lions et fait apparaître pastilles, étoile et soucoupe sur eux ; les effets passent par le jeu) :
-##   une pastille ramassée au vol par chaque client, une étoile, une soucoupe, sa gerbe sur un client,
-##   la gerbe d'un client sur lui, un choc. Écrit « RENCONTRES », puis « A TUER » : lancer.sh arrache
-##   le poste de --partant (KILL, sans un paquet de plus) et crée --tue ; l'hôte chronomètre la
-##   détection du départ (« ECART_DEPART <ms> ») et écrit « DEPART VU ». À DUREE_CALME s de la fin,
-##   écrit « CALME » ; lions arrêtés, coulures finies et la manche arrivée à son terme, il la fige :
+##   `ReglesBataille.DUREE_MANCHE`), --tue=chemin, --rester=chemin. Après DEBUT_RENCONTRES s de jeu,
+##   orchestre les rencontres (il ne décide que des lieux : il déplace des lions et fait apparaître
+##   pastilles, étoile et soucoupe sur eux ; les effets passent par le jeu) : une pastille ramassée au
+##   vol par chaque client, une étoile, une soucoupe, sa gerbe sur un client, la gerbe d'un client sur
+##   lui, un choc. Écrit « RENCONTRES », puis désigne le client qui tient le plus de territoire et
+##   écrit « A TUER <pseudo> » : lancer.sh arrache son poste (KILL, sans un paquet de plus) et crée
+##   --tue ; l'hôte chronomètre la détection du départ (« ECART_DEPART <ms> ») et écrit « DEPART VU ».
+##   À DUREE_CALME s de la fin, écrit « CALME » ; lions arrêtés, coulures finies et la manche arrivée
+##   à son terme, il la fige :
 ##   « STATS … », « EMPREINTE … », « FIGE ».
 ##   Bout-client : --graine=N, --calme=chemin (joue son programme jusqu'à ce fichier, puis écrit
 ##   « CALME VU »), --fige=chemin (comme un client de la manche : sa propre « EMPREINTE »).
@@ -1076,6 +1077,42 @@ func _isole(lion: Node2D, main: Node) -> bool:
 	return main.lions.all(func(l: Node) -> bool: return l == lion or centre.distance_to(l.global_position + l.CENTRE) >= ISOLEMENT)
 
 
+## Attend (au plus DELAI_ETAPE) que le lion `lion` soit lancé à ses propres commandes (au moins
+## VITESSE_AU_VOL, pas étourdi, et `aussi`) et seul. Le mouvement vient du client ; l'écart, de
+## l'hôte, qui ne décide que des lieux : tant que le lion, libre de bouger, est collé à un autre (au
+## contact, les deux se bloquent et se vomissent dessus : mesuré, jusqu'à plusieurs secondes) ou
+## lent (plaqué contre un bord en fuyant), il est posé, sa vitesse intacte, à la place la plus
+## libre de la bande de peinture (`_mettre_a_l_ecart`). Vrai si le lion est lancé et seul à cette
+## image : ce qui est posé sur lui maintenant est à lui, aucun autre lion ne l'atteint avant.
+func _lancer_a_l_ecart(lion: Node2D, main: Node, bande: Rect2, aussi: Callable) -> bool:
+	var j: Joueur = lion.joueur
+	var lance := func() -> bool: return lion.velocity.length() >= VITESSE_AU_VOL and not j.est_etourdi() and aussi.call()
+	var fin := Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	while not (lance.call() and _isole(lion, main)) and Time.get_ticks_msec() < fin:
+		if not j.est_etourdi() and (not _isole(lion, main) or lion.velocity.length() < VITESSE_AU_VOL):
+			_mettre_a_l_ecart(lion, main, bande)
+		await physics_frame
+	return lance.call() and _isole(lion, main)
+
+
+## Pose `lion` (le coin de son sprite), sans toucher à sa vitesse, au milieu de la hauteur de `bande`
+## et, sur sa largeur, à la place la plus loin des autres lions : trois autres lions y laissent
+## toujours une place à plus de 1650 / 6 = 275 px de chacun (plus qu'ISOLEMENT).
+func _mettre_a_l_ecart(lion: Node2D, main: Node, bande: Rect2) -> void:
+	var meilleure := Vector2(lion.global_position.x, bande.get_center().y)
+	var meilleur_ecart := -1.0
+	for x in range(int(bande.position.x), int(bande.end.x) + 1, 10):
+		var centre: Vector2 = Vector2(x, meilleure.y) + lion.CENTRE
+		var ecart := INF
+		for autre: Node2D in main.lions:
+			if autre != lion:
+				ecart = minf(ecart, centre.distance_to(autre.global_position + autre.CENTRE))
+		if ecart > meilleur_ecart:
+			meilleur_ecart = ecart
+			meilleure.x = x
+	lion.global_position = meilleure
+
+
 ## La zone de contact `n` (1 à 3, de la bouche au point de chute) de la gerbe d'un lion.
 func _zone_de_contact(lion: Node, n: int) -> Node2D:
 	return lion.find_child("ZoneContact%d" % n, true, false)
@@ -1087,27 +1124,29 @@ func _animer_bout_hote(main: Node, manche: Node, gs: Node, programme: Programme)
 	_check(await _jouer_jusqu_a(main, programme, func() -> bool: return gs.temps_ecoule >= DEBUT_RENCONTRES, DEBUT_RENCONTRES + 10.0),
 		"%.0f s de jeu libre avant les rencontres" % DEBUT_RENCONTRES)
 	programme.relacher()
-	await _rencontres(main, gs)
+	await _rencontres(main, gs, programme.bande)
 	print("RENCONTRES")
 
 	# Un client arraché en pleine manche (KILL : ni DISCONNECT ni aucun autre paquet), comme un PC
 	# planté ou un Wi-Fi coupé : l'hôte le voit partir au bout du silence de session d'ENet.
+	# Le client arraché est celui qui tient le plus de territoire à cet instant : « ses cellules
+	# restent » doit porter sur des cellules. Un client désigné d'avance n'en tient pas toujours (ses
+	# commandes au hasard, les étourdissements : mesuré, 0 cellule une fois sur quinze passages).
 	var partant: Joueur = null
 	for j: Joueur in gs.joueurs:
-		if j.pseudo == _option("partant", ""):
+		if j != gs.joueur_local() and (partant == null or ville.territoire.cellules_de(j.index) > ville.territoire.cellules_de(partant.index)):
 			partant = j
-	_check(partant != null, "(pré-condition) le client à arracher est dans la manche (%s)" % _option("partant", ""))
-	if partant == null:
-		return
-	print("A TUER")
+	_check(ville.territoire.cellules_de(partant.index) > 0,
+		"(pré-condition) le client à arracher, %s, tient du territoire (%d)" % [partant.pseudo, ville.territoire.cellules_de(partant.index)])
+	print("A TUER %s" % partant.pseudo)
 	_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("tue", ""))), "lancer.sh arrache le poste de %s" % partant.pseudo)
 	var arrache_a := Time.get_ticks_msec()
 	_check(await _attendre(func() -> bool: return _departs.has(partant.id_reseau)), "l'hôte voit partir %s" % partant.pseudo)
 	print("ECART_DEPART %d" % (Time.get_ticks_msec() - arrache_a))
 	var sans_lui := func() -> bool:
 		return main.lions.size() == gs.joueurs.size() - 1 and main.lions.all(func(l: Node) -> bool: return l.joueur != partant)
-	var cellules: int = ville.territoire.cellules_de(partant.index)
-	_check(await _attendre(sans_lui) and cellules > 0, "son lion disparaît, ses cellules restent au territoire (%d)" % cellules)
+	_check(await _attendre(sans_lui) and ville.territoire.cellules_de(partant.index) > 0,
+		"son lion disparaît, ses cellules restent au territoire (%d)" % ville.territoire.cellules_de(partant.index))
 	print("DEPART VU")
 	# Le poste arraché n'a pas pu effacer ses scores de test (`_rejoindre_la_manche`) : l'hôte le fait.
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://scores_reseau_%s.cfg" % partant.pseudo))
@@ -1140,7 +1179,7 @@ func _animer_bout_hote(main: Node, manche: Node, gs: Node, programme: Programme)
 ## fait apparaître une pastille, une étoile, une soucoupe sur eux) ; les effets passent par le jeu :
 ## contacts physiques chez l'hôte, règles, réactions diffusées aux clients. Les clients jouent leur
 ## programme pendant ce temps ; le lion de l'hôte, touches relâchées, sert d'outil.
-func _rencontres(main: Node, gs: Node) -> void:
+func _rencontres(main: Node, gs: Node, bande: Rect2) -> void:
 	var spawner: Node = main.get_node("Spawner")
 	var lion_hote: Node2D = main.lion
 	var moi: Joueur = gs.joueur_local()
@@ -1150,7 +1189,7 @@ func _rencontres(main: Node, gs: Node) -> void:
 	for l: Node2D in clients + clients:
 		var j: Joueur = l.joueur
 		var crans_avant := j.crans
-		_check(await _attendre(func() -> bool: return l.velocity.length() >= VITESSE_AU_VOL and not j.est_etourdi() and _isole(l, main)),
+		_check(await _lancer_a_l_ecart(l, main, bande, func() -> bool: return true),
 			"(pré-condition) le lion de %s est en mouvement, à l'écart des autres" % j.pseudo)
 		var vitesse: float = l.velocity.length()
 		spawner.spawn_pickup(0, l.global_position + l.CENTRE)
@@ -1160,10 +1199,9 @@ func _rencontres(main: Node, gs: Node) -> void:
 	# Une étoile, au vol aussi, pour le troisième client en train de peindre : la gerbe XXL
 	var l3: Node2D = clients[2]
 	var j3: Joueur = l3.joueur
-	var peint_seul := func() -> bool:
-		return (l3.velocity.length() >= VITESSE_AU_VOL and l3.est_en_train_de_vomir and not j3.bonus_actif()
-			and not j3.est_etourdi() and _isole(l3, main))
-	_check(await _attendre(peint_seul), "(pré-condition) le lion de %s vomit en mouvement, à l'écart des autres, sans gerbe XXL" % j3.pseudo)
+	var peint := func() -> bool: return l3.est_en_train_de_vomir and not j3.bonus_actif()
+	_check(await _lancer_a_l_ecart(l3, main, bande, peint),
+		"(pré-condition) le lion de %s vomit en mouvement, à l'écart des autres, sans gerbe XXL" % j3.pseudo)
 	spawner.spawn_bonus(l3.global_position + l3.CENTRE)
 	_check(await _attendre(func() -> bool: return j3.bonus_actif()), "le lion de %s ramasse une étoile : la gerbe XXL" % j3.pseudo)
 
@@ -1173,11 +1211,14 @@ func _rencontres(main: Node, gs: Node) -> void:
 	var l1: Node2D = clients[0]
 	var j1: Joueur = l1.joueur
 	var par_ennemi := [false]  # des Array, partagés avec les lambdas
-	var sur_ennemi := func(_origine: Vector2, barbouillage: Color) -> void:
-		if barbouillage.a == 0.0:
+	var soucoupe: Node2D = null
+	var soucoupes: Array[Node2D] = []  # celles posées ici : une plus ancienne, délaissée mais
+	# jamais libérée, peut encore toucher le lion ; le peintre et une coccinelle de passage, non.
+	var sur_ennemi := func(origine: Vector2, barbouillage: Color) -> void:
+		if barbouillage.a == 0.0 and soucoupes.any(func(s: Node2D) -> bool:
+				return is_instance_valid(s) and origine.distance_to(s.global_position) < 150.0):
 			par_ennemi[0] = true
 	j1.etourdi.connect(sur_ennemi)
-	var soucoupe: Node2D = null
 	var fin := Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
 	while not par_ennemi[0] and Time.get_ticks_msec() < fin:
 		var centre: Vector2 = l1.global_position + l1.CENTRE
@@ -1185,6 +1226,7 @@ func _rencontres(main: Node, gs: Node) -> void:
 		if partie and not j1.est_etourdi() and not j1.est_invulnerable():
 			soucoupe = spawner.spawn_soucoupe(centre.y)
 			soucoupe.position.x = centre.x
+			soucoupes.append(soucoupe)
 		await physics_frame
 	j1.etourdi.disconnect(sur_ennemi)
 	_check(par_ennemi[0], "une soucoupe étourdit le lion de %s" % j1.pseudo)
@@ -1229,16 +1271,18 @@ func _rencontres(main: Node, gs: Node) -> void:
 	var chocs_hote := moi.chocs
 	fin = Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
 	var percuteur: Node2D = null
+	var chocs_percuteur := 0
 	while moi.chocs == chocs_hote and Time.get_ticks_msec() < fin:
 		if lion_hote.velocity.length() < 1.0:
 			for l: Node2D in clients:
 				var dans_le_ciel := Rect2(300, 150, 1300, 550).has_point(l.global_position)
 				if l.velocity.length() >= VITESSE_CHOC and not l.joueur.est_etourdi() and dans_le_ciel:
 					percuteur = l
+					chocs_percuteur = l.joueur.chocs
 					lion_hote.global_position = l.global_position + l.velocity.normalized() * 80.0
 					break
 		await physics_frame
-	_check(moi.chocs > chocs_hote and percuteur != null and percuteur.joueur.chocs > 0,
+	_check(moi.chocs > chocs_hote and percuteur != null and percuteur.joueur.chocs > chocs_percuteur,
 		"le lion de %s percute celui de l'hôte : un choc compté pour les deux" % ("?" if percuteur == null else percuteur.joueur.pseudo))
 
 

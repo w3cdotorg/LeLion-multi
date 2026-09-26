@@ -405,42 +405,71 @@ tuer hote10 muet10
 #     entière (DUREE11 s) sur le Village (son peintre), chacun au clavier selon son programme (des
 #     commandes au hasard, tirées de sa graine). Après 20 s de jeu, l'hôte orchestre les rencontres
 #     (pastilles ramassées au vol, étoile, soucoupe, sa gerbe sur un client, celle d'un client sur lui,
-#     un choc) ; puis Bruno est arraché (KILL, sans un paquet de plus) : l'hôte doit le voir partir
-#     au bout du silence de session d'ENet (SILENCE_SESSION, 3 à 8 s ; ECART_DEPART), son lion
-#     disparaître chez tous, ses cellules rester. Le jeu reprend jusqu'au calme, 4 s avant la fin ;
-#     la manche arrivée à son terme, l'hôte la fige : l'hôte, Anna et Chloé écrivent la même empreinte
-#     (territoire, scores, suite des tampons, lions, apparitions, niveau, réactions de chaque joueur).
+#     un choc) ; puis le client qui tient le plus de territoire est arraché (KILL, sans un paquet de
+#     plus) : l'hôte doit le voir partir au bout du silence de session d'ENet (SILENCE_SESSION, 3 à
+#     8 s ; ECART_DEPART), son lion disparaître chez tous, ses cellules rester. Le jeu reprend jusqu'au
+#     calme, 4 s avant la fin ; la manche arrivée à son terme, l'hôte la fige : l'hôte et les deux
+#     clients restés écrivent la même empreinte (territoire, scores, suite des tampons, lions,
+#     apparitions, niveau, réactions de chaque joueur).
 DUREE11=45
 P=$((PORT_BASE + 11))
 B=$((PORT_BASE + 1011))
 DELAI_AVANT11=$DELAI
 DELAI=$((DUREE11 + 60))
 lancer hote11 --role=bout-hote --port=$P --port-balise=$B --pseudo=Hote11 --clients=3 --niveau=2 --duree=$DUREE11 \
-	--graine=1 --partant=Bruno --tue="$JOURNAUX/tue11" --rester="$JOURNAUX/rester11"
+	--graine=1 --tue="$JOURNAUX/tue11" --rester="$JOURNAUX/rester11"
+partant11=""
+restes11="a11 b11 c11"
 if attendre_hote hote11; then
 	lancer a11 --role=bout-client --port=$P --port-balise=$B --pseudo=Anna --graine=2 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
 	lancer b11 --role=bout-client --port=$P --port-balise=$B --pseudo=Bruno --graine=3 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
 	lancer c11 --role=bout-client --port=$P --port-balise=$B --pseudo=Chloe --graine=4 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
-	if attendre_ligne hote11 "INTRO" 30 && attendre_ligne b11 "INTRO" && attendre_ligne hote11 "A TUER" 60; then
-		arracher b11
-		touch "$JOURNAUX/tue11"
-		# Bruno arraché : son journal n'aura pas de bilan, mais ses vérifications jusque-là comptent.
-		grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/b11.log" && echec "de bout en bout : erreurs dans le journal de b11 avant son arrachement"
-		if attendre_ligne hote11 "DEPART VU" 30 && attendre_ligne hote11 "CALME" $DUREE11; then
-			touch "$JOURNAUX/calme11"
-			if attendre_ligne hote11 "FIGE" 30; then
-				touch "$JOURNAUX/fige11"
-				attendre_ligne a11 "EMPREINTE" && attendre_ligne c11 "EMPREINTE" && touch "$JOURNAUX/rester11"
+	if attendre_ligne hote11 "INTRO" 30 && attendre_ligne a11 "INTRO" && attendre_ligne b11 "INTRO" && attendre_ligne c11 "INTRO" \
+		&& attendre_ligne hote11 "A TUER" 60; then
+		# L'hôte désigne le client à arracher (celui qui tient le plus de territoire) : « A TUER <pseudo> ».
+		case "$(sed -n 's/^A TUER //p' "$JOURNAUX/hote11.log" | head -1)" in
+			Anna) partant11=a11 ;;
+			Bruno) partant11=b11 ;;
+			Chloe) partant11=c11 ;;
+			*) partant11="" ;;
+		esac
+		restes11=""
+		for nom in a11 b11 c11; do
+			[ "$nom" = "$partant11" ] || restes11="$restes11 $nom"
+		done
+		if [ -n "$partant11" ]; then
+			arracher "$partant11"
+			touch "$JOURNAUX/tue11"
+			# Le client arraché n'aura pas de bilan, mais ses vérifications jusque-là comptent.
+			grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/$partant11.log" \
+				&& echec "de bout en bout : erreurs dans le journal de $partant11 avant son arrachement"
+			if attendre_ligne hote11 "DEPART VU" 30 && attendre_ligne hote11 "CALME" $DUREE11; then
+				touch "$JOURNAUX/calme11"
+				if attendre_ligne hote11 "FIGE" 30; then
+					touch "$JOURNAUX/fige11"
+					ok11=1
+					for nom in $restes11; do
+						attendre_ligne "$nom" "EMPREINTE" || ok11=0
+					done
+					[ "$ok11" -eq 1 ] && touch "$JOURNAUX/rester11"
+				fi
 			fi
+		else
+			echec "de bout en bout : l'hôte ne désigne aucun client connu à arracher"
 		fi
 	fi
 	touch "$JOURNAUX/tue11" "$JOURNAUX/calme11" "$JOURNAUX/fige11" "$JOURNAUX/rester11"
-	arracher b11  # s'il n'a pas déjà été arraché (échec plus tôt) : il ne doit pas attendre son timeout
+	if [ -z "$partant11" ]; then
+		# Aucun client désigné (échec plus tôt) : b11 est arraché quand même, les autres finissent.
+		partant11=b11
+		restes11="a11 c11"
+		arracher b11
+	fi
 fi
 terminer "de bout en bout : manche entière à 1 hôte et 3 clients au clavier, rencontres (pastilles au vol, étoile, soucoupe, gerbes croisées, choc), un client arraché en pleine manche, mêmes empreintes chez l'hôte et les clients restés"
 DELAI=$DELAI_AVANT11
-[ "$(grep -h "^EMPREINTE " "$JOURNAUX/hote11.log" "$JOURNAUX/a11.log" "$JOURNAUX/c11.log" 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
-	&& [ "$(compter "^EMPREINTE " hote11 a11 c11)" -eq 3 ] || echec "de bout en bout : l'hôte, Anna et Chloé doivent finir avec la même empreinte"
+[ "$(for nom in hote11 $restes11; do grep -h "^EMPREINTE " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^EMPREINTE " hote11 $restes11)" -eq 3 ] || echec "de bout en bout : l'hôte et les deux clients restés doivent finir avec la même empreinte"
 ecart11=$(grep -o "ECART_DEPART [0-9]*" "$JOURNAUX/hote11.log" 2>/dev/null | head -1 | awk '{print $2}')
 echo "  (bout en bout) départ arraché vu par l'hôte au bout de ${ecart11:-?} ms"
 [ -n "$ecart11" ] && [ "$ecart11" -le 10000 ] 2>/dev/null \
