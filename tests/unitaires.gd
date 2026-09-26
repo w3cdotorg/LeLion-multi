@@ -986,6 +986,28 @@ func _tester_joueur_local() -> void:
 	gs.partie_en_cours = false
 	gs.pret = false
 
+	# Hôte en session : seul l'identifiant fait foi, même si le salon a donné à un autre poste
+	# l'objet du dernier joueur local annoncé (ici `client`, en tête depuis le retour au solo).
+	var api_hote := SceneMultiplayer.new()
+	var pair_hote := ENetMultiplayerPeer.new()
+	_check(pair_hote.create_server(17792) == OK, "un pair hôte est créé")
+	api_hote.multiplayer_peer = pair_hote
+	set_multiplayer(api_hote, gs.get_path())
+	gs.joueurs.resize(2)
+	gs.joueurs[1] = Joueur.new()
+	client.id_reseau = 7
+	gs.joueurs[1].id_reseau = MultiplayerPeer.TARGET_PEER_SERVER
+	_check(gs.joueur_local() == gs.joueurs[1],
+		"hôte en session : le joueur local est celui de l'identifiant 1, pas l'ancien objet donné à un autre poste")
+	pair_hote.close()
+	set_multiplayer(null, gs.get_path())
+	client.id_reseau = MultiplayerPeer.TARGET_PEER_SERVER
+	gs.joueurs.resize(1)
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
 
 func _tester_palette() -> void:
 	print("-- Palette de bataille (deutéranopie)")

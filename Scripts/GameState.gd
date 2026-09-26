@@ -67,14 +67,15 @@ func _init() -> void:
 
 
 ## Le joueur de ce poste : celui dont `id_reseau` est l'identifiant réseau du poste
-## (`multiplayer.get_unique_id()` : 1 chez l'hôte et hors réseau). Hors réseau ou pair fermé/absent
-## (revue phase 11 bis, M1), 1 ne veut rien dire de ce poste (c'est aussi la case de l'hôte) : le
-## dernier joueur local annoncé (`_dernier_joueur_local`) est gardé s'il est toujours dans le
-## tableau, identique en solo, en bataille locale et chez l'hôte. À défaut (client dont les
-## identifiants ne sont pas encore attribués), le premier joueur.
+## (`multiplayer.get_unique_id()` : 1 chez l'hôte et hors réseau). Hors d'une session réseau (solo,
+## bataille locale, pair fermé ou absent), 1 ne dit rien de ce poste (c'est aussi la case de
+## l'hôte) : le dernier joueur local annoncé (`_dernier_joueur_local`) est gardé s'il est toujours
+## dans le tableau. En session (hôte ou client), seul l'identifiant fait foi : le salon peut avoir
+## donné l'ancien objet à un autre poste. À défaut (client dont les identifiants ne sont pas encore
+## attribués), le premier joueur.
 func joueur_local() -> Joueur:
 	var id := _id_reseau_local()
-	if id == MultiplayerPeer.TARGET_PEER_SERVER and joueurs.has(_dernier_joueur_local):
+	if not _en_session() and joueurs.has(_dernier_joueur_local):
 		return _dernier_joueur_local
 	if id != Joueur.SANS_PAIR:  # N1 : un identifiant nul ne doit désigner aucun poste
 		for j in joueurs:
@@ -147,6 +148,16 @@ func _id_reseau_local() -> int:
 	if pair == null or pair.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
 		return MultiplayerPeer.TARGET_PEER_SERVER
 	return multiplayer.get_unique_id()
+
+
+## Vrai si ce poste est dans une session réseau ouverte (hôte ou client) ; faux en solo, en bataille
+## locale (`OfflineMultiplayerPeer`), sans pair ou pair fermé.
+func _en_session() -> bool:
+	if not is_inside_tree():
+		return false
+	var pair := multiplayer.multiplayer_peer
+	return pair != null and not pair is OfflineMultiplayerPeer \
+		and pair.get_connection_status() != MultiplayerPeer.CONNECTION_DISCONNECTED
 
 
 ## Émet `joueur_local_change` si le joueur local n'est plus celui de la dernière annonce.
