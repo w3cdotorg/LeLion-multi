@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Test réseau du transport (phase 11), de la découverte (phase 12), du salon (phase 13) et de la
-# manche synchronisée (phase 14) : des postes headless sur localhost, un processus Godot par poste
-# (tests/reseau/joueur.gd), scénario après scénario.
+# Test réseau du transport (phase 11), de la découverte (phase 12), du salon (phase 13), de la
+# manche synchronisée (phase 14) et de bout en bout (phase 15) : des postes headless sur localhost,
+# un processus Godot par poste (tests/reseau/joueur.gd), scénario après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
 # et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778).
-# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40),
+# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40 ; le
+# scénario 11, une manche entière, a le sien : DUREE11 + 60),
 # DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion : hors CI, où la diffusion n'a pas
 # été mesurée ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
 # Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
-# 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici) ; seules restent, côté client
+# 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici ; plus pour les étapes de la manche
+# entière du scénario 11, qui durent ce que dure le jeu) ; seules restent, côté client
 # (joueur.gd), de courtes fenêtres de vérification d'absence (1 s après un refus, 0,5 s avant un
 # départ volontaire) : elles ne peuvent pas donner de faux rouge.
 # Sortie 0 si chaque poste sort en 0, sans ❌ ni SCRIPT ERROR ni SHADER ERROR dans son journal, et
@@ -90,11 +92,11 @@ attendre_hote() {
 	return 1
 }
 
-# attendre_ligne <nom> <motif> : attend qu'une ligne contenant <motif> apparaisse dans le journal de
-# <nom>, 15 s au plus (par exemple « ACCEPTE » du rôle lent, I2).
+# attendre_ligne <nom> <motif> [secondes] : attend qu'une ligne contenant <motif> apparaisse dans le
+# journal de <nom>, 15 s au plus par défaut (par exemple « ACCEPTE » du rôle lent, I2).
 attendre_ligne() {
 	local i
-	for i in $(seq 1 150); do
+	for i in $(seq 1 $((${3:-15} * 10))); do
 		grep -q -- "$2" "$JOURNAUX/$1.log" 2>/dev/null && return 0
 		sleep 0.1
 	done
@@ -168,6 +170,23 @@ tuer() {
 		kill -9 "$i" 2>/dev/null
 	done
 	wait 2>/dev/null
+}
+
+# arracher <nom> : tue sur-le-champ (KILL) le processus Godot du poste nommé, enfant de son timeout,
+# puis ce timeout : le poste n'envoie plus rien, pas même un DISCONNECT, comme un PC planté ou un
+# Wi-Fi coupé (scénario 11). Comme tuer(), ni son code de sortie ni son journal ne sont vérifiés ici.
+arracher() {
+	local nom="$1" i
+	for i in "${!NOMS[@]}"; do
+		if [ "${NOMS[$i]}" = "$nom" ]; then
+			pkill -KILL -P "${PIDS[$i]}" 2>/dev/null
+			kill -KILL "${PIDS[$i]}" 2>/dev/null
+			wait "${PIDS[$i]}" 2>/dev/null
+			unset "PIDS[$i]" "NOMS[$i]"
+		fi
+	done
+	PIDS=(${PIDS[@]+"${PIDS[@]}"})
+	NOMS=(${NOMS[@]+"${NOMS[@]}"})
 }
 
 # compter <motif> <nom…> : nombre de lignes qui contiennent le motif dans les journaux nommés.
@@ -381,6 +400,80 @@ if attendre_hote hote10; then
 fi
 tuer hote10 muet10
 [ "$ECHECS" -eq "$avant10" ] && echo "  ✅ I1 : un poste figé (ENet muet) est exclu, la barrière passe sans attendre le silence par défaut de la barrière"
+
+# 11. De bout en bout (phase 15), par les vraies scènes : un hôte et trois clients jouent une manche
+#     entière (DUREE11 s) sur le Village (son peintre), chacun au clavier selon son programme (des
+#     commandes au hasard, tirées de sa graine). Après 20 s de jeu, l'hôte orchestre les rencontres
+#     (pastilles ramassées au vol, étoile, soucoupe, sa gerbe sur un client, celle d'un client sur lui,
+#     un choc) ; puis le client qui tient le plus de territoire est arraché (KILL, sans un paquet de
+#     plus) : l'hôte doit le voir partir au bout du silence de session d'ENet (SILENCE_SESSION, 3 à
+#     8 s ; ECART_DEPART), son lion disparaître chez tous, ses cellules rester. Le jeu reprend jusqu'au
+#     calme, 4 s avant la fin ; la manche arrivée à son terme, l'hôte la fige : l'hôte et les deux
+#     clients restés écrivent la même empreinte (territoire, scores, suite des tampons, lions,
+#     apparitions, niveau, réactions de chaque joueur).
+DUREE11=45
+P=$((PORT_BASE + 11))
+B=$((PORT_BASE + 1011))
+DELAI_AVANT11=$DELAI
+DELAI=$((DUREE11 + 60))
+lancer hote11 --role=bout-hote --port=$P --port-balise=$B --pseudo=Hote11 --clients=3 --niveau=2 --duree=$DUREE11 \
+	--graine=1 --tue="$JOURNAUX/tue11" --rester="$JOURNAUX/rester11"
+partant11=""
+restes11="a11 b11 c11"
+if attendre_hote hote11; then
+	lancer a11 --role=bout-client --port=$P --port-balise=$B --pseudo=Anna --graine=2 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
+	lancer b11 --role=bout-client --port=$P --port-balise=$B --pseudo=Bruno --graine=3 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
+	lancer c11 --role=bout-client --port=$P --port-balise=$B --pseudo=Chloe --graine=4 --calme="$JOURNAUX/calme11" --fige="$JOURNAUX/fige11"
+	if attendre_ligne hote11 "INTRO" 30 && attendre_ligne a11 "INTRO" && attendre_ligne b11 "INTRO" && attendre_ligne c11 "INTRO" \
+		&& attendre_ligne hote11 "A TUER" 60; then
+		# L'hôte désigne le client à arracher (celui qui tient le plus de territoire) : « A TUER <pseudo> ».
+		case "$(sed -n 's/^A TUER //p' "$JOURNAUX/hote11.log" | head -1)" in
+			Anna) partant11=a11 ;;
+			Bruno) partant11=b11 ;;
+			Chloe) partant11=c11 ;;
+			*) partant11="" ;;
+		esac
+		restes11=""
+		for nom in a11 b11 c11; do
+			[ "$nom" = "$partant11" ] || restes11="$restes11 $nom"
+		done
+		if [ -n "$partant11" ]; then
+			arracher "$partant11"
+			touch "$JOURNAUX/tue11"
+			# Le client arraché n'aura pas de bilan, mais ses vérifications jusque-là comptent.
+			grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/$partant11.log" \
+				&& echec "de bout en bout : erreurs dans le journal de $partant11 avant son arrachement"
+			if attendre_ligne hote11 "DEPART VU" 30 && attendre_ligne hote11 "CALME" $DUREE11; then
+				touch "$JOURNAUX/calme11"
+				if attendre_ligne hote11 "FIGE" 30; then
+					touch "$JOURNAUX/fige11"
+					ok11=1
+					for nom in $restes11; do
+						attendre_ligne "$nom" "EMPREINTE" || ok11=0
+					done
+					[ "$ok11" -eq 1 ] && touch "$JOURNAUX/rester11"
+				fi
+			fi
+		else
+			echec "de bout en bout : l'hôte ne désigne aucun client connu à arracher"
+		fi
+	fi
+	touch "$JOURNAUX/tue11" "$JOURNAUX/calme11" "$JOURNAUX/fige11" "$JOURNAUX/rester11"
+	if [ -z "$partant11" ]; then
+		# Aucun client désigné (échec plus tôt) : b11 est arraché quand même, les autres finissent.
+		partant11=b11
+		restes11="a11 c11"
+		arracher b11
+	fi
+fi
+terminer "de bout en bout : manche entière à 1 hôte et 3 clients au clavier, rencontres (pastilles au vol, étoile, soucoupe, gerbes croisées, choc), un client arraché en pleine manche, mêmes empreintes chez l'hôte et les clients restés"
+DELAI=$DELAI_AVANT11
+[ "$(for nom in hote11 $restes11; do grep -h "^EMPREINTE " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^EMPREINTE " hote11 $restes11)" -eq 3 ] || echec "de bout en bout : l'hôte et les deux clients restés doivent finir avec la même empreinte"
+ecart11=$(grep -o "ECART_DEPART [0-9]*" "$JOURNAUX/hote11.log" 2>/dev/null | head -1 | awk '{print $2}')
+echo "  (bout en bout) départ arraché vu par l'hôte au bout de ${ecart11:-?} ms"
+[ -n "$ecart11" ] && [ "$ecart11" -le 10000 ] 2>/dev/null \
+	|| echec "de bout en bout : départ arraché vu au bout de ${ecart11:-?} ms (attendu au plus 10000 : le silence de session d'ENet, 8 s au plus, et la marge d'une image)"
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then

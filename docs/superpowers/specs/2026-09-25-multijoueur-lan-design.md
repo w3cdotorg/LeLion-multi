@@ -336,9 +336,18 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   peinture au clavier de chaque poste, un client qui part par le menu local (son lion disparaît,
   ses cellules restent), des réactions données par l'hôte ; la même empreinte chez l'hôte et chez
   le client resté (territoire, scores, suite des tampons, lions, apparitions), puis l'hôte perdu.
-  De bout en bout (phase 15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
-  propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
-  déconnexion d'un client en cours de manche.
+  De bout en bout (phase 15, scénario 11) : 1 hôte + 3 clients jouent une manche entière (45 s, le
+  Village et son peintre) au clavier, chacun selon un programme de commandes au hasard tiré d'une
+  graine ; l'hôte orchestre les rencontres que le hasard ne garantit pas, en ne décidant que des lieux
+  (pastilles ramassées au vol par chaque client, étoile, soucoupe, sa gerbe sur un client, la gerbe
+  d'un client sur lui, un choc) ; un client est arraché en pleine manche (processus tué, sans
+  DISCONNECT) : l'hôte le voit parti au bout du silence de session d'ENet (10 s au plus), son lion
+  disparaît chez tous, ses cellules restent ; à la fin, l'hôte et les deux clients restés ont la
+  même empreinte : propriétaires des cellules, scores, nombre et suite des tampons reçus, lions,
+  apparitions, niveau, et les réactions de chaque joueur (étourdissements, crans, gerbes XXL)
+  comptées sur chaque poste (aucune perdue ni doublée). Les statistiques de bataille ne sont tenues
+  que par l'hôte (phase 18 : les envoyer aux clients). `DUREE11=45` (décision de l'utilisateur, pas
+  90 s : marge CI sous le `timeout 300`).
 - **Visuel** : `tests/screenshots.gd` étendu (salon, manche à 6 couleurs, résultats), deux vraies
   fenêtres en localhost pour une partie manuelle.
 - **Windows** : test manuel de l'`.exe` issu de la CI sur un PC de la LAN (le développement se fait
