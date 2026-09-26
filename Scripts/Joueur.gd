@@ -152,6 +152,40 @@ func nuances() -> Array[Color]:
 	return [couleur.darkened(ECART_NUANCES), couleur, couleur.lightened(ECART_NUANCES)]
 
 
+## Chez un client (phase 14) : les réactions décidées par l'hôte, que la manche lui transmet (sur un
+## client, seul l'hôte décompte les minuteries : `GameState` n'y appelle pas `avancer`). Chacune pose
+## l'état que l'hôte a et émet le même signal que la méthode de l'hôte (Lion, HUD, Audio l'écoutent
+## sur chaque poste) ; sans effet ni signal si rien ne change. Le début d'un étourdissement et celui
+## d'une gerbe XXL passent par `etourdir` et `activer_bonus`, comme chez l'hôte.
+
+
+## Les crans de gerbe de l'hôte (ramenés dans [1, CRANS_MAX]).
+func recevoir_crans(n: int) -> void:
+	var crans_hote := clampi(n, 1, CRANS_MAX)
+	if crans_hote == crans:
+		return
+	crans = crans_hote
+	crans_changes.emit(crans)
+
+
+## Fin de l'étourdissement chez l'hôte : l'immunité qui reste (`invulnerable_restant` de l'hôte) est
+## celle que le lion fait clignoter.
+func recevoir_fin_etourdissement(immunite_restante: float) -> void:
+	if not est_etourdi():
+		return
+	etourdi_restant = 0.0
+	invulnerable_restant = maxf(immunite_restante, 0.0)
+	etourdissement_fini.emit()
+
+
+## Fin de la gerbe XXL chez l'hôte.
+func recevoir_fin_bonus() -> void:
+	if not bonus_actif():
+		return
+	bonus_restant = 0.0
+	bonus_change.emit(false)
+
+
 ## Active (ou prolonge) la gerbe XXL pour `duree` secondes.
 func activer_bonus(duree: float) -> void:
 	var etait_actif := bonus_actif()

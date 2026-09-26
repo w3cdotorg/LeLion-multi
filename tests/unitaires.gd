@@ -36,6 +36,7 @@ func _run() -> void:
 	_tester_salon()
 	_tester_peinture()
 	_tester_territoire_reseau()
+	_tester_joueur_replique()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1573,3 +1574,65 @@ func _tester_territoire_reseau() -> void:
 		"un lot mal formé (cellule non peignable ou hors grille, joueur hors plage, taille tronquée) est refusé sans rien changer")
 	var vide := client.extraire_changements()
 	_check(vide.is_empty(), "appliquer les changements de l'hôte n'en crée pas d'autres chez le client")
+
+
+
+## Phase 14 : chez un client, les réactions des joueurs viennent de l'hôte (signaux compris), qui seul
+## décompte leurs minuteries ; la fenêtre suit le format de l'écran.
+func _tester_joueur_replique() -> void:
+	print("-- Joueur répliqué (réactions reçues de l'hôte, minuteries de l'hôte)")
+	var j := Joueur.new()
+	j.reinitialiser(3)
+	var journal: Array[String] = []
+	j.crans_changes.connect(func(c: int) -> void: journal.append("crans:%d" % c))
+	j.etourdissement_fini.connect(func() -> void: journal.append("fin_etourdi"))
+	j.bonus_change.connect(func(actif: bool) -> void: journal.append("bonus:%s" % actif))
+	j.recevoir_crans(4)
+	j.recevoir_crans(4)
+	j.recevoir_crans(99)
+	_check(journal == ["crans:4", "crans:%d" % Joueur.CRANS_MAX] and j.crans == Joueur.CRANS_MAX,
+		"les crans de l'hôte sont posés et signalés une fois, dans leurs bornes (%s)" % [journal])
+	journal.clear()
+	j.recevoir_fin_etourdissement(0.5)
+	j.etourdir(1.5, 1.0, Vector2.INF, Color.RED)
+	j.recevoir_fin_etourdissement(0.97)
+	j.recevoir_fin_etourdissement(0.9)
+	_check(journal == ["fin_etourdi"] and not j.est_etourdi() and is_equal_approx(j.invulnerable_restant, 0.97),
+		"la fin d'étourdissement de l'hôte n'est signalée qu'à un joueur étourdi, une fois, avec l'immunité qui reste chez l'hôte")
+	journal.clear()
+	j.recevoir_fin_bonus()
+	j.activer_bonus(8.0)
+	j.recevoir_fin_bonus()
+	j.recevoir_fin_bonus()
+	_check(journal == ["bonus:true", "bonus:false"] and not j.bonus_actif(), "la fin de la gerbe XXL de l'hôte est signalée une fois (%s)" % [journal])
+
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	gs.pret = true
+	var joueur: Joueur = gs.joueurs[1]
+	joueur.etourdir(1.5, 1.0, Vector2.INF, Color.RED)
+	var fins: Array[int] = []
+	var sur_fin := func() -> void: fins.append(1)
+	joueur.etourdissement_fini.connect(sur_fin)
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17795) == OK, "(pré-condition) GameState sur un pair client")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	gs._process(2.0)
+	_check(is_equal_approx(gs.temps_ecoule, 2.0) and joueur.est_etourdi() and is_equal_approx(joueur.etourdi_restant, 1.5) and fins.is_empty(),
+		"sur un client, le chrono tourne mais les minuteries des joueurs attendent l'hôte (aucune fin émise)")
+	set_multiplayer(null, gs.get_path())
+	pair.close()
+	gs._process(2.0)
+	_check(not joueur.est_etourdi() and fins.size() == 1, "sur l'hôte (hors réseau compris), GameState décompte les minuteries des joueurs")
+	joueur.etourdissement_fini.disconnect(sur_fin)
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+	_check(Regles.taille_fenetre(ReglesBataille.TAILLE_ECRAN, Vector2i(1400, 454)) == Vector2i(1400, 788)
+		and Regles.taille_fenetre(Regles.TAILLE_ECRAN_SOLO, Vector2i(1400, 788)) == Vector2i(1400, 454),
+		"hors du solo, la fenêtre prend le format 16:9 (1400×788), et le reprend du solo au retour (1400×454)")

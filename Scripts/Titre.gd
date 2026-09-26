@@ -34,7 +34,7 @@ func _ready() -> void:
 	# les règles doivent être branchées avant le changement de scène (Main._enter_tree appelle
 	# nouvelle_partie), même au retour d'une bataille ; l'écran repasse en 2000×648.
 	GameState.configurer_solo()
-	get_tree().root.content_scale_size = GameState.regles.taille_ecran()
+	Regles.appliquer_ecran(get_tree(), GameState.regles.taille_ecran())
 	Audio.demarrer_musique("ville", 1)
 	GameState.quitter_arcade()
 	GameState.demo = false

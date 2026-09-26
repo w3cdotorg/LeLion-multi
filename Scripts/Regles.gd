@@ -42,6 +42,26 @@ func taille_ecran() -> Vector2i:
 	return TAILLE_ECRAN_SOLO
 
 
+## Met l'écran à `taille` (`content_scale_size`, spec §7) et, quand l'écran change de format dans
+## une fenêtre (ni plein écran, ni maximisée, ni headless), règle la hauteur de la fenêtre sur le
+## nouveau format en gardant sa largeur : hors du solo (écran Réseau, salon, bataille en 16:9),
+## l'écran ne s'affiche plus avec des bandes dans la fenêtre du solo (1400×454 devient 1400×788), et
+## le titre la rend au solo. Un écran qui ne change pas (du titre au solo) laisse la fenêtre telle que
+## le joueur l'a mise. Appelée par le titre, l'écran Réseau, le salon et la scène de jeu.
+static func appliquer_ecran(arbre: SceneTree, taille: Vector2i) -> void:
+	var avant := arbre.root.content_scale_size
+	arbre.root.content_scale_size = taille
+	if avant == taille or DisplayServer.get_name() == "headless" \
+			or DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+		return
+	DisplayServer.window_set_size(taille_fenetre(taille, DisplayServer.window_get_size()))
+
+
+## La fenêtre de largeur `fenetre.x` au format de l'écran `ecran`.
+static func taille_fenetre(ecran: Vector2i, fenetre: Vector2i) -> Vector2i:
+	return Vector2i(fenetre.x, roundi(fenetre.x * float(ecran.y) / ecran.x))
+
+
 ## Avancement de la partie, de 0 (début) à 1 (fin en vue), qui accélère le peintre et les
 ## apparitions d'ennemis. Peut dépasser 1 : les appelants le bornent. Nul par défaut (rien
 ## n'accélère).

@@ -36,7 +36,7 @@ const ACTIONS_DE_JEU := ["deplacer_gauche", "deplacer_droite", "deplacer_haut", 
 func _enter_tree() -> void:
 	for action in ACTIONS_DE_JEU:
 		Input.action_release(action)
-	get_tree().root.content_scale_size = GameState.regles.taille_ecran()
+	Regles.appliquer_ecran(get_tree(), GameState.regles.taille_ecran())
 	GameState.nouvelle_partie()
 
 
