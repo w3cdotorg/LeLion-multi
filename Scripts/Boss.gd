@@ -18,7 +18,13 @@ signal etat_change(etat: Etat)
 @onready var sprite: Sprite2D = $Sprite2D
 
 var etat := Etat.REPOS
-var cote := 1                            # 1 = entre par la gauche, -1 = par la droite
+## 1 = entre par la gauche, -1 = par la droite. Répliqué chez les clients (`Synchro`) : le peintre y
+## regarde vers le centre comme chez l'hôte.
+var cote := 1:
+	set(valeur):
+		cote = valeur
+		if is_node_ready():
+			_appliquer_cote()
 var y_sol := 468.0                       # y du haut de la skyline (bas du boss)
 var _tween: Tween
 var _demi_largeur := 0.0
@@ -36,9 +42,11 @@ func _ready() -> void:
 	_demi_largeur = sprite.texture.get_width() * echelle / 2.0
 	_demi_hauteur = hauteur_cible / 2.0
 	_generer_collision(echelle)
+	_appliquer_cote()  # sur un client : le côté de l'hôte, reçu à l'apparition
+	if est_replique():
+		return
 
 	cote = 1 if randf() < 0.5 else -1
-	_appliquer_cote()
 	position = Vector2(_x_hors_ecran(), y_sol - _demi_hauteur)
 	GameState.partie_terminee.connect(func(_v: bool) -> void: _arreter())
 	if not GameState.pret:
@@ -47,6 +55,8 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if est_replique():
+		return
 	if etat == Etat.ANNONCE:
 		_temps_annonce += delta
 		position.y = y_sol - _demi_hauteur + sin(_temps_annonce * 40.0) * 3.0
@@ -112,8 +122,7 @@ func _changer_etat(nouvel_etat: Etat) -> void:
 
 
 func _changer_cote_et_reposer() -> void:
-	cote = -cote
-	_appliquer_cote()
+	cote = -cote  # le setter retourne le sprite et la collision
 	_changer_etat(Etat.REPOS)
 
 

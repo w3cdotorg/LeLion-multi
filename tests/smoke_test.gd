@@ -277,7 +277,11 @@ func _run() -> void:
 	_check(spawner.difficulte() >= 0.0 and spawner.difficulte() <= 1.0, "difficulté bornée (%.3f)" % spawner.difficulte())
 	var soucoupe: Node = spawner.spawn_soucoupe(20)
 	_check(soucoupe.speed >= spawner.vitesse_soucoupe.x, "la soucoupe reçoit sa vitesse du spawner (%.0f)" % soucoupe.speed)
+	var soucoupe_bis: Node = spawner.spawn_soucoupe(40)
+	_check(not str(soucoupe.name).contains("@") and not str(soucoupe_bis.name).contains("@") and soucoupe.name != soucoupe_bis.name,
+		"deux apparitions de la même scène ont des noms lisibles et distincts, que le MultiplayerSpawner peut répliquer (%s, %s)" % [soucoupe.name, soucoupe_bis.name])
 	soucoupe.queue_free()
+	soucoupe_bis.queue_free()
 	Input.action_release("vomir")
 	await _frames(3)
 	_check(not lion.est_en_train_de_vomir, "le lion arrête de vomir quand l'action est relâchée")
@@ -709,6 +713,27 @@ func _run() -> void:
 		return "" if base == null else base.resource_path)
 	_check(bases_pastilles.all(func(p: String) -> bool: return p == "res://Scripts/Pastille.gd"),
 		"pastille de couleur, étoile et cœur dérivent de la base Pastille (%s)" % [bases_pastilles])
+	# Phase 14 : chaque ennemi et chaque pastille porte son MultiplayerSynchronizer (`Synchro`) : position
+	# à l'apparition (et ensuite pour les ennemis, qui bougent chez l'hôte), couleur d'une pastille, côté
+	# du peintre, inclinaison de la coccinelle.
+	var attendues := {
+		"Soucoupe": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
+		"Coccinelle": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:rotation", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
+		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
+		"ColorPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER], [^".:couleur_index", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+		"BonusPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+		"CoeurPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+	}
+	for nom: String in attendues:
+		var instance: Node = load("res://Scenes/%s.tscn" % nom).instantiate()
+		var synchro := instance.get_node_or_null("Synchro") as MultiplayerSynchronizer
+		var config: SceneReplicationConfig = null if synchro == null else synchro.replication_config
+		var conforme: bool = config != null and config.get_properties().size() == attendues[nom].size()
+		for attendue: Array in attendues[nom]:
+			conforme = conforme and config.has_property(attendue[0]) and config.property_get_spawn(attendue[0]) \
+				and config.property_get_replication_mode(attendue[0]) == attendue[1]
+		_check(conforme, "%s : son Synchro réplique %s à l'apparition" % [nom, attendues[nom].map(func(a: Array) -> String: return str(a[0]))])
+		instance.free()
 	# L'intrus a un champ `joueur`, comme un lion : sous l'ancien typage (groupe « lion » puis
 	# `body.joueur`), il serait accepté.
 	var script_intrus := GDScript.new()
@@ -779,6 +804,33 @@ func _run() -> void:
 	await _frames(1)
 	_check(is_instance_valid(etoile_client) and etoile_client.has_method("_expirer"),
 		"sur un client, une étoile en fin de vie ne se libère pas d'elle-même (l'hôte la fait disparaître)")
+	# Phase 14 : sur un client, ennemis et Spawner sont inertes : des répliques de ceux de l'hôte, que
+	# seul leur Synchro déplace
+	var soucoupe_client: Node2D = load("res://Scenes/Soucoupe.tscn").instantiate()
+	soucoupe_client.position = Vector2(300, 100)
+	poste_client.add_child(soucoupe_client)
+	var coccinelle_repl: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_repl.position = Vector2(900, 100)
+	poste_client.add_child(coccinelle_repl)
+	var boss_client: Node2D = load("res://Scenes/Boss.tscn").instantiate()
+	boss_client.cote = -1  # comme l'état d'apparition reçu de l'hôte, posé avant `_ready`
+	boss_client.position = Vector2(1000, 300)
+	poste_client.add_child(boss_client)
+	var spawner_client: Node = load("res://Scripts/Spawner.gd").new()
+	poste_client.add_child(spawner_client)
+	var enfants_client := poste_client.get_child_count()
+	spawner_client.demarrer()
+	await _frames(5)
+	_check(GS.pret and soucoupe_client.position == Vector2(300, 100) and coccinelle_repl.position == Vector2(900, 100)
+		and coccinelle_repl.speed == 0.0 and boss_client.position == Vector2(1000, 300) and boss_client._tween == null,
+		"sur un client, un ennemi ne bouge pas de lui-même, ne tire rien au hasard et le peintre ne lance aucun tween")
+	_check(boss_client.sprite.scale.x < 0.0 and boss_client.cote == -1, "sur un client, le peintre regarde du côté reçu de l'hôte (sprite en miroir)")
+	_check(not spawner_client._demarre and spawner_client._timer_soucoupe == null and poste_client.get_child_count() == enfants_client,
+		"sur un client, le Spawner ne fait rien apparaître (tout vient de l'hôte)")
+	# Chaque nœud synchronisé quitte le sous-arbre avant que son pair ne change (sinon l'API du client
+	# le suivrait encore).
+	for noeud: Node in [soucoupe_client, coccinelle_repl, boss_client, spawner_client, pastille_client, etoile_client]:
+		noeud.free()
 	set_multiplayer(null, poste_client.get_path())
 	pair_client.close()
 	poste_client.free()

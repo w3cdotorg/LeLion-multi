@@ -2,7 +2,10 @@ extends Node
 ## Fait apparaître pickups et ennemis dans la scène parente. Ce qui peut apparaître (pastilles,
 ## étoile, cœurs) est décidé par les règles de la partie ; les hauteurs d'apparition, réglées pour
 ## l'écran du solo, suivent la hauteur de l'écran. La difficulté (0 → 1) suit l'avancement de la
-## partie (`Regles.avancement`) et le temps écoulé.
+## partie (`Regles.avancement`) et le temps écoulé. Il ne tourne que sur l'hôte, à partir de
+## `demarrer()` (appelé par la scène de jeu) : en réseau, ennemis et pastilles apparaissent chez
+## l'hôte, et le `MultiplayerSpawner` de la scène de jeu les fait apparaître chez chaque client
+## (d'où des noms lisibles, `add_child(..., true)` : un nom réservé « @… » ne s'y réplique pas).
 
 @export var color_pickup_scene: PackedScene = preload("res://Scenes/ColorPickup.tscn")
 @export var soucoupe_scene: PackedScene = preload("res://Scenes/Soucoupe.tscn")
@@ -37,10 +40,22 @@ var _timer_coccinelle: Timer
 var _timer_bonus: Timer
 var _timer_coeur: Timer
 var _facteur_ennemis := 1.0
+var _demarre := false
 
 
 func _ready() -> void:
 	GameState.partie_terminee.connect(_on_partie_terminee)
+
+
+## Les apparitions commencent : le peintre s'il y en a un, puis, à la fin de l'intro, les pastilles,
+## les étoiles, les cœurs et les ennemis. Appelé par la scène de jeu : dans son `_ready` hors réseau,
+## après la barrière de chargement chez l'hôte d'une manche en réseau (la manche, phase 14). Sans
+## effet sur un client (ses ennemis et ses pastilles sont les répliques de ceux de l'hôte) et au
+## second appel.
+func demarrer() -> void:
+	if _demarre or not multiplayer.is_server():
+		return
+	_demarre = true
 	if GameState.niveau().get("boss", false):
 		_facteur_ennemis = facteur_ennemis_avec_boss
 		spawn_boss()
@@ -117,14 +132,14 @@ func _on_timer_coeur() -> void:
 func spawn_coeur(position_coeur: Vector2) -> Node:
 	var coeur := coeur_scene.instantiate()
 	coeur.global_position = position_coeur
-	get_parent().add_child(coeur)
+	get_parent().add_child(coeur, true)
 	return coeur
 
 
 func spawn_bonus(position_bonus: Vector2) -> Node:
 	var bonus := bonus_scene.instantiate()
 	bonus.global_position = position_bonus
-	get_parent().add_child(bonus)
+	get_parent().add_child(bonus, true)
 	return bonus
 
 
@@ -180,7 +195,7 @@ func _placer_et_ajouter_boss(boss: Node) -> void:
 	var ville: Node2D = get_tree().get_first_node_in_group("ville")
 	if ville != null:
 		boss.y_sol = ville.position.y - ville.tex_size.y / 2.0
-	get_parent().add_child(boss)
+	get_parent().add_child(boss, true)
 
 
 func spawn_pickup(index: int, position_pickup: Vector2) -> Node:
@@ -188,7 +203,7 @@ func spawn_pickup(index: int, position_pickup: Vector2) -> Node:
 	pickup.couleur_index = index
 	pickup.global_position = position_pickup
 	pickup.tree_exited.connect(_on_pastille_partie)
-	get_parent().add_child(pickup)
+	get_parent().add_child(pickup, true)
 	return pickup
 
 
@@ -199,7 +214,7 @@ func spawn_soucoupe(y_depart: float = -1.0) -> Node:
 		y_depart = _y_ennemi_aleatoire()
 	soucoupe.position = Vector2(-200, y_depart)
 	soucoupe.speed = lerp(vitesse_soucoupe.x, vitesse_soucoupe.y, difficulte())
-	get_parent().add_child(soucoupe)
+	get_parent().add_child(soucoupe, true)
 	return soucoupe
 
 
@@ -210,5 +225,5 @@ func spawn_coccinelle(y_depart: float = -1.0) -> Node:
 	if y_depart < 0.0:
 		y_depart = _y_ennemi_aleatoire()
 	c.position = Vector2(largeur + 100, y_depart)
-	get_parent().add_child(c)
+	get_parent().add_child(c, true)
 	return c

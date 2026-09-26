@@ -49,6 +49,7 @@ func _ready() -> void:
 	_placer_ville()
 	_placer_ciel_et_camera()
 	_ajouter_lions()
+	$Spawner.demarrer()
 	if GameState.demo:
 		_installer_demo()
 
