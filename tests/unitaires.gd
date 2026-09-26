@@ -28,6 +28,7 @@ func _run() -> void:
 	_tester_modes()
 	_tester_facade_retiree()
 	_tester_territoire()
+	_tester_reseau()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -745,3 +746,102 @@ func _tester_territoire() -> void:
 		c.tamponner(i % 6, Vector2i(rng.randi_range(0, 2000), rng.randi_range(0, 648)), 46)
 	var ms := (Time.get_ticks_usec() - debut) / 1000.0
 	_check(ms < 60.0, "360 tampons de 46 px (une seconde à 6 lions) coûtent %.1f ms au territoire (moins de 60 ms)" % ms)
+
+
+func _tester_reseau() -> void:
+	print("-- Réseau (poignée de main, attribution)")
+	var reseau: Node = root.get_node("Reseau")  # autoload : jamais nommé (compilé avant lui)
+	var api: SceneMultiplayer = root.multiplayer
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	_check(not reseau.en_ligne() and api.multiplayer_peer is OfflineMultiplayerPeer and api.is_server(),
+		"hors réseau par défaut : pair hors ligne, ce poste est son propre hôte (le solo)")
+	_check(not reseau.version.is_empty() and reseau.version == ProjectSettings.get_setting("application/config/version"),
+		"la version présentée est celle du projet (%s)" % reseau.version)
+
+	# Attribution : le plus petit index libre et la première couleur libre, chacun de son côté
+	var occupes: Dictionary[int, Dictionary] = {}
+	_check(reseau.premier_index_libre(occupes, 6) == 0 and reseau.premiere_couleur_libre(occupes) == palette[0],
+		"partie vide : index 0 et première couleur")
+	occupes[1] = {"index": 0, "couleur": palette[0], "pseudo": "Hôte"}
+	occupes[77] = {"index": 2, "couleur": palette[1], "pseudo": "B"}
+	_check(reseau.premier_index_libre(occupes, 6) == 1 and reseau.premiere_couleur_libre(occupes) == palette[2],
+		"après un départ : l'index 1 et la troisième couleur sont les premiers libres (index et couleur indépendants)")
+	_check(reseau.premier_index_libre(occupes, 2) == 1 and reseau.premier_index_libre(occupes, 1) == -1,
+		"les places bornent les index : 1 est libre sur 2 places, rien sur 1")
+	occupes[78] = {"index": 1, "couleur": palette[2], "pseudo": "C"}
+	for i in range(3, EtatPartie.NB_JOUEURS_MAX):
+		occupes[100 + i] = {"index": i, "couleur": palette[i], "pseudo": ""}
+	_check(occupes.size() == EtatPartie.NB_JOUEURS_MAX and reseau.premier_index_libre(occupes, 9) == -1
+		and reseau.premiere_couleur_libre(occupes) == Color.TRANSPARENT,
+		"à %d joueurs, plus d'index ni de couleur, même si l'on demande plus de places" % EtatPartie.NB_JOUEURS_MAX)
+	_check(reseau.pseudo_valide("  Léa\n\t ") == "Léa" and reseau.pseudo_valide("Zoé la grande dompteuse") == "Zoé la grand"
+		and reseau.pseudo_valide("Zoé la grande dompteuse").length() == reseau.PSEUDO_MAX,
+		"le pseudo est nettoyé (contrôles, espaces) et coupé à %d caractères" % reseau.PSEUDO_MAX)
+
+	# Décision de l'hôte sur une demande
+	var version: String = reseau.version
+	var places: int = reseau.places
+	var demande := {"jeu": reseau.JEU, "version": version, "pseudo": "  Zoé la grande dompteuse "}
+	reseau.inscrits[1] = {"index": 0, "couleur": palette[0], "pseudo": "Hôte"}
+	var r: Dictionary = reseau.examiner_demande(demande)
+	_check(r.accepte and r.index == 1 and r.couleur == palette[1] and r.pseudo == "Zoé la grand",
+		"demande valable : acceptée avec l'index 1, la deuxième couleur et le pseudo nettoyé (%s)" % [r])
+	_check(reseau.inscrits.size() == 1, "examiner une demande n'inscrit personne")
+	var autre_version := demande.duplicate()
+	autre_version.version = "0.0-ancienne"
+	r = reseau.examiner_demande(autre_version)
+	_check(not r.accepte and r.raison == reseau.REFUS_VERSION and r.version_hote == version,
+		"version différente : refusée, avec la version de l'hôte pour le message (%s)" % [r])
+	reseau.manche_en_cours = true
+	_check(reseau.examiner_demande(demande).raison == reseau.REFUS_MANCHE, "manche en cours : refusée")
+	_check(reseau.examiner_demande(autre_version).raison == reseau.REFUS_VERSION,
+		"une version différente se dit avant tout autre refus (le joueur sait quoi mettre à jour)")
+	reseau.manche_en_cours = false
+	reseau.places = 2
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "B"}
+	_check(reseau.examiner_demande(demande).raison == reseau.REFUS_PLEIN, "partie pleine (2 places sur 2) : refusée")
+	reseau.places = places
+	for i in range(2, EtatPartie.NB_JOUEURS_MAX):
+		reseau.inscrits[10 + i] = {"index": i, "couleur": palette[i], "pseudo": ""}
+	_check(reseau.examiner_demande(demande).raison == reseau.REFUS_PLEIN,
+		"partie pleine à %d joueurs : refusée" % EtatPartie.NB_JOUEURS_MAX)
+	reseau.inscrits.clear()
+	var mal_formees: Array = [null, 42, "LELION", {}, {"jeu": "AUTRE", "version": version, "pseudo": "x"},
+		{"jeu": reseau.JEU, "version": 11, "pseudo": "x"}, {"jeu": reseau.JEU, "version": version},
+		{"jeu": reseau.JEU, "version": version, "pseudo": ["x"]}]
+	var refus_demande := mal_formees.all(func(d: Variant) -> bool:
+		var reponse: Dictionary = reseau.examiner_demande(d)
+		return not reponse.accepte and reponse.raison == reseau.REFUS_DEMANDE)
+	_check(refus_demande, "une demande mal formée ou d'un autre programme est refusée, sans erreur")
+
+	# Départs vus par l'hôte
+	var partis: Array[int] = []
+	var sur_depart := func(id: int) -> void: partis.append(id)
+	reseau.joueur_parti.connect(sur_depart)
+	reseau.inscrits[42] = {"index": 1, "couleur": palette[1], "pseudo": "Fantôme"}
+	reseau._sur_echec_poignee_de_main(42)
+	_check(not reseau.inscrits.has(42) and partis.is_empty(),
+		"un accepté qui ne finit pas sa poignée de main libère sa place, sans être signalé comme parti")
+	reseau.inscrits[43] = {"index": 1, "couleur": palette[1], "pseudo": "B"}
+	reseau._sur_pair_deconnecte(43)
+	reseau._sur_pair_deconnecte(99)
+	_check(not reseau.inscrits.has(43) and partis == [43], "un inscrit qui part est signalé une fois ; un inconnu, jamais (%s)" % [partis])
+	reseau.joueur_parti.disconnect(sur_depart)
+
+	# Hébergement : port occupé, puis libre, puis retour hors réseau
+	var port := 17790
+	var occupant := ENetMultiplayerPeer.new()
+	_check(occupant.create_server(port) == OK, "un autre programme occupe le port %d" % port)
+	var erreur: int = reseau.heberger(port)
+	_check(erreur != OK and not reseau.en_ligne() and api.is_server() and reseau.inscrits.is_empty(),
+		"port occupé : heberger renvoie l'erreur (%d) et le poste reste hors réseau" % erreur)
+	occupant.close()
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(port) == OK and reseau.en_ligne() and api.is_server() and reseau.inscrits.size() == 1
+		and reseau.index_local == 0 and reseau.couleur_locale == palette[0] and reseau.inscrits[1].pseudo == "Hôte",
+		"port libre : l'hôte écoute et s'inscrit lui-même (index 0, première couleur, son pseudo)")
+	reseau.quitter()
+	_check(not reseau.en_ligne() and api.multiplayer_peer is OfflineMultiplayerPeer and api.is_server()
+		and reseau.inscrits.is_empty() and reseau.index_local == -1 and api.auth_callback.is_null(),
+		"quitter revient hors réseau : pair hors ligne, hôte de soi-même, plus d'inscrits ni de poignée de main")
+	reseau.pseudo = ""
