@@ -140,10 +140,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 13** (salon) : le pseudo choisi au salon peut être plus large que le sprite du lion
   (l'étiquette de bataille est centrée, `offset_left -42 … offset_right 178`, sur un lion borné à
   `x ∈ [0, 2000 - sprite_w]`) ; au-delà d'une douzaine de caractères à 26 px, elle est coupée par le
-  bord de l'écran. L'hôte coupe déjà tout pseudo à `Reseau.PSEUDO_MAX` (12 caractères, phase 11) :
-  borner aussi le champ de saisie à `Reseau.PSEUDO_MAX`, et vérifier sur capture qu'un pseudo de 12
-  caractères larges (« MMMMMMMMMMMM ») tient dans l'écran à chaque bord, sinon clamper l'abscisse de
-  l'étiquette ;
+  bord de l'écran. L'hôte coupe déjà tout pseudo à `Reseau.PSEUDO_MAX` (12 caractères, phase 11) et
+  le champ de saisie de l'écran Réseau s'y arrête (phase 12 bis, où « MMMMMMMMMMMM » tient dans le
+  champ et dans la liste des parties) : vérifier sur capture qu'un pseudo de 12 caractères larges
+  tient au-dessus du lion à chaque bord de l'écran, sinon clamper l'abscisse de l'étiquette ;
 - phase 14 : unifier les sons de ramassage. L'étoile et le cœur jouent leur son dans le gestionnaire
   réservé à l'hôte (un client n'entendrait rien) alors que la pastille passe par `Audio` et le signal
   du joueur local : tout passer par `Audio` et les signaux du joueur local (`bonus_change(true)`,
@@ -174,7 +174,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   garde, mais en Godot 4 le `_ready` / `_physics_process` d'une sous-classe n'appelle pas celui du
   parent — utiliser `_notification(NOTIFICATION_READY)` (appelé pour chaque script de la chaîne)
   ou des appels `super()` explicites ;
-- **prochaine phase qui touche `tests/smoke_test.gd`** : petits durcissements issus de la revue de
+- **phase 14 bis** (qui touche `tests/smoke_test.gd` ; la phase 12 bis, première à y revenir, les a
+  laissés à la phase qui réécrit ces sections de contact) : petits durcissements issus de la revue de
   la phase 8 ter : vérifier que `create_client` renvoie `OK` avant le test de la garde hôte ;
   donner à l'intrus du groupe « lion » un script avec un champ `joueur` pour que la vérification
   échoue d'elle-même sous l'ancien typage ; vérifier la direction du recul (horizontale) après le
@@ -212,19 +213,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   aussi ses jeux (graine dérivée de la clé) : les pré-générer pendant l'intro (nuances de joueur, 7
   rayons, ×2) si la mesure sur un client montre des à-coups. Mémoire du cache plein : environ
   14,5 Mo pour 6 joueurs ;
-- **phase 12** : `Reseau.quitter()` (phase 11) ferme le pair et remet `OfflineMultiplayerPeer` ;
-  `Reseau` le fait déjà de lui-même avant d'émettre `refuse`, `connexion_echouee` et `hote_perdu`
-  (vérifié par `tests/reseau/lancer.sh`). `Titre._ready` doit encore appeler `Reseau.quitter()` à
-  côté de `configurer_solo()` (retour au titre depuis l'écran Réseau, le salon, ou une manche
-  quittée par le menu local, sans signal de `Reseau`), avec une vérification que le solo relancé
-  depuis le titre après un hébergement fonctionne (`multiplayer.is_server()` vrai, un ennemi touche
-  le lion) ; sans quoi ennemis, pastilles, gerbe et chocs cessent en silence ;
-- **phase 12** (écran Réseau) : `Reseau` ne donne que des clés : les textes de `REFUS_VERSION`
-  (« Version différente de l'hôte (%s) », avec `version_hote`), `REFUS_PLEIN`, `REFUS_MANCHE` et
-  `REFUS_DEMANDE`, celui de `connexion_echouee` (spec §9 : après 5 s, retour à l'écran Réseau), de
-  `hote_perdu` (« L'hôte a quitté la partie ») et d'un `heberger` qui renvoie une erreur
-  (`ERR_CANT_CREATE` : « Impossible d'héberger : port 7777 occupé ») vont dans `traductions.csv` ;
-  le pseudo mémorisé dans `Scores` est donné à `Reseau.pseudo` avant `heberger` / `rejoindre` ;
 - **phase 13** (salon) : l'hôte tient `Reseau.inscrits` (id réseau → index, couleur, pseudo) et
   ses signaux `joueur_arrive` / `joueur_parti` ; le salon les synchronise chez les clients (`Reseau`
   est dans ses fichiers), change les couleurs parmi les libres (`Reseau.premiere_couleur_libre`,
@@ -244,8 +232,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 13** : le salon appelle `GameState.configurer_bataille(n)` juste avant de charger la
   scène de bataille, jamais depuis elle (`Main._enter_tree` appelle `nouvelle_partie()`, puis Lion,
   Spawner, HUD et Main s'abonnent à `joueur_local()` dans leur `_ready`) ; l'écran titre remet le
-  solo avant toute partie (`configurer_solo()` et l'écran 2000×648, phase 10 ter) ; le salon et
-  l'écran Réseau passent eux-mêmes en 16:9 (spec §7 : `ReglesBataille.TAILLE_ECRAN`) ;
+  solo avant toute partie (`configurer_solo()` et l'écran 2000×648, phase 10 ter) ; le salon passe
+  lui-même en 16:9 (spec §7 : `ReglesBataille.TAILLE_ECRAN`), comme l'écran Réseau depuis la phase
+  12 bis ;
 - **phase 14** : les réactions du `Joueur` sont des appels de méthode qui émettent des signaux
   (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`, `gagner_cran`, `etourdir`, et `avancer`
   pour `etourdissement_fini`). Un `MultiplayerSynchronizer` qui écrit les champs bruts n'émettrait
@@ -256,7 +245,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   ligne 96) tombe pendant l'intro et n'a aucun effet ; le déplacer après `GS.demarrer()` et relancer
   le script à la main (la CI ne le lance pas). Les minuteries `null` du Spawner quand la partie se
   termine pendant l'intro sont corrigées depuis la phase 10 bis (vérifié par
-  `tests/bataille_test.gd`) ;
+  `tests/bataille_test.gd`). Y verser aussi les captures de l'écran Réseau (script jetable du plan
+  de la phase 12 bis, Task 3 : titre avec Multijoueur, liste, IP invalide, refus, hébergement,
+  anglais, port des balises occupé) ;
 - les tests `--script` peuvent nommer `Territoire` (logique pure, phase 9) et les règles, jamais
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
@@ -400,11 +391,42 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `manche_en_cours` et le niveau `GameState.niveau_courant`. Le salon doit donc poser
   `GameState.niveau_courant` quand l'hôte change de niveau (la liste des autres postes l'affiche) et
   `Reseau.manche_en_cours` au lancement (la partie y apparaît grisée « manche en cours ») ;
-- **phase 12** (écran Réseau, M8 de la revue de la phase 11) : `rejoindre()` passe un nom d'hôte tel
-  quel à `create_client`, qui le résout de façon bloquante (`IP::resolve_hostname`) : une faute de
-  frappe gèle le jeu plusieurs secondes sous Windows (NetBIOS/LLMNR). N'accepter que
-  `adresse.is_valid_ip_address()` (ou résoudre hors du thread principal), et ajouter l'indice
-  « Pare-feu de l'hôte ? Réseau Privé ? » au texte de `connexion_echouee`. Le premier `heberger()`
-  déclenche aussi la fenêtre du pare-feu Windows Defender : si le joueur clique « Annuler », ou si
-  le réseau est classé Public, les clients ne voient que `connexion_echouee` après 5 s, sans
-  indice ; en phase 19, le README doit expliquer comment retirer une règle de blocage.
+- **phase 13** (qui touche `Reseau.gd`, M8 de la revue de la phase 11) : l'écran Réseau n'envoie à
+  `Reseau.rejoindre()` que des IPv4 validées (`Decouverte.adresse_ipv4`, phases 12 et 12 bis), mais
+  `rejoindre()` lui-même passe encore tout nom d'hôte à `create_client`, qui le résout de façon
+  bloquante (plusieurs secondes sous Windows pour une faute de frappe) : y refuser toute adresse
+  que `Decouverte.adresse_ipv4` ne normalise pas (renvoyer `ERR_INVALID_PARAMETER`) ;
+- **phase 19** (README, M8) : le premier `heberger()` déclenche la fenêtre du pare-feu Windows
+  Defender sur l'hôte (port 7777), et la première ouverture de l'écran Réseau la déclenche aussi sur
+  chaque client (écoute des balises sur le port 7778, phase 12). « Annuler », ou un réseau classé
+  Public : l'hôte n'est pas joignable (les clients voient « Pas de réponse de l'hôte. Pare-feu de
+  l'hôte ? Réseau Privé ? » après 5 s) ou le client ne voit aucune partie (« Aucune partie trouvée.
+  Pare-feu ? Réseau Privé ? Essaie par IP. »). Le README explique comment autoriser LeLion en réseau
+  Privé et retirer une règle de blocage, et que deux LeLion sur un même PC ne peuvent pas lister les
+  parties tous les deux (« Recherche impossible : port 7778 déjà utilisé… Rejoins par IP. ») ;
+- **phase 13** (salon, phase 12 bis) : l'écran Réseau garde, en attendant le salon, deux états
+  d'attente (`HEBERGE` : « Partie hébergée : n/6 joueurs… » ; `INSCRIT` : « Connecté : tu es le
+  joueur n… »). Le salon les remplace : un `heberger()` réussi et `Reseau.inscrit` changent de scène
+  vers le salon (le `_exit_tree` de l'écran ferme l'écoute mais ne quitte pas le réseau ; seul Retour
+  le fait). Un refus, un échec ou un hôte perdu pendant le salon ramène à l'écran Réseau avec son
+  message (clés `RESEAU_*` déjà traduites) ;
+- **phase 14** (hôte perdu en manche, phase 12 bis) : sur l'écran Réseau, « L'hôte a quitté la
+  partie » ramène à son accueil (Écart 3 du plan 12 bis) ; en manche, spec §9 : message
+  (`RESEAU_HOTE_PERDU`) puis retour au titre ;
+- **phase 13** (I1 de la revue finale 12 bis) : `Decouverte.adresses_hote(interfaces)` (rang
+  d'interface, physique d'abord, virtuelle en dernier recours) est en place depuis la phase 12 bis,
+  déjà dans `Decouverte.gd` (non gelé à partir de cette phase) : le salon la réutilise pour afficher
+  l'adresse de l'hôte ;
+- **phase 13 au plus tard** (I2 de la revue finale 12 bis) : la balise n'a pas d'identifiant de
+  session, donc deux hôtes différents sur le même port de jeu ne peuvent pas être distingués par
+  `Decouverte` ; l'écran Réseau (12 bis) ne fusionne que les balises dont la source est une adresse
+  locale de ce poste (son propre hébergement vu par plusieurs interfaces). Ajouter un identifiant
+  aléatoire par session à la balise, et dédupliquer dessus en gardant l'adresse source du meilleur
+  rang d'interface (I1), à côté du point du /22 ci-dessus ;
+- **phase 13** (M9 de la revue finale 12 bis) : sur l'écran Réseau, le nombre de joueurs affiché à
+  l'hôte (`Reseau.inscrits.size()`) inclut les places réservées et ne se rafraîchit pas sur un échec
+  de poignée de main (voir le point M4 plus bas, « arrivés ») : compter seulement les joueurs arrivés
+  et rafraîchir aussi sur cet échec ;
+- **phases 14 et 19** (M4 de la revue finale 12 bis) : la fenêtre par défaut (1400×454, phase 10 ter)
+  affiche l'écran Réseau (16:9) à 40 % le temps que la fenêtre se règle (phase 14 : passer en 16:9
+  hors solo ; phase 19 : captures du fichier jetable dans `tests/screenshots.gd`).
