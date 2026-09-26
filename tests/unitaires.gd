@@ -29,6 +29,7 @@ func _run() -> void:
 	_tester_facade_retiree()
 	_tester_territoire()
 	_tester_reseau()
+	_tester_joueur_local()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -905,3 +906,68 @@ func _tester_reseau() -> void:
 	reseau.refuse.disconnect(sur_refus_perime)
 	reseau.quitter()
 	reseau.pseudo = ""
+
+
+func _tester_joueur_local() -> void:
+	print("-- Joueur local par identifiant réseau")
+	var gs: Node = root.get_node("GameState")
+	var son_pastille := Callable(root.get_node("Audio"), "_on_couleur_debloquee")
+	var tableau: Array[Joueur] = gs.joueurs
+	var solo: Joueur = gs.joueurs[0]
+	_check(solo.id_reseau == MultiplayerPeer.TARGET_PEER_SERVER and gs.joueur_local() == solo and root.multiplayer.get_unique_id() == 1,
+		"hors réseau, le joueur du solo porte l'identifiant de l'hôte (1), celui de ce poste : c'est le joueur local")
+	_check(Joueur.new().id_reseau == Joueur.SANS_PAIR, "un nouveau joueur n'appartient à aucun poste")
+	_check(solo.couleur_debloquee.is_connected(son_pastille), "Audio joue le son de pastille du joueur local")
+	var hors_arbre := EtatPartie.new()
+	_check(hors_arbre.joueur_local() == hors_arbre.joueurs[0], "un état de partie hors de l'arbre a pour joueur local son premier joueur")
+	hors_arbre.free()
+
+	# Bataille locale : les couleurs viennent de la palette, ou de l'appelant (le salon, phase 13)
+	gs.configurer_bataille(3)
+	_check(gs.joueur_local() == solo and gs.joueurs.slice(1).all(func(j: Joueur) -> bool: return j.id_reseau == Joueur.SANS_PAIR),
+		"bataille locale : le joueur local reste le premier, les autres n'appartiennent à aucun poste")
+	var choisies: Array[Color] = [EtatPartie.PALETTE_BATAILLE[4], EtatPartie.PALETTE_BATAILLE[0], EtatPartie.PALETTE_BATAILLE[2]]
+	gs.configurer_bataille(3, choisies)
+	_check(gs.joueurs.map(func(j: Joueur) -> Color: return j.couleur) == choisies
+		and gs.joueurs.map(func(j: Joueur) -> int: return j.index) == [0, 1, 2],
+		"configurer_bataille garde les couleurs qu'on lui donne (celles du salon), par index")
+
+	# Un client : le sous-arbre de GameState reçoit un pair client ENet jamais connecté, dont
+	# l'identifiant est tiré à sa création.
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17791) == OK, "un pair client est créé")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	var client: Joueur = gs.joueurs[2]
+	client.id_reseau = pair.get_unique_id()
+	client.pseudo = "Client"
+	var annonces: Array[Joueur] = []
+	var sur_annonce := func(j: Joueur) -> void: annonces.append(j)
+	gs.joueur_local_change.connect(sur_annonce)
+	_check(client.id_reseau > 1 and gs.joueur_local() == client,
+		"sur un client, le joueur local est celui qui porte l'identifiant du poste (%d), pas le premier" % client.id_reseau)
+	gs.nouvelle_partie()
+	_check(annonces == [client] and client.couleur_debloquee.is_connected(son_pastille) and not solo.couleur_debloquee.is_connected(son_pastille),
+		"une nouvelle partie annonce le nouveau joueur local : Audio le suit et lâche l'ancien")
+	gs.nouvelle_partie()
+	_check(annonces.size() == 1, "le joueur local n'est annoncé qu'à son changement")
+
+	# Hôte perdu : le pair se ferme et le poste revient hors réseau AVANT le retour au titre
+	pair.close()
+	_check(gs.joueur_local() == solo, "pair fermé : plus d'identifiant de client, le joueur local redevient celui de l'hôte (1)")
+	set_multiplayer(null, gs.get_path())
+	gs.partie_en_cours = false
+	gs.pret = false
+	gs.configurer_solo()
+	_check(gs.joueurs.size() == 1 and gs.joueurs[0] == client and is_same(tableau, gs.joueurs),
+		"retour au solo : le joueur de ce poste pendant la partie passe en tête, dans le même tableau (%s)" % gs.joueurs[0].pseudo)
+	_check(client.index == 0 and client.id_reseau == MultiplayerPeer.TARGET_PEER_SERVER and not client.a_une_couleur()
+		and client.pseudo == "Client" and gs.joueur_local() == client,
+		"… avec l'index 0, l'identifiant de l'hôte, sans couleur, son pseudo gardé : c'est le joueur local hors réseau")
+	_check(annonces == [client] and client.couleur_debloquee.is_connected(son_pastille),
+		"Audio écoute toujours ce joueur (aucune annonce de plus : il n'a pas changé)")
+	gs.joueur_local_change.disconnect(sur_annonce)
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
