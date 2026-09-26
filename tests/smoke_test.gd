@@ -1731,15 +1731,17 @@ func _tester_titre_reseau(scores: Node) -> void:
 	var ecran: Control = (await _attendre_scene("res://Scenes/EcranReseau.tscn")) as Control
 	titre.free()
 	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn", "Multijoueur ouvre l'écran Réseau")
-	if ecran == null or ecran.scene_file_path != "res://Scenes/EcranReseau.tscn":
-		return
-	ecran.bouton_retour.pressed.emit()
-	var titre_retour: Control = (await _attendre_scene("res://Scenes/Titre.tscn")) as Control
-	_check(titre_retour != null and titre_retour.scene_file_path == "res://Scenes/Titre.tscn" and not is_instance_valid(ecran)
-		and root.content_scale_size == Vector2i(2000, 648) and not decouverte.ecoute_active() and not reseau.en_ligne(),
-		"Retour ramène au titre, en 2000×648, hors réseau et sans écoute")
-	if titre_retour != null:
-		titre_retour.free()
+	# Ne sauter que les vérifications qui dépendent de `ecran` : la remise à zéro de fin de fonction
+	# doit tourner même si cette précondition échoue (sinon un seul échec ici laisse decouverte et
+	# reseau dans un état anormal pour la suite de la fonction et pour `_tester_salon`).
+	if ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn":
+		ecran.bouton_retour.pressed.emit()
+		var titre_retour: Control = (await _attendre_scene("res://Scenes/Titre.tscn")) as Control
+		_check(titre_retour != null and titre_retour.scene_file_path == "res://Scenes/Titre.tscn" and not is_instance_valid(ecran)
+			and root.content_scale_size == Vector2i(2000, 648) and not decouverte.ecoute_active() and not reseau.en_ligne(),
+			"Retour ramène au titre, en 2000×648, hors réseau et sans écoute")
+		if titre_retour != null:
+			titre_retour.free()
 
 	# Retour au titre depuis une session : hors réseau AVANT le solo (point de vigilance de la phase 12)
 	_check(reseau.heberger(17797) == OK, "(pré-condition) ce poste héberge")

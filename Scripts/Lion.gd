@@ -105,6 +105,11 @@ func _physics_process(delta: float) -> void:
 ## orientation, sa vitesse (commandée, recul, contacts avec les autres lions), `move_and_slide`, puis
 ## les bords de l'écran. Le seul chemin du déplacement sur l'hôte (tick physique) ; la prédiction du
 ## lion local (phase 16) rejouera les mêmes pas, ses commandes en main.
+## À appeler seulement dans une image physique, avec `delta` égal au tick physique : `move_and_slide()`
+## intègre avec le delta du moteur, pas celui reçu en argument, donc un appel hors `_physics_process`
+## (ex. depuis le `poll` multijoueur) fausse la distance parcourue. Un rejeu de prédiction (phase 16)
+## se fait donc dans `_physics_process` ; `pare_chocs.bloquer()` ne rejoue pas des contacts passés,
+## il ne lit que l'état physique et les positions actuelles au moment de l'appel.
 func avancer(direction: Vector2, delta: float) -> void:
 	if direction.x != 0:
 		direction_du_lion = 1 if direction.x > 0 else -1  # le setter réoriente le lion

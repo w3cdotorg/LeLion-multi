@@ -5,8 +5,8 @@
 [ext_resource type="Texture2D" uid="uid://cdj6ds4mocio4" path="res://Assets/Sprites/LionHeadVomit.png" id="2_3r2l0"]
 [ext_resource type="Script" uid="uid://dmbxtsy64rnau" path="res://Scripts/GerbeTraceuse.gd" id="9_or3p1"]
 [ext_resource type="Texture2D" uid="uid://dy0pggnw08ymx" path="res://Assets/Sprites/etoile.png" id="10_etoile"]
-[ext_resource type="Script" path="res://Scripts/PareChocs.gd" id="11_parechocs"]
-[ext_resource type="Script" path="res://Scripts/GerbeLion.gd" id="12_gerbe"]
+[ext_resource type="Script" uid="uid://bq0su3r6ixlo0" path="res://Scripts/PareChocs.gd" id="11_parechocs"]
+[ext_resource type="Script" uid="uid://5tviec2m7amv" path="res://Scripts/GerbeLion.gd" id="12_gerbe"]
 
 [sub_resource type="Animation" id="Animation_r1xi6"]
 resource_name = "Idle"

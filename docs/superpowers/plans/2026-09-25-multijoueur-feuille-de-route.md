@@ -292,16 +292,43 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - (résolu en phase 15 bis) `Lion.gd` est découpé : `DeplacementLion` (logique pure, que les tests
   unitaires nomment ; son état tient en deux vecteurs, `vitesse` et `recul`, que la prédiction pourra
   copier et restaurer pour rejouer ses commandes), `PareChocs`, `GerbeLion` ; le lion garde la
-  présentation et la réplication. **Phase 16** : garder `Lion.avancer` comme seul chemin du
-  déplacement (l'hôte et la prédiction), et repasser `tests/trace_lions.gd` avant et après chaque
+  présentation et la réplication. **Phase 16** : garder `Lion.avancer` comme seul pas du déplacement
+  (l'hôte et la prédiction) ; `recul` et `vitesse` sont aussi modifiés par les réactions
+  (`_on_etourdi`, `_on_lion_touche`) et par le pare-chocs (`PareChocs._on_area_entered`), pas
+  seulement par `avancer`. Sur un client, `deplacement` n'est pas un état fiable : `vitesse` y reçoit
+  la vitesse totale de l'hôte (commandée, recul et blocage confondus, après le bornage), pas la
+  vitesse commandée, et `recul` ne s'amortit jamais (`vitesse_du_pas` ne tourne que sur l'hôte). À
+  chaque (re)prise de la prédiction, remettre `deplacement.recul` à zéro et repartir d'une `vitesse`
+  cohérente (commandée, pas la `velocity` reçue de l'hôte), sous peine d'appliquer un recul ou une
+  vitesse fantôme déjà joués par l'hôte. Repasser `tests/trace_lions.gd` avant et après chaque
   modification du lion (deux passages consécutifs identiques ; les deux premiers après un import
-  peuvent différer, phase 15 bis, Écart 6) ;
+  peuvent différer, phase 15 bis, Écart 6 — cause non établie, voir plus bas) ;
+- **phase 16** (vu en phase 15 bis) : `avancer(direction, delta)` n'utilise son `delta` que pour la
+  vitesse commandée ; `move_and_slide()` intègre, lui, avec le delta du moteur (le delta physique
+  dans une image physique, le delta de traitement en dehors). Un rejeu de prédiction hors d'une
+  image physique (le signal `synchronized` du `MultiplayerSynchronizer` et les RPC arrivent pendant
+  le `poll` multijoueur, donc en image de traitement) déplace le lion d'un facteur
+  `delta traitement / delta physique` à chaque pas rejoué — une dérive silencieuse, sans erreur, que
+  la correction douce masquera en partie et qu'on attribuera à tort à la latence. Poser en phase 16
+  un garde-fou peu coûteux en tête de `avancer` : `if not Engine.is_in_physics_frame(): push_error(...)`.
+  Noter aussi que `pare_chocs.bloquer()` ne rejoue pas des contacts passés (il ne lit que l'état
+  physique et les positions actuelles au moment de l'appel), donc plusieurs pas rejoués dans une même
+  image voient tous les mêmes contacts, ceux du présent ;
+- **phase 16** (vu en phase 15 bis) : `direction_du_lion` est une propriété répliquée (mode « au
+  changement ») dont l'hôte fait foi. Un client qui prédit son lion et retourne son sprite à l'appui
+  de la touche le verra remis dans l'autre sens par chaque état en retard de l'hôte : sprite, bouche
+  et gerbe clignotent à chaque demi-tour, le temps d'un aller-retour réseau. À traiter en phase 16 :
+  soit ne plus répliquer l'orientation vers le lion local, soit ignorer l'orientation reçue tant que
+  la prédiction est active ;
 - **phase 16** (vu en phase 15 bis) : la simulation n'est pas reproductible bit à bit d'un
   processus à l'autre dans tous les cas : l'ordre dans lequel la physique rapporte des contacts
-  simultanés dépend d'identifiants d'objets (rejouer la même bataille dans le même processus donne une
-  autre empreinte). La prédiction d'un client ne peut donc pas compter sur une identité exacte avec
-  l'hôte, même aux mêmes commandes : la correction douce (spec §4.1) doit absorber ces écarts, et les
-  tests de prédiction mesurer des écarts de position, pas des égalités ;
+  simultanés semble dépendre d'identifiants d'objets (rejouer la même bataille dans le même processus
+  donne une autre empreinte) — cause non établie (Écart 6 de `global-constraints.md`), non reproduite
+  en phase 15 bis (revue finale : 3 passages sur 3 identiques dès le premier, sur des copies neuves de
+  `main` comme de HEAD). La conclusion pratique reste, elle, acquise : la prédiction d'un client ne
+  peut pas compter sur une identité exacte avec l'hôte, même aux mêmes commandes : la correction douce
+  (spec §4.1) doit absorber ces écarts, et les tests de prédiction mesurer des écarts de position, pas
+  des égalités ;
 - **phase 16** : seul le lion local simule son choc, par sa propre prédiction
   (`PareChocs._on_area_entered` : recul, secousse ; phase 15 bis) ; un lion distant ne simule jamais de
   choc localement (voir le point de la phase 14 ci-dessus), il ne fait que rejouer la réaction
