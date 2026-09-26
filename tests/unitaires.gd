@@ -32,6 +32,7 @@ func _run() -> void:
 	_tester_joueur_local()
 	_tester_palette()
 	_tester_decouverte()
+	_tester_bataille_reseau()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1280,3 +1281,50 @@ func _datagrammes_recus(recepteur: PacketPeerUDP) -> Array[PackedByteArray]:
 			recus.append(recepteur.get_packet())
 		OS.delay_msec(5)
 	return recus
+
+
+## Phase 13 : la bataille configurée par les fiches du salon (`configurer_bataille_reseau`), les
+## couleurs corrigées (M4) et le nombre de joueurs ramené dans ses bornes.
+func _tester_bataille_reseau() -> void:
+	print("-- Bataille en réseau (fiches du salon, couleurs, nombre de joueurs)")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	_check(EtatPartie.couleurs_de_bataille(3, []) == palette.slice(0, 3), "sans couleurs données : la palette dans l'ordre")
+	var donnees: Array[Color] = [palette[4], palette[0]]
+	_check(EtatPartie.couleurs_de_bataille(4, donnees) == [palette[4], palette[0], palette[1], palette[2]],
+		"trop peu de couleurs : les manquantes prennent les premières de la palette encore libres (plus de doublon)")
+	var fautives: Array[Color] = [palette[2], Color.TRANSPARENT, palette[2], palette[5], palette[1]]
+	_check(EtatPartie.couleurs_de_bataille(4, fautives) == [palette[2], palette[0], palette[1], palette[5]],
+		"une couleur transparente ou en double est remplacée, celles en trop ignorées")
+	var gs: Node = root.get_node("GameState")
+	var tableau: Array[Joueur] = gs.joueurs
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17794) == OK, "(pré-condition) un pair client, pour que ce poste ait son propre identifiant")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	var id_local := pair.get_unique_id()
+	var annonces: Array[Joueur] = []
+	var sur_annonce := func(j: Joueur) -> void: annonces.append(j)
+	gs.joueur_local_change.connect(sur_annonce)
+	var fiches_salon: Array[Dictionary] = [{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[4]},
+		{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[0]}, {"id_reseau": id_local, "pseudo": "Chloé", "couleur": palette[2]}]
+	gs.configurer_bataille_reseau(fiches_salon)
+	_check(gs.regles is ReglesBataille and is_same(tableau, gs.joueurs) and gs.joueurs.size() == 3
+		and gs.joueurs.map(func(j: Joueur) -> int: return j.index) == [0, 1, 2],
+		"configurer_bataille_reseau : règles de bataille, un joueur par fiche, dans le même tableau, index 0..2")
+	_check(gs.joueurs.map(func(j: Joueur) -> int: return j.id_reseau) == [1, 7, id_local]
+		and gs.joueurs.map(func(j: Joueur) -> String: return j.pseudo) == ["Hôte", "Bob", "Chloé"]
+		and gs.joueurs.map(func(j: Joueur) -> Color: return j.couleur) == [palette[4], palette[0], palette[2]],
+		"chaque index reçoit l'identifiant, le pseudo et la couleur de sa fiche, l'index 0 (l'hôte, 1) compris")
+	_check(gs.joueur_local() == gs.joueurs[2] and annonces == [gs.joueurs[2]],
+		"le joueur local est celui de ce poste (index 2), annoncé une seule fois, identifiants déjà posés")
+	gs.joueur_local_change.disconnect(sur_annonce)
+	pair.close()
+	set_multiplayer(null, gs.get_path())
+	gs.configurer_bataille(9)
+	_check(gs.joueurs.size() == EtatPartie.NB_JOUEURS_MAX and gs.regles is ReglesBataille,
+		"9 joueurs demandés : ramenés à %d avec une erreur signalée, sans planter (ligne ERROR attendue)" % EtatPartie.NB_JOUEURS_MAX)
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false

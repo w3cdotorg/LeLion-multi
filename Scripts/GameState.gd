@@ -15,6 +15,9 @@ const COULEURS_ARC_EN_CIEL: Array[Color] = [
 	Color.CYAN, Color.BLUE, Color.VIOLET,
 ]
 const VIES_MAX := 3
+## Une bataille se joue de NB_JOUEURS_MIN à NB_JOUEURS_MAX joueurs (le salon ne lance pas la
+## manche à moins de deux inscrits, spec §4).
+const NB_JOUEURS_MIN := 2
 const NB_JOUEURS_MAX := 6
 ## Palette de bataille : rouge, bleu, jaune, vert, magenta, cyan. L'hôte attribue la première
 ## libre à chaque arrivant (`Reseau`), `configurer_bataille` la donne par index hors salon. Réglée
@@ -104,21 +107,72 @@ func configurer_solo() -> void:
 	_annoncer_joueur_local()
 
 
-## Prépare une bataille à `nb_joueurs` (2 à NB_JOUEURS_MAX) : règles de bataille, joueurs
-## ajoutés ou retirés en place, index, et couleur : celle de `couleurs` à cet index si elle est
-## donnée (les choix du salon, phase 13), sinon celle de la palette. Pseudos et identifiants
-## réseau ne changent pas ; un joueur ajouté n'appartient à aucun poste (`Joueur.SANS_PAIR`).
+## Prépare une bataille locale à `nb_joueurs` (NB_JOUEURS_MIN à NB_JOUEURS_MAX) : règles de
+## bataille, joueurs ajoutés ou retirés en place, index, et couleurs (`couleurs_de_bataille`).
+## Pseudos et identifiants réseau ne changent pas ; un joueur ajouté n'appartient à aucun poste
+## (`Joueur.SANS_PAIR`). La bataille en réseau passe par `configurer_bataille_reseau`.
 func configurer_bataille(nb_joueurs: int, couleurs: Array[Color] = []) -> void:
-	assert(nb_joueurs >= 2 and nb_joueurs <= NB_JOUEURS_MAX, "une bataille se joue de 2 à %d" % NB_JOUEURS_MAX)
+	_preparer_bataille(nb_joueurs, couleurs)
+	_annoncer_joueur_local()
+
+
+## Prépare une bataille en réseau, sur chaque poste, juste avant de charger la scène de jeu (le
+## salon, phase 13, à la réception de `Reseau.manche_lancee`) : une fiche
+## `{"id_reseau": int, "pseudo": String, "couleur": Color}` par joueur, dans l'ordre des index
+## (compactés sur 0..n-1 par l'hôte). Comme `configurer_bataille`, puis chaque index reçoit
+## l'identifiant réseau et le pseudo de sa fiche, l'index 0 compris (l'hôte, 1, sur tous les
+## postes) ; le joueur local n'est annoncé qu'une fois tous les identifiants posés.
+func configurer_bataille_reseau(fiches: Array[Dictionary]) -> void:
+	var couleurs: Array[Color] = []
+	for fiche in fiches:
+		couleurs.append(fiche.couleur)
+	var nb := _preparer_bataille(fiches.size(), couleurs)
+	for i in range(nb):
+		var fiche: Dictionary = fiches[i] if i < fiches.size() else {}
+		joueurs[i].id_reseau = fiche.get("id_reseau", Joueur.SANS_PAIR)
+		joueurs[i].pseudo = fiche.get("pseudo", "")
+	_annoncer_joueur_local()
+
+
+## Les couleurs de `nb` joueurs de bataille : celle de `couleurs` à chaque index si elle est
+## opaque et pas déjà prise par un index précédent, sinon (manquante, transparente, en double) la
+## première couleur de la palette qui n'est pas encore utilisée (la règle de
+## `Reseau.premiere_couleur_libre`). Les couleurs au-delà de `nb` sont ignorées.
+static func couleurs_de_bataille(nb: int, couleurs: Array[Color]) -> Array[Color]:
+	var retenues: Array[Color] = []
+	for i in range(nb):
+		var c: Color = couleurs[i] if i < couleurs.size() else Color.TRANSPARENT
+		retenues.append(c if c.a >= 1.0 and not retenues.has(c) else Color.TRANSPARENT)
+	for i in range(nb):
+		if retenues[i].a < 1.0:
+			for c in PALETTE_BATAILLE:
+				if not retenues.has(c):
+					retenues[i] = c
+					break
+	return retenues
+
+
+## Règles de bataille et table des joueurs à la bonne taille, index et couleurs posés, sans
+## annoncer le joueur local. Un nombre de joueurs hors de [NB_JOUEURS_MIN, NB_JOUEURS_MAX] est
+## ramené dans ces bornes, et des couleurs corrigées (voir `couleurs_de_bataille`) le sont en
+## le signalant (`push_error`) : un salon mal formé ne doit pas planter la partie. Renvoie le
+## nombre de joueurs retenu.
+func _preparer_bataille(nb_joueurs: int, couleurs: Array[Color]) -> int:
+	var nb := clampi(nb_joueurs, NB_JOUEURS_MIN, NB_JOUEURS_MAX)
+	if nb != nb_joueurs:
+		push_error("une bataille se joue de %d à %d joueurs : %d demandés, %d retenus" % [NB_JOUEURS_MIN, NB_JOUEURS_MAX, nb_joueurs, nb])
+	var retenues := couleurs_de_bataille(nb, couleurs)
+	if retenues.slice(0, mini(couleurs.size(), nb)) != couleurs:
+		push_error("couleurs de bataille corrigées : %s devient %s" % [couleurs, retenues])
 	regles = ReglesBataille.new(self)
 	var nb_avant := joueurs.size()
-	joueurs.resize(nb_joueurs)
-	for i in range(nb_joueurs):
+	joueurs.resize(nb)
+	for i in range(nb):
 		if i >= nb_avant:
 			joueurs[i] = Joueur.new()
 		joueurs[i].index = i
-		joueurs[i].couleur = couleurs[i] if i < couleurs.size() else PALETTE_BATAILLE[i]
-	_annoncer_joueur_local()
+		joueurs[i].couleur = retenues[i]
+	return nb
 
 
 func _process(delta: float) -> void:

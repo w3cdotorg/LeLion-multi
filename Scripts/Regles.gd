@@ -5,8 +5,8 @@ extends RefCounted
 ## Sans effet par défaut ; chaque mode (solo, bataille) en dérive. Les événements (coups,
 ## pastilles, chocs, vols, progression) ne s'exécutent que sur l'hôte (en solo, le poste
 ## est son propre hôte) ; les requêtes de mode (`taille_ecran`, `compte_le_territoire`,
-## apparitions) sont lues sur chaque poste, qui doit donc brancher les mêmes règles
-## (`configurer_bataille(n)` chez les clients aussi, phase 13).
+## apparitions) sont lues sur chaque poste, qui doit donc brancher les mêmes règles (le salon
+## appelle `GameState.configurer_bataille_reseau` sur chaque poste avant la scène de jeu).
 
 ## Durée de la gerbe XXL donnée par une étoile, la même en solo et en bataille.
 const DUREE_ETOILE := 8.0
@@ -37,7 +37,7 @@ func compte_le_territoire() -> bool:
 
 
 ## Taille de l'écran du mode (`content_scale_size`, spec §7), appliquée par `Main` en entrant
-## dans la scène de jeu : celle du solo par défaut.
+## dans la scène de jeu, et par le titre (qui remet le solo) : celle du solo par défaut.
 func taille_ecran() -> Vector2i:
 	return TAILLE_ECRAN_SOLO
 
