@@ -348,7 +348,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   « échec » au lieu du refus attendu, et la consigne interdit d'élargir les délais. Ajouter à
   l'hôte de test une option `--refus=N` qui compte les `peer_authentication_failed` réels et
   attend N refus au plus (borné par `DELAI_ETAPE`) avant sa vérification finale, plutôt qu'une
-  pause fixe ;
+  pause fixe. Même chose pour le scénario 5 (client « lent ») : le rival doit arriver avant
+  l'expiration de la poignée de main du client lent (3 s depuis sa connexion) sans marge
+  construite ; sur un runner lent il pourrait être accepté au lieu d'être refusé. Avant que le
+  test entre en CI, donner au rival une marge garantie (par exemple un délai de poignée de main
+  réglable par l'hôte de test, porté à 8 s dans ce scénario, et le client tardif lancé après) ;
 - **phase 13** (salon, M4 de la revue de la phase 11) : `Reseau.inscrits` mêle les places réservées
   (dès la réponse de l'hôte) et les joueurs réellement arrivés (poignée de main finie) : un accepté
   peut y rester jusqu'à 3 s sans être connecté. Un salon qui construit ses cartes ou envoie des RPC
