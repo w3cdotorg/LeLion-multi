@@ -66,7 +66,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis, puis 11 ter (test réseau durci et en CI). | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
 | 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` | tests verts, CI verte, ◉ planche de la palette |
 | 11 ter | **Test réseau durci et en CI** : poignées de main échouées comptées par l'hôte de test (`--refus=N`) au lieu de fenêtres d'attente fixes ; scénario 5 à délai de poignée de main de 8 s posé par l'hôte de test (`--delai-poignee`, `Reseau.gd` inchangé), rival démarré d'avance et lancé au feu (`--feu`), client lent qui ne coupe plus lui-même sa poignée de main ; pas « Test réseau » dans la CI, journaux recopiés en cas d'échec. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test réseau vert 5 fois (bash 3.2 et 5) ; critère de sortie restant à vérifier une fois la PR ouverte : le job CI (pas « Test réseau » compris) vert |
-| 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
+| 12 | **Découverte** : autoload `Decouverte` (balise UDP 7778 de l'hôte, qui suit `Reseau` ; écoute ; liste des parties qui expirent ; adresse IPv4 saisie validée), test à plusieurs processus (balises vers 127.0.0.1 ; vraie diffusion avec `DIFFUSION=1`, hors CI). Découpage (8 fichiers avec les tests et l'autoload) : plans des phases 12 et 12 bis. | ➕ `Scripts/Decouverte.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | tests verts, test réseau vert 5 fois (bash 3.2 et 5) |
+| 12 bis | **Écran Réseau** : pseudo mémorisé, Héberger, liste des parties, Rejoindre par IP, textes des refus et des échecs, bouton Multijoueur du titre, `Titre._ready` hors réseau. | ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/smoke_test.gd` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
 | 14 bis | **Pastilles vers `body is Lion`** : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi). | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
@@ -377,6 +378,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   « version différente ». Ajouter une constante `PROTOCOLE` envoyée dans la demande, comparée avec
   le même refus `REFUS_VERSION`, augmentée par chaque phase qui change les RPC (à partir de la
   phase 13, premiers RPC) ; ou, plus simple, augmenter `config/version` à chaque phase réseau ;
+- **phase 19** (qui touche `ci.yml`, phase 12, Écart 5) : le test réseau ne vérifie la vraie diffusion
+  (scénario 7 de `tests/reseau/lancer.sh`) qu'avec `DIFFUSION=1`, mesurée sur macOS seulement ; en
+  CI, le scénario 6 dirige les balises vers 127.0.0.1. Essayer `DIFFUSION=1` dans le pas « Test
+  réseau » (sous Linux, une diffusion revient d'ordinaire aux sockets locales) ; le garder s'il est
+  vert 5 fois, sinon le noter ici. Sur Windows, la découverte n'est vérifiée qu'à la main (`.exe` de
+  la CI) : deux PC de la LAN, dont un avec une carte réseau virtuelle ou un VPN (la balise part aussi
+  en diffusion dirigée a.b.c.255, en supposant des réseaux en /24) ;
+- **phase 13** (salon, phase 12) : la balise de découverte (`Decouverte`) suit l'état de `Reseau` sans
+  qu'on la relance : `inscrits.size()` (réservations comprises, voir M4 plus bas), `places`,
+  `manche_en_cours` et le niveau `GameState.niveau_courant`. Le salon doit donc poser
+  `GameState.niveau_courant` quand l'hôte change de niveau (la liste des autres postes l'affiche) et
+  `Reseau.manche_en_cours` au lancement (la partie y apparaît grisée « manche en cours ») ;
 - **phase 12** (écran Réseau, M8 de la revue de la phase 11) : `rejoindre()` passe un nom d'hôte tel
   quel à `create_client`, qui le résout de façon bloquante (`IP::resolve_hostname`) : une faute de
   frappe gèle le jeu plusieurs secondes sous Windows (NetBIOS/LLMNR). N'accepter que
