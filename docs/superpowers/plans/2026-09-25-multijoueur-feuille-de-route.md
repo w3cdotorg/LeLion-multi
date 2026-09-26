@@ -63,9 +63,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
-| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis. | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
+| 11 | **Transport** : autoload `Reseau` (ENet 7777, poignée de main par l'authentification de `SceneMultiplayer`, version, refus explicites, attribution des index et couleurs, départs, retour hors réseau), test à plusieurs processus headless sur localhost. Découpage (10 fichiers avec les points de vigilance « phase 11 ») : plans des phases 11 et 11 bis, puis 11 ter (test réseau durci et en CI). | ➕ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ➕ `tests/reseau/lancer.sh` ➕ `tests/reseau/joueur.gd` | hôte + 2 clients se connectent, version refusée |
 | 11 bis | **Joueur local par identifiant réseau** : `Joueur.id_reseau`, `GameState.joueur_local()` selon `multiplayer.get_unique_id()`, `Audio` qui suit le joueur local, retour au solo avec le joueur de ce poste, `configurer_bataille(n, couleurs)`, palette réglée pour la deutéranopie. | ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `tests/unitaires.gd` | tests verts, CI verte, ◉ planche de la palette |
-| 11 ter | **Test réseau durci et en CI** : refus comptés (`--refus=N`) au lieu de fenêtres d'attente fixes, marge garantie du scénario 5 (client lent), pas « Test réseau » dans la CI. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test réseau vert en CI |
+| 11 ter | **Test réseau durci et en CI** : poignées de main échouées comptées par l'hôte de test (`--refus=N`) au lieu de fenêtres d'attente fixes ; scénario 5 à délai de poignée de main de 8 s posé par l'hôte de test (`--delai-poignee`, `Reseau.gd` inchangé), rival démarré d'avance et lancé au feu (`--feu`), client lent qui ne coupe plus lui-même sa poignée de main ; pas « Test réseau » dans la CI, journaux recopiés en cas d'échec. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | test réseau vert 5 fois (bash 3.2 et 5), CI verte |
 | 12 | **Découverte et écran Réseau** : balise UDP 7778, liste des parties, IP en secours, bouton Multijoueur. | ➕ `Scripts/Decouverte.gd` ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, compte à rebours. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/reseau/joueur.gd` | ◉ salon à 3 |
 | 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
@@ -354,17 +354,6 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
-- **phase 11 ter** (revue finale de la phase 11, M1) : `tests/reseau/lancer.sh` refuse les nouveaux
-  venus après des fenêtres d'attente fixes (`--attente=1/2/3`), pas après un compte de refus réels :
-  sur un runner de CI chargé (plusieurs processus Godot en parallèle), un démarrage lent donne
-  « échec » au lieu du refus attendu, et la consigne interdit d'élargir les délais. Ajouter à
-  l'hôte de test une option `--refus=N` qui compte les `peer_authentication_failed` réels et
-  attend N refus au plus (borné par `DELAI_ETAPE`) avant sa vérification finale, plutôt qu'une
-  pause fixe. Même chose pour le scénario 5 (client « lent ») : le rival doit arriver avant
-  l'expiration de la poignée de main du client lent (3 s depuis sa connexion) sans marge
-  construite ; sur un runner lent il pourrait être accepté au lieu d'être refusé. Avant que le
-  test entre en CI, donner au rival une marge garantie (par exemple un délai de poignée de main
-  réglable par l'hôte de test, porté à 8 s dans ce scénario, et le client tardif lancé après) ;
 - **phase 13** (salon, M4 de la revue de la phase 11) : `Reseau.inscrits` mêle les places réservées
   (dès la réponse de l'hôte) et les joueurs réellement arrivés (poignée de main finie) : un accepté
   peut y rester jusqu'à 3 s sans être connecté. Un salon qui construit ses cartes ou envoie des RPC

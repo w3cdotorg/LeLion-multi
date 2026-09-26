@@ -274,7 +274,10 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   headless par poste, sur localhost (ports 17778 et suivants), chacun sous `timeout`, tous tués en
   sortie ; verdict par les codes de sortie et les journaux. Depuis la phase 11, le transport : hôte
   + 2 clients inscrits, version différente, partie pleine (deux demandes pour la dernière place),
-  manche en cours, départ d'un client, départ de l'hôte, échec de connexion. De bout en bout (phase
+  manche en cours, départ d'un client, départ de l'hôte, échec de connexion, place réservée dès la
+  réponse de l'hôte puis libérée par le délai de poignée de main (client qui ne la finit jamais).
+  Chaque étape attend un événement observé (ligne d'un journal, compte de l'hôte), jamais une durée
+  fixe ; en CI depuis la phase 11 ter. De bout en bout (phase
   15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
   propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
   déconnexion d'un client en cours de manche.
