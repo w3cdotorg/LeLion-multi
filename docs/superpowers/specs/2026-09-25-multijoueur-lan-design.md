@@ -61,7 +61,8 @@ de jeu.
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. | `Joueur`, `Commandes` |
 | `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, vol de cellules, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille), dit si la partie se joue au territoire (en bataille seulement), donne l'écran du mode (2000×648 en solo, 2000×1125 en bataille), l'avancement de la partie (la ville peinte rapportée au seuil en solo, le temps de la manche en bataille : il accélère le peintre et les ennemis) et ce qui peut apparaître (pastille et sa couleur, étoile, cœurs), que lit le Spawner. `ReglesSolo` / `ReglesBataille`. Ses événements s'exécutent sur l'hôte uniquement ; l'écran et le territoire sont lus partout. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel), tampons en cache par rayon et jeu de couleurs, + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille : un `Territoire`, créé quand les règles se jouent au territoire, tamponné par l'hôte seul, qui tient aussi les scores). Chaque tampon est peint pour un `Joueur`, dans ses couleurs. | `Joueur`, `Territoire`, `Regles` |
-| `Reseau` (autoload) | Pair ENet, découverte UDP, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
+| `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
+| `Decouverte` (autoload) | Balise UDP de l'hôte (émise tant que `Reseau` héberge, sans qu'on la relance), écoute et liste des parties entendues, validation d'une adresse IPv4 saisie. Ne nomme aucun autoload (phase 12). | `Reseau` (par son chemin) |
 | `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène), relaie tampons et scores. | tout le reste |
 
 ### 3.2 Flux d'une frame (bataille)
@@ -89,9 +90,19 @@ de jeu.
   pas sauter le lion.
 - **Interpolation** : les lions distants sont affichés avec un tampon d'environ 2 envois
   (≈ 50 ms), pour lisser la gigue.
-- **Découverte** : l'hôte émet toutes les secondes une balise UDP broadcast sur le port **7778** :
-  `LELION|<version>|<pseudo hôte>|<nb joueurs>|<id niveau>`. L'écran « Rejoindre » écoute et liste
-  les parties (expiration après 3 s sans balise). Saisie d'IP en secours.
+- **Découverte** : l'hôte émet toutes les secondes une balise UDP broadcast sur le port **7778**
+  (vers 255.255.255.255 et la diffusion dirigée a.b.c.255 de chaque réseau privé de l'hôte, en
+  supposant un /24 : sous Windows, la diffusion limitée ne sort que par une interface). Cette
+  supposition d'un /24 ne tient pas sur un réseau maillé en mode routeur (TP-Link Deco, eero : /22
+  typique), où `a.b.c.255` n'est alors qu'une adresse unicast du sous-réseau, pas une diffusion ;
+  Godot ne donnant pas le masque de sous-réseau, il reste la saisie par IP (revue finale de la
+  phase 12, constat 3 ; feuille de route, phase 19) :
+  `LELION|<version>|<port de jeu>|<nb joueurs>|<places>|<manche 0/1>|<index du niveau>|<pseudo hôte>`.
+  Le pseudo, seul texte libre, vient en dernier (il peut contenir `|`) ; le port de jeu dit au client
+  où rejoindre ; places et manche en cours permettent de griser une partie pleine ou en cours. Une
+  balise invalide (autre programme, champs hors plage) est ignorée, 16 parties au plus. L'écran
+  Réseau écoute et liste les parties (expiration après 3 s sans balise). Saisie d'IP en secours
+  (IPv4 seulement : un nom se résoudrait en bloquant le jeu).
 - **Poignée de main** : le client envoie version + pseudo. Version différente : refus avec message
   « Version différente de l'hôte (x.y) ». Salon plein ou manche en cours : refus explicite.
   Elle passe par l'authentification de `SceneMultiplayer` (octets bruts avant tout RPC : deux
@@ -278,7 +289,11 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   réponse de l'hôte puis libérée par le délai de poignée de main (client qui ne la finit jamais).
   Chaque étape s'enchaîne sur un événement observé (ligne d'un journal, compte de l'hôte) ; seules
   restent de courtes fenêtres de vérification d'absence côté client (1 s après un refus, 0,5 s avant
-  un départ volontaire), qui ne peuvent pas donner de faux rouge ; en CI depuis la phase 11 ter. De bout en bout (phase
+  un départ volontaire), qui ne peuvent pas donner de faux rouge ; en CI depuis la phase 11 ter.
+  Depuis la phase 12, la découverte : balise vers 127.0.0.1 (ports de balise 18778 et suivants),
+  partie vue puis rejointe par sa balise, balise suivante à 2 joueurs, expiration 3 s après la
+  dernière balise alors que le processus de l'hôte vit encore, port des balises occupé par un
+  second écouteur ; la vraie diffusion avec `DIFFUSION=1`, hors CI. De bout en bout (phase
   15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
   propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
   déconnexion d'un client en cours de manche.
@@ -320,6 +335,9 @@ Chaque phase touche 5 fichiers au plus, se termine par les tests verts, et atten
 - **Correction visible** si l'hôte et le client divergent souvent (chocs en chaîne) : la
   correction douce peut donner un léger effet élastique. Accepté ; seuils réglables.
 - **Broadcast filtré** (réseau classé Public, Wi-Fi invité) : repli par IP, documenté.
+- **Réseau maillé en mode routeur** (TP-Link Deco, eero : /22 typique) : la diffusion dirigée
+  a.b.c.255 suppose un /24 (4.1) et n'est plus une diffusion sur un /22 ou plus large ; repli par
+  IP, comme pour le broadcast filtré (revue finale de la phase 12, constat 3 ; phase 19).
 - **Coût du tamponnage** à 6 joueurs sur chaque machine (6 blits par frame + mise à jour de la
   texture) : à mesurer en phase 4. Parade : regrouper la mise à jour de texture par frame (déjà le
   cas avec `_dirty`).
