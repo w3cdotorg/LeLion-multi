@@ -1097,7 +1097,7 @@ func _run() -> void:
 
 	# Auto-tamponneuses : pare-chocs réduit, recul proportionnel à la vitesse d'approche
 	_check(lr.collision_mask == 0 and lr.pare_chocs.collision_layer == 16 and lr.pare_chocs.collision_mask == 16
-		and is_equal_approx(lr._rayon_choc, 45.0) and lr.get_node("CollisionShape2D").shape.radius > 60.0,
+		and is_equal_approx(lr.pare_chocs.rayon, 45.0) and lr.get_node("CollisionShape2D").shape.radius > 60.0,
 		"les lions se heurtent sur leur couche dédiée, à 45 px ; le corps (63 px) reste celui que touchent ennemis et pastilles")
 	lr.deplacement.recul = Vector2.ZERO
 	lb.deplacement.recul = Vector2.ZERO

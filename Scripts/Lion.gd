@@ -36,17 +36,6 @@ const DUREE_SECOUSSE := 0.25
 const AMPLITUDE_SECOUSSE := 6.0
 
 @export var inclinaison_max: float = 0.14  # radians
-## Auto-tamponneuses : recul de chaque lion = vitesse d'approche relative × facteur_choc.
-@export var facteur_choc: float = 1.2
-## Vitesse d'écartement de deux lions qui se chevauchent, par pixel d'enfoncement.
-@export var raideur_choc: float = 8.0
-## Vitesse d'approche minimale (px/s) pour qu'un contact compte comme un choc ; en dessous,
-## les lions se bloquent quand même (`_bloquer_contre_les_lions`), sans secousse ni décompte.
-@export var approche_min_choc: float = 100.0
-## Délai minimal entre deux chocs comptés avec le même autre lion, en secondes de jeu, pour
-## qu'une poussée continue ne rafale pas les chocs (la commande maintenue ramène aussitôt l'un vers
-## l'autre).
-@export var delai_entre_chocs: float = 0.3
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var anim: AnimationPlayer = $AnimationPlayer
@@ -56,8 +45,7 @@ const AMPLITUDE_SECOUSSE := 6.0
 @onready var bouche: Marker2D = $Bouche
 @onready var etiquette_pseudo: Label = $Pseudo
 @onready var etoiles: Node2D = $Etoiles
-@onready var pare_chocs: Area2D = $PareChocs
-@onready var _rayon_choc: float = ($PareChocs/CollisionShape2D.shape as CircleShape2D).radius
+@onready var pare_chocs: PareChocs = $PareChocs
 
 var est_en_train_de_vomir := false
 ## 1 = droite, -1 = gauche. Répliquée chez les clients (`Synchro`) : le setter y retourne le sprite
@@ -92,16 +80,13 @@ var commandes: Commandes
 var zones_contact: Array[Area2D] = []
 ## Vitesse commandée et recul du lion (logique pure) : ce que `avancer` fait avancer d'un pas.
 var deplacement := DeplacementLion.new()
-var _temps := 0.0  # secondes de jeu écoulées pour ce lion (ticks physiques)
+## Secondes de jeu écoulées pour ce lion (ticks physiques) : trot, étoiles, délai entre deux chocs.
+var temps := 0.0
 var _clignotement: Tween
 var _secousse_restante := 0.0
 ## Générateur propre au lion pour la secousse du sprite : ne pas consommer la séquence globale
 ## de `randf_range`, dont dépendent le Spawner et les ennemis.
 var _rng := RandomNumberGenerator.new()
-## Instant (`_temps`, en secondes de jeu) du dernier choc compté avec chaque autre lion, par
-## identifiant d'instance ; entrées des lions libérés nettoyées à la volée. Le temps de jeu, pas
-## l'horloge murale : une frame qui rame ou un test en `--fixed-fps` ne change rien au décompte.
-var _derniers_chocs: Dictionary = {}
 
 
 func _ready() -> void:
@@ -119,7 +104,6 @@ func _ready() -> void:
 	joueur.crans_changes.connect(_on_crans_changes)
 	joueur.etourdi.connect(_on_etourdi)
 	joueur.etourdissement_fini.connect(_on_etourdissement_fini)
-	pare_chocs.area_entered.connect(_on_pare_chocs_area_entered)
 	_creer_zones_contact()
 	_appliquer_direction()
 	mettre_a_jour_degrade_vomi()
@@ -127,7 +111,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	_temps += delta
+	temps += delta
 	if not multiplayer.is_server():
 		_suivre_l_hote(delta)
 		return
@@ -143,7 +127,7 @@ func _physics_process(delta: float) -> void:
 func avancer(direction: Vector2, delta: float) -> void:
 	if direction.x != 0:
 		direction_du_lion = 1 if direction.x > 0 else -1  # le setter réoriente le lion
-	velocity = _bloquer_contre_les_lions(deplacement.vitesse_du_pas(direction, delta))
+	velocity = pare_chocs.bloquer(deplacement.vitesse_du_pas(direction, delta))
 	move_and_slide()
 	var screen_rect := get_viewport_rect()
 	var sprite_size := sprite.texture.get_size()
@@ -242,7 +226,7 @@ func _animer_deplacement(delta: float) -> void:
 	var cible: float = (deplacement.vitesse.x / deplacement.speed) * inclinaison_max * signf(sprite.scale.x)
 	sprite.rotation = lerp(sprite.rotation, cible, min(1.0, 10.0 * delta))
 	var en_mouvement := deplacement.vitesse.length() > deplacement.speed * 0.2
-	var bob := sin(_temps * 14.0) * 3.0 if en_mouvement else 0.0
+	var bob := sin(temps * 14.0) * 3.0 if en_mouvement else 0.0
 	sprite.position.y = lerp(sprite.position.y, 67.0 + bob, min(1.0, 12.0 * delta))
 
 
@@ -305,44 +289,13 @@ func _barbouiller(couleur: Color) -> void:
 func _tourner_etoiles() -> void:
 	var nb := etoiles.get_child_count()
 	for i in range(nb):
-		var angle := _temps * VITESSE_ETOILES + TAU * i / nb
+		var angle := temps * VITESSE_ETOILES + TAU * i / nb
 		etoiles.get_child(i).position = Vector2(cos(angle) * RAYON_ETOILES.x, sin(angle) * RAYON_ETOILES.y)
 
 
-## Auto-tamponneuses, à chaque contact : la part de la vitesse commandée qui pointait vers
-## l'autre lion est annulée (sinon la commande maintenue y ramène aussitôt et re-déclenche un
-## choc à chaque frame, ~7/s en pratique) ; le lion doit donc réaccélérer avant de retraverser.
-## Le choc n'est compté, secoué et signalé aux règles que si l'approche était assez rapide et
-## que le délai anti-rafale est passé avec cet autre lion (un lion étourdi reste poussable).
-func _on_pare_chocs_area_entered(zone: Area2D) -> void:
-	var autre := zone.get_parent() as Lion
-	if autre == null or autre == self:
-		return
-	var normale := _normale_de_choc(autre)
-	var approche := (velocity - autre.velocity).dot(-normale)
-	var vers_autre := deplacement.vitesse.dot(-normale)
-	if vers_autre > 0.0:
-		deplacement.vitesse += normale * vers_autre
-	if approche < approche_min_choc:
-		return
-	_nettoyer_derniers_chocs()
-	var dernier: float = _derniers_chocs.get(autre.get_instance_id(), -1.0)
-	if dernier >= 0.0 and _temps - dernier < delai_entre_chocs:
-		return
-	_derniers_chocs[autre.get_instance_id()] = _temps
-	deplacement.recul += normale * approche * facteur_choc
+## Petite secousse du sprite, au choc avec un autre lion (`PareChocs`) ; pas de secousse d'écran.
+func secouer() -> void:
 	_secousse_restante = DUREE_SECOUSSE
-	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
-	if multiplayer.is_server() and get_instance_id() < autre.get_instance_id():
-		GameState.regles.choc_entre_lions(joueur, autre.joueur)
-
-
-## Entrées du dictionnaire des délais anti-rafale dont l'autre lion n'existe plus (déconnexion,
-## fin de manche) : nettoyées à la volée, jamais par une passe périodique dédiée.
-func _nettoyer_derniers_chocs() -> void:
-	for id in _derniers_chocs.keys():
-		if instance_from_id(id) == null:
-			_derniers_chocs.erase(id)
 
 
 ## Vrai si la tête porte encore un barbouillage visible (couleur d'agresseur appliquée).
@@ -353,32 +306,6 @@ func _barbouillage_actif() -> bool:
 		return false
 	var force: Variant = mat.get_shader_parameter("barbouillage_force")
 	return force != null and force > 0.0
-
-
-## Pendant le contact, un lion ne s'enfonce pas dans l'autre (la part de sa vitesse dirigée
-## vers lui est annulée), et deux lions qui se chevauchent s'écartent.
-func _bloquer_contre_les_lions(v: Vector2) -> Vector2:
-	for zone in pare_chocs.get_overlapping_areas():
-		var autre := zone.get_parent() as Lion
-		if autre == null or autre == self:
-			continue
-		var normale := _normale_de_choc(autre)
-		var vers_autre := v.dot(-normale)
-		if vers_autre > 0.0:
-			v += normale * vers_autre
-		var enfoncement := 2.0 * _rayon_choc - pare_chocs.global_position.distance_to(autre.pare_chocs.global_position)
-		var vitesse_ecartement: float = minf(maxf(enfoncement, 0.0) * raideur_choc, deplacement.speed)
-		v += normale * vitesse_ecartement
-	return v
-
-
-## Direction de l'autre lion vers celui-ci ; deux lions superposés s'écartent quand même,
-## chacun de son côté.
-func _normale_de_choc(autre: Lion) -> Vector2:
-	var ecart := pare_chocs.global_position - autre.pare_chocs.global_position
-	if ecart.length() > 0.01:
-		return ecart.normalized()
-	return Vector2.LEFT if get_instance_id() < autre.get_instance_id() else Vector2.RIGHT
 
 
 func _on_crans_changes(_crans: int) -> void:
