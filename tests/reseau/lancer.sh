@@ -4,8 +4,10 @@
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie).
 # Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40).
-# Aucune fenêtre d'attente fixe : chaque étape attend un événement observé (une ligne d'un journal,
-# un compte de l'hôte), 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici).
+# Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
+# 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici) ; seules restent, côté client
+# (joueur.gd), de courtes fenêtres de vérification d'absence (1 s après un refus, 0,5 s avant un
+# départ volontaire) : elles ne peuvent pas donner de faux rouge.
 # Sortie 0 si chaque poste sort en 0, sans ❌ ni SCRIPT ERROR ni SHADER ERROR dans son journal, et
 # si les comptes croisés entre postes tombent juste. Tous les processus lancés sont tués en sortie.
 set -u
@@ -18,7 +20,7 @@ command -v timeout >/dev/null || { echo "il faut la commande GNU 'timeout' (core
 GODOT="${GODOT:-godot}"
 PORT_BASE="${1:-17777}"
 DELAI="${DELAI:-40}"
-JOURNAUX="$(mktemp -d "${TMPDIR:-/tmp}/lelion-reseau.XXXXXX")"
+JOURNAUX="$(mktemp -d "${TMPDIR:-/tmp}/lelion-reseau.XXXXXX")" || { echo "mktemp impossible (TMPDIR plein ou non inscriptible ?)" >&2; exit 2; }
 # Délai de poignée de main de l'hôte du scénario 5, en secondes (Reseau.DELAI_POIGNEE_DE_MAIN, 3 s,
 # reste celui du jeu). Deux marges en dépendent. Le rival doit être refusé avant qu'il expire :
 # démarré d'avance, il part au feu, donné dans les 0,1 s qui suivent « ACCEPTE » (refus mesuré
@@ -39,11 +41,28 @@ nettoyer() {
 	wait 2>/dev/null
 }
 trap nettoyer EXIT
-trap 'echo "interrompu"; exit 130' INT TERM
+# Deux pièges séparés (plutôt qu'un INT TERM commun) : TERM sort en 143, la convention, sans changer
+# le 130 attendu sur INT. Les deux recopient les journaux (recopier_journaux, définie plus bas) :
+# c'est le timeout 300 de la CI qui envoie TERM, et sans ça les journaux restaient dans le mktemp du
+# runner, perdus.
+trap 'echo "interrompu"; recopier_journaux; exit 130' INT
+trap 'echo "interrompu"; recopier_journaux; exit 143' TERM
 
 echec() {
 	echo "  ❌ $1"
 	ECHECS=$((ECHECS + 1))
+}
+
+# recopier_journaux : recopie chaque journal de poste dans la sortie du lanceur (JOURNAUX est gardé,
+# pas supprimé). En CI, c'est tout ce qui reste d'un échec, y compris d'une interruption (INT/TERM,
+# par exemple le timeout 300 du pas de CI) : appelée à la fois en sortie normale et depuis les pièges.
+recopier_journaux() {
+	echo "journaux gardés dans $JOURNAUX"
+	for f in "$JOURNAUX"/*.log; do
+		[ -e "$f" ] || continue
+		echo "----- $(basename "$f")"
+		cat "$f"
+	done
 }
 
 # lancer <nom> <arguments de joueur.gd…> : un poste en arrière-plan, borné par timeout (TERM au
@@ -95,8 +114,8 @@ attendre_fin() {
 			fi
 			grep -HnE "❌|SCRIPT ERROR|SHADER ERROR|Parse Error" "$JOURNAUX/$nom.log" && echec "erreurs dans le journal de $nom"
 			unset "PIDS[$i]" "NOMS[$i]"
-			PIDS=("${PIDS[@]}")
-			NOMS=("${NOMS[@]}")
+			PIDS=(${PIDS[@]+"${PIDS[@]}"})
+			NOMS=(${NOMS[@]+"${NOMS[@]}"})
 			return
 		fi
 	done
@@ -201,10 +220,5 @@ if [ "$ECHECS" -eq 0 ]; then
 	rm -rf "$JOURNAUX"
 	exit 0
 fi
-echo "journaux gardés dans $JOURNAUX"
-# Recopiés dans la sortie : en CI, c'est tout ce qui reste d'un échec.
-for f in "$JOURNAUX"/*.log; do
-	echo "----- $(basename "$f")"
-	cat "$f"
-done
+recopier_journaux
 exit 1

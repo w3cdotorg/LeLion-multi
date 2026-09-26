@@ -113,10 +113,15 @@ func _jouer_hote() -> void:
 	# manche_en_cours après heberger() : quitter() (que heberger() appelle en premier) le remet à
 	# faux à chaque nouvelle session (I1).
 	reseau.manche_en_cours = _options.has("manche")
+	# heberger() vient de poser DELAI_POIGNEE_DE_MAIN sur l'API (avant toute poignée de main, avant
+	# « HOTE PRET ») : c'est le vrai délai de poignée de main du jeu, couvert ici même quand
+	# --delai-poignee l'écrase ensuite pour ce scénario (Scripts/Reseau.gd non touché).
+	var api := root.multiplayer as SceneMultiplayer
+	_check(api.auth_timeout == reseau.DELAI_POIGNEE_DE_MAIN and reseau.DELAI_POIGNEE_DE_MAIN > 0.0,
+		"heberger() pose le délai de poignée de main du jeu (%.1f s)" % api.auth_timeout)
 	if _options.has("delai-poignee"):
-		# Après heberger(), qui vient de poser DELAI_POIGNEE_DE_MAIN, et avant « HOTE PRET » : aucune
-		# poignée de main n'a commencé. SceneMultiplayer relit auth_timeout à chaque image.
-		var api := root.multiplayer as SceneMultiplayer
+		# Après cette vérification et avant « HOTE PRET » : aucune poignée de main n'a commencé.
+		# SceneMultiplayer relit auth_timeout à chaque image.
 		api.auth_timeout = float(_option("delai-poignee", ""))
 	print("HOTE PRET")
 	var hote: Dictionary = reseau.inscrits[root.multiplayer.get_unique_id()]
@@ -247,16 +252,18 @@ func _jouer_lent() -> void:
 		# Son propre délai coupé (0 = aucun) : sinon ce poste abandonnerait lui-même la poignée de
 		# main au bout de 3 s (le défaut de SceneMultiplayer), et la coupure ne prouverait plus rien
 		# du délai de l'hôte.
+		# Pris avant la connexion (le délai de l'hôte ne peut démarrer qu'après) : « duree >= delai »
+		# est une borne exacte, sans tolérance.
+		var accepte_a := Time.get_ticks_msec()
 		api.auth_timeout = 0.0
 		api.multiplayer_peer = pair
 		_check(await _attendre(func() -> bool: return etat.accepte), "le client lent reçoit une acceptation, sans jamais finir sa poignée de main")
 		if etat.accepte:
-			var accepte_a := Time.get_ticks_msec()
 			var delai := float(_option("delai-poignee", str(reseau.DELAI_POIGNEE_DE_MAIN)))
 			var coupe := await _attendre(func() -> bool: return pair.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED)
 			var duree := (Time.get_ticks_msec() - accepte_a) / 1000.0
 			print("COUPE apres=%.1f s" % duree)
-			_check(coupe and duree >= delai - 0.5,
+			_check(coupe and duree >= delai,
 				"l'hôte coupe le client lent au bout de son délai de poignée de main (%.1f s, attendu %.0f s)" % [duree, delai])
 	pair.close()
 	noeud.queue_free()
