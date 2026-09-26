@@ -31,6 +31,7 @@ func _run() -> void:
 	_tester_reseau()
 	_tester_joueur_local()
 	_tester_palette()
+	_tester_decouverte()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1069,3 +1070,147 @@ func _oklab(l: Vector3) -> Vector3:
 		0.2104542553 * r.x + 0.7936177850 * r.y - 0.0040720468 * r.z,
 		1.9779984951 * r.x - 2.4285922050 * r.y + 0.4505937099 * r.z,
 		0.0259040371 * r.x + 0.7827717662 * r.y - 0.8086757660 * r.z)
+
+
+func _tester_decouverte() -> void:
+	print("-- Découverte (balise, liste des parties, adresse saisie)")
+	var decouverte: Node = root.get_node("Decouverte")  # autoload : jamais nommé (compilé avant lui)
+	var reseau: Node = root.get_node("Reseau")
+	var version: String = reseau.version
+
+	# Balise : un texte, le pseudo (seul texte libre) en dernier, relu tel quel
+	var balise: PackedByteArray = decouverte.encoder_balise(version, 7777, 2, 6, false, 1, "Zoé|la|reine")
+	_check(balise.get_string_from_utf8() == "LELION|%s|7777|2|6|0|1|Zoé|la|reine" % version,
+		"la balise est « LELION|version|port|joueurs|places|manche|niveau|pseudo » (%s)" % balise.get_string_from_utf8())
+	var fiche: Dictionary = decouverte.decoder_balise(balise)
+	_check(fiche == {"version": version, "port": 7777, "nb_joueurs": 2, "places": 6, "manche_en_cours": false, "niveau": 1, "pseudo": "Zoé|la|reine"},
+		"une balise se relit telle quelle, même avec des « | » dans le pseudo (%s)" % [fiche])
+	var pleine: Dictionary = decouverte.decoder_balise(decouverte.encoder_balise(version, 17778, 6, 6, true, 2, "   "))
+	_check(pleine.get("manche_en_cours") == true and pleine.get("nb_joueurs") == 6 and pleine.get("pseudo") == "Joueur 1",
+		"manche en cours et partie pleine se relisent ; un pseudo vide devient « Joueur 1 » (l'hôte)")
+	var hostile := "\u202eAbc\u0007defghijklmnopq"
+	_check(decouverte.decoder_balise(decouverte.encoder_balise(version, 7777, 1, 6, false, 0, hostile)).get("pseudo") == reseau.pseudo_valide(hostile),
+		"le pseudo d'une balise est nettoyé comme celui d'un joueur (forçages de sens, contrôles, %d caractères)" % reseau.PSEUDO_MAX)
+
+	# Tout ce qui n'est pas une balise valide est ignoré (autre programme, balise tronquée ou forgée)
+	var trop_longue := PackedByteArray()
+	trop_longue.resize(decouverte.TAILLE_BALISE_MAX + 1)
+	trop_longue.fill(65)
+	var invalides: Array[PackedByteArray] = [PackedByteArray(), trop_longue]
+	for texte: String in ["LELION", "AUTRE|0.11|7777|1|6|0|0|x", "LELION|0.11|7777|1|6|0|0",
+			"LELION|0.11|0|1|6|0|0|x", "LELION|0.11|65536|1|6|0|0|x", "LELION|0.11|port|1|6|0|0|x",
+			"LELION|0.11|7777|0|6|0|0|x", "LELION|0.11|7777|7|6|0|0|x", "LELION|0.11|7777|1|1|0|0|x",
+			"LELION|0.11|7777|3|2|0|0|x", "LELION|0.11|7777|1|7|0|0|x", "LELION|0.11|7777|1|6|2|0|x",
+			"LELION|0.11|7777|1|6|0|-1|x", "LELION|0.11|7777|1|6|0|%d|x" % EtatPartie.NIVEAUX.size(),
+			"LELION||7777|1|6|0|0|x", "LELION|0.11 beta|7777|1|6|0|0|x", "LELION|0123456789abcdefg|7777|1|6|0|0|x"]:
+		invalides.append(texte.to_utf8_buffer())
+	var acceptees := invalides.filter(func(d: PackedByteArray) -> bool: return not decouverte.decoder_balise(d).is_empty())
+	_check(acceptees.is_empty(), "%d datagrammes invalides, aucun pris pour une balise (%s)"
+		% [invalides.size(), acceptees.map(func(d: PackedByteArray) -> String: return d.get_string_from_utf8())])
+
+	# La liste : une partie par adresse et port de jeu, rafraîchie, changée, expirée, plafonnée
+	var liste: Dictionary[String, Dictionary] = {}
+	_check(decouverte.enregistrer_partie(liste, "192.168.1.20", fiche, 1000) and liste.size() == 1
+		and liste["192.168.1.20:7777"].ip == "192.168.1.20" and liste["192.168.1.20:7777"].vue_a == 1000,
+		"une partie nouvelle entre dans la liste, avec son adresse et l'heure de sa balise")
+	_check(not decouverte.enregistrer_partie(liste, "192.168.1.20", fiche, 1900) and liste["192.168.1.20:7777"].vue_a == 1900,
+		"la même balise répétée rafraîchit l'heure sans changer la liste affichée")
+	var arrivee := fiche.duplicate()
+	arrivee["nb_joueurs"] = 3
+	_check(decouverte.enregistrer_partie(liste, "192.168.1.20", arrivee, 2500) and liste["192.168.1.20:7777"].nb_joueurs == 3,
+		"une balise différente (un joueur de plus) change la liste")
+	_check(decouverte.enregistrer_partie(liste, "192.168.1.21", fiche, 2500) and liste.size() == 2,
+		"même port de jeu, autre adresse : une autre partie")
+	_check(not decouverte.purger_parties(liste, 5500, 3000) and liste.size() == 2, "une partie vue il y a 3 s pile reste")
+	_check(decouverte.purger_parties(liste, 5501, 3000) and liste.is_empty(), "sans balise depuis plus de 3 s, les parties disparaissent")
+	for i in range(decouverte.PARTIES_MAX):
+		decouverte.enregistrer_partie(liste, "10.0.0.%d" % (i + 1), fiche, 0)
+	_check(not decouverte.enregistrer_partie(liste, "10.0.1.1", fiche, 0) and liste.size() == decouverte.PARTIES_MAX
+		and not decouverte.enregistrer_partie(liste, "10.0.0.1", fiche, 10) and liste["10.0.0.1:7777"].vue_a == 10,
+		"liste pleine (%d parties) : une nouvelle est ignorée, les connues se rafraîchissent encore" % decouverte.PARTIES_MAX)
+
+	# Destinations de la balise et adresses de l'hôte
+	var adresses := PackedStringArray(["fe80:0:0:0:0:0:0:1", "127.0.0.1", "192.168.1.17", "10.0.3.4", "172.20.1.2",
+		"172.32.0.1", "8.8.8.8", "169.254.10.20", "192.168.1.30"])
+	_check(decouverte.adresses_privees(adresses) == PackedStringArray(["192.168.1.17", "10.0.3.4", "172.20.1.2", "169.254.10.20", "192.168.1.30"]),
+		"les adresses de l'hôte à afficher : IPv4 privées ou de liaison locale seulement (%s)" % decouverte.adresses_privees(adresses))
+	_check(decouverte.destinations_balise(adresses) == PackedStringArray(["255.255.255.255", "192.168.1.255", "10.0.3.255", "172.20.1.255", "169.254.255.255"]),
+		"la balise part en diffusion limitée et dirigée, une fois par réseau privé (%s)" % decouverte.destinations_balise(adresses))
+	_check(decouverte.destinations_balise(PackedStringArray()) == PackedStringArray(["255.255.255.255"]),
+		"sans adresse privée connue, la diffusion limitée seule")
+
+	# Adresse saisie : IPv4 seulement, normalisée ; jamais un nom (résolution bloquante)
+	var valides := {"192.168.1.20": "192.168.1.20", " 192.168.001.010 ": "192.168.1.10", "127.0.0.1": "127.0.0.1", "10.0.0.255": "10.0.0.255"}
+	_check(valides.keys().all(func(t: String) -> bool: return decouverte.adresse_ipv4(t) == valides[t]),
+		"une adresse IPv4 saisie est acceptée, sans zéros ni espaces superflus")
+	var refusees := ["", "192.168.1", "192.168.1.256", "192.168.1.2.3", "localhost", "lelion.local", "::1", "0.1.2.3",
+		"224.0.0.1", "255.255.255.255", "1.2.3.-4", "1.2.3.+4", "1.2.3.4a", "1..3.4", "1234.1.1.1", "１.２.３.４"]
+	var passees := refusees.filter(func(t: String) -> bool: return not decouverte.adresse_ipv4(t).is_empty())
+	_check(passees.is_empty(), "noms d'hôte, IPv6, adresses incomplètes, hors plage ou de diffusion refusés (%s)" % [passees])
+
+	# Écoute : un port libre, puis déjà pris (deux LeLion sur un même PC) : une erreur, jamais un plantage
+	var port_balise := 17891
+	decouverte.port_balise = port_balise
+	_check(decouverte.ecouter() == OK and decouverte.ecoute_active() and decouverte.erreur_ecoute == OK, "l'écoute s'ouvre sur un port libre")
+	var intrus := PacketPeerUDP.new()
+	_check(intrus.bind(port_balise, "0.0.0.0") != OK, "(pré-condition) l'écoute tient son port : un autre ne peut pas l'ouvrir")
+	var signaux := [0]
+	var compter := func() -> void: signaux[0] += 1
+	decouverte.parties_changees.connect(compter)
+	decouverte.parties["10.0.0.9:7777"] = fiche.merged({"ip": "10.0.0.9", "vue_a": 0})
+	decouverte.arreter_ecoute()
+	_check(not decouverte.ecoute_active() and decouverte.parties.is_empty() and signaux[0] == 1,
+		"arrêter l'écoute ferme le port et vide la liste, signalé une fois")
+	decouverte.arreter_ecoute()
+	_check(signaux[0] == 1, "arrêter une écoute déjà arrêtée ne signale rien")
+	_check(intrus.bind(port_balise, "0.0.0.0") == OK, "le port d'écoute est rendu à la fermeture")
+	var erreur: int = decouverte.ecouter()
+	_check(erreur != OK and not decouverte.ecoute_active() and decouverte.erreur_ecoute == erreur,
+		"port déjà pris : ecouter() renvoie l'erreur (%d) sans planter ni écouter" % erreur)
+	intrus.close()
+	decouverte.parties_changees.disconnect(compter)
+
+	# Balise de l'hôte : ce qu'émet `Reseau` en ligne et hôte, rien hors réseau ni chez un client
+	var recepteur := PacketPeerUDP.new()
+	_check(recepteur.bind(port_balise, "0.0.0.0") == OK, "(pré-condition) un récepteur écoute les balises de test")
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+	var gs: Node = root.get_node("GameState")
+	gs.niveau_courant = 2
+	decouverte._emettre_balise()
+	_check(_datagrammes_recus(recepteur).is_empty() and decouverte._emetteur == null, "hors réseau (le solo), aucune balise")
+	reseau.pseudo = "Zoé"
+	reseau.places = 4
+	var port_jeu := 17792
+	_check(reseau.heberger(port_jeu) == OK, "(pré-condition) ce poste héberge sur le port %d" % port_jeu)
+	reseau.manche_en_cours = true
+	decouverte._emettre_balise()
+	var recus := _datagrammes_recus(recepteur)
+	var recue: Dictionary = decouverte.decoder_balise(recus[0]) if recus.size() == 1 else {}
+	_check(recue == {"version": version, "port": port_jeu, "nb_joueurs": 1, "places": 4, "manche_en_cours": true, "niveau": 2, "pseudo": "Zoé"},
+		"l'hôte émet une balise : version, port de jeu, joueurs inscrits, places, manche, niveau, pseudo (%s)" % [recue])
+	reseau.quitter()
+	decouverte._emettre_balise()
+	_check(_datagrammes_recus(recepteur).is_empty() and decouverte._emetteur == null, "après quitter(), la balise s'arrête et sa socket se ferme")
+	_check(reseau.rejoindre("127.0.0.1", port_jeu + 1) == OK and not root.multiplayer.is_server(), "(pré-condition) ce poste est un client qui attend son hôte")
+	decouverte._emettre_balise()
+	_check(_datagrammes_recus(recepteur).is_empty(), "un client n'émet aucune balise")
+	reseau.quitter()
+	recepteur.close()
+	reseau.pseudo = ""
+	reseau.places = EtatPartie.NB_JOUEURS_MAX
+	gs.niveau_courant = 0
+	decouverte.destinations_forcees = PackedStringArray()
+	decouverte.port_balise = decouverte.PORT_BALISE
+
+
+## Les datagrammes arrivés sur `recepteur` dans les 0,3 s, quels qu'ils soient (valides ou non :
+## « aucune balise » veut dire aucun datagramme). Attente active et bornée : sur localhost, un
+## datagramme émis est déjà là ou presque ; 0,3 s de silence suffit à conclure qu'il n'y en a pas.
+func _datagrammes_recus(recepteur: PacketPeerUDP) -> Array[PackedByteArray]:
+	var recus: Array[PackedByteArray] = []
+	var fin := Time.get_ticks_msec() + 300
+	while Time.get_ticks_msec() < fin:
+		while recepteur.get_available_packet_count() > 0:
+			recus.append(recepteur.get_packet())
+		OS.delay_msec(5)
+	return recus
