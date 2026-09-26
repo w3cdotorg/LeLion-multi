@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Test réseau du transport (phase 11), de la découverte (phase 12) et du salon (phase 13) : des
-# postes headless sur localhost, un processus Godot par poste (tests/reseau/joueur.gd), scénario
-# après scénario.
+# Test réseau du transport (phase 11), de la découverte (phase 12), du salon (phase 13) et de la
+# manche synchronisée (phase 14) : des postes headless sur localhost, un processus Godot par poste
+# (tests/reseau/joueur.gd), scénario après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
 # et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778).
@@ -298,6 +298,38 @@ terminer "salon : arrivées, départ (carte libérée), couleurs arbitrées, dé
 	&& [ "$(compter "^MANCHE " hote8 a8 c8)" -eq 3 ] || echec "salon : les trois postes doivent charger la manche avec la même empreinte"
 [ "$(compter "BOUTON ACTIF" hote8)" -eq 2 ] && [ "$(compter "DEMARRAGE REFUSE" hote8)" -eq 1 ] && [ "$(compter "PLUS PRET" a8)" -eq 1 ] \
 	|| echec "salon : le bouton de l'hôte doit s'activer deux fois, et le démarrage être refusé une fois entre les deux"
+
+# 9. Manche synchronisée (phase 14), par les vraies scènes : un hôte, deux clients qui jouent, un
+#    muet (prêt au salon, mais qui ne charge jamais sa scène de jeu). L'hôte se fige GEL9 s dès sa
+#    scène chargée (ses clients chargent pendant ce temps : ils ne doivent pas le croire parti) ;
+#    la barrière de chargement exclut le muet après son délai ; l'intro part chez tous. Chaque poste
+#    descend vers la ville et la peint au clavier ; Bruno quitte alors la manche par le menu local :
+#    son lion disparaît, ses cellules restent. L'hôte donne à Anna un cran, la gerbe XXL et un
+#    étourdissement ; lions arrêtés et coulures finies, il fige la
+#    manche et écrit son empreinte (territoire, scores, tampons et leur suite, lions et réactions,
+#    apparitions) ; Anna écrit la sienne, qui doit être la même. L'hôte part : Anna voit « L'hôte a
+#    quitté la partie », puis le titre.
+GEL9=6.5
+DELAI_CHARGEMENT9=3
+P=$((PORT_BASE + 9))
+B=$((PORT_BASE + 1009))
+lancer hote9 --role=manche-hote --port=$P --port-balise=$B --pseudo=Hote9 --clients=3 --gel=$GEL9 \
+	--delai-chargement=$DELAI_CHARGEMENT9 --sens=1 --rester="$JOURNAUX/rester9"
+if attendre_hote hote9; then
+	lancer a9 --role=manche-client --port=$P --port-balise=$B --pseudo=Anna --sens=1 --fige="$JOURNAUX/fige9"
+	lancer b9 --role=manche-client --port=$P --port-balise=$B --pseudo=Bruno --sens=-1 --partir
+	lancer c9 --role=manche-muet --port=$P --port-balise=$B --pseudo=Muet --gel=$GEL9 --delai-chargement=$DELAI_CHARGEMENT9
+	# Chaque étape de l'hôte dans ses 15 s : la manche entière en prend plus (le gel, l'intro, les passes).
+	if attendre_ligne hote9 "INTRO" && attendre_ligne hote9 "DEPART VU" && attendre_ligne hote9 "FIGE"; then
+		touch "$JOURNAUX/fige9"
+		attendre_ligne a9 "EMPREINTE" && touch "$JOURNAUX/rester9"
+	fi
+	touch "$JOURNAUX/fige9" "$JOURNAUX/rester9"
+fi
+terminer "manche : barrière de chargement (hôte figé, muet exclu), commandes au clavier de chaque poste, tampons, territoire et apparitions répliqués, départ d'un client en pleine manche, hôte perdu"
+[ "$(grep -h "^EMPREINTE " "$JOURNAUX/hote9.log" "$JOURNAUX/a9.log" 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^EMPREINTE " hote9 a9)" -eq 2 ] || echec "manche : l'hôte et Anna doivent finir avec la même empreinte"
+[ "$(compter "^PARTI" b9)" -eq 1 ] && [ "$(compter "^EXCLU" c9)" -eq 1 ] || echec "manche : Bruno doit partir, le muet être exclu"
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then
