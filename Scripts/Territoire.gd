@@ -6,8 +6,10 @@ extends RefCounted
 ## une cellule compte pour son propriétaire à partir de SEUIL_POSSESSION. Une cellule qui se met
 ## à compter pour un joueur alors qu'elle comptait en dernier pour un autre est un vol. Calcul
 ## entier et déterministe (les mêmes tampons dans le même ordre donnent le même territoire), fait
-## par l'hôte seulement. Logique pure : ne nomme aucun autoload, ce qui permet de la tester dans
-## un test `--script`.
+## par l'hôte seulement ; un client ne tamponne jamais : il reçoit de l'hôte les cellules dont le
+## propriétaire compté a changé (`encoder_changements` chez l'hôte, `appliquer_changements` chez
+## lui, spec §6), d'où les mêmes scores. Logique pure : ne nomme aucun autoload, ce qui permet de la
+## tester dans un test `--script`.
 ##
 ## Les joueurs sont désignés par leur index (0 à 5, `Joueur.index`). En mémoire, le propriétaire
 ## tient sur un octet, décalé de un : 0 = personne, 1 à 6 = joueurs 0 à 5 (le format réseau du
@@ -26,9 +28,16 @@ const SEUIL_POSSESSION := 12
 ## faisait alors que les effacer sans les voler (l'écran montrait la couleur de l'attaquant, mais
 ## le score ne bougeait pas). Un vol coûte maintenant 6 tampons (3 pour vider, 3 pour prendre)
 ## contre 3 en terrain vierge, et une seule passe pleine vitesse vole le centre de son tracé. La
-## phase 10 rerègle ces constantes sur une vraie manche.
+## phase 10 ter les a gardées (4, 12, 12) sur une vraie manche et réglé à la place l'empreinte du
+## tampon dans la ville (`Ville.EMPREINTE_TERRITOIRE`, spec §6, cibles vérifiées par
+## `tests/bataille_test.gd`).
 const CHARGE_MAX := SEUIL_POSSESSION
 const PERSONNE := -1
+## Format réseau d'une cellule changée (spec §6) : son index u16, puis son propriétaire compté u8
+## (0 = personne, 1 à 6 = joueurs 0 à 5).
+const OCTETS_PAR_CHANGEMENT := 3
+## Cellules au plus d'une grille dont les changements passent par le réseau (index u16).
+const CELLULES_MAX := 65536
 
 var taille_grille: Vector2i
 var taille_cellule: int
@@ -62,8 +71,9 @@ func _init(taille_grille_: Vector2i, peignables: PackedByteArray, taille_cellule
 
 
 ## Toute la ville redevient vierge (nouvelle manche). Les changements pas encore lus par
-## `extraire_changements` sont alors perdus : la phase 14 doit les vider avant d'appeler
-## `reinitialiser`, ou envoyer « nouvelle manche » comme son propre message.
+## `extraire_changements` sont alors perdus : la manche qui les diffuse (phase 14) doit les vider
+## avant d'appeler `reinitialiser`, ou envoyer « nouvelle manche » comme son propre message (phase
+## 18, Revanche).
 func reinitialiser() -> void:
 	_proprietaires.fill(0)
 	_charges.fill(0)
@@ -174,3 +184,49 @@ func extraire_changements() -> PackedInt32Array:
 	for i in liste:
 		_changee[i] = 0
 	return liste
+
+
+## Les cellules `cellules` (de `extraire_changements`) au format réseau : pour chacune, son index u16
+## et son propriétaire compté u8 d'à présent (OCTETS_PAR_CHANGEMENT octets par cellule).
+func encoder_changements(cellules: PackedInt32Array) -> PackedByteArray:
+	assert(_peignables.size() <= CELLULES_MAX, "une grille de plus de 65 536 cellules ne tient pas en u16")
+	var octets := PackedByteArray()
+	octets.resize(cellules.size() * OCTETS_PAR_CHANGEMENT)
+	for k in range(cellules.size()):
+		var i := cellules[k]
+		octets.encode_u16(k * OCTETS_PAR_CHANGEMENT, i)
+		octets.encode_u8(k * OCTETS_PAR_CHANGEMENT + 2, proprietaire_compte(i) + 1)
+	return octets
+
+
+## Chez un client : les changements reçus de l'hôte (`encoder_changements`), appliqués dans l'ordre.
+## Le propriétaire compté de chaque cellule est posé tel quel (charge SEUIL_POSSESSION pour un
+## joueur, nulle pour personne) : un client ne calcule aucune charge, il ne rejoue jamais
+## `tamponner`. Renvoie faux sans rien changer pour un lot mal formé (pas un `PackedByteArray`,
+## taille qui n'est pas un multiple de OCTETS_PAR_CHANGEMENT, cellule hors de la grille ou non
+## peignable, propriétaire hors de [0, NB_JOUEURS_MAX]).
+func appliquer_changements(octets: Variant) -> bool:
+	if not (octets is PackedByteArray) or octets.size() % OCTETS_PAR_CHANGEMENT != 0:
+		return false
+	for o in range(0, octets.size(), OCTETS_PAR_CHANGEMENT):
+		var i: int = octets.decode_u16(o)
+		if i >= _peignables.size() or _peignables[i] == 0 or octets.decode_u8(o + 2) > EtatPartie.NB_JOUEURS_MAX:
+			return false
+	for o in range(0, octets.size(), OCTETS_PAR_CHANGEMENT):
+		var i: int = octets.decode_u16(o)
+		var compte: int = octets.decode_u8(o + 2)
+		var avant := _proprietaires[i] if _charges[i] >= SEUIL_POSSESSION else 0
+		_proprietaires[i] = compte
+		_charges[i] = SEUIL_POSSESSION if compte != 0 else 0
+		_cellules[avant] -= 1
+		_cellules[compte] += 1
+		if compte != 0:
+			_dernier_compte[i] = compte
+	return true
+
+
+## Les scores de toute la grille : à l'index 0, les cellules peignables qui ne comptent pour
+## personne, puis celles de chaque joueur (index du joueur + 1). L'hôte les diffuse avec les
+## changements : un client qui a appliqué les mêmes changements a les mêmes.
+func scores() -> PackedInt32Array:
+	return _cellules.duplicate()

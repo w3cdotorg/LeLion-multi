@@ -7,6 +7,10 @@ extends CharacterBody2D
 ## les zones de contact le long de la parabole, avec la même physique que les particules.
 ## Le lion ne décide de rien : sur l'hôte, il signale aux règles les autres lions que touche
 ## sa gerbe et ceux qu'il percute, comme le font les ennemis et les pastilles.
+## En réseau (phase 14), seul l'hôte simule les lions ; sur un client, chaque lion est une réplique
+## (`_suivre_l_hote`) : position, vitesse, orientation et vomi viennent de l'hôte par son
+## `MultiplayerSynchronizer` (`Synchro`), ses réactions (étourdissement, crans, gerbe XXL) par les
+## signaux de son joueur, que la manche lui transmet (`Joueur.recevoir_*`).
 
 const ANGLE_GERBE_DEG := 45.0
 const ECART_EVENTAIL_DEG := 24.0
@@ -59,9 +63,24 @@ const AMPLITUDE_SECOUSSE := 6.0
 @onready var _rayon_choc: float = ($PareChocs/CollisionShape2D.shape as CircleShape2D).radius
 
 var est_en_train_de_vomir := false
-var direction_du_lion: int = 1  # 1 = droite, -1 = gauche
+## 1 = droite, -1 = gauche. Répliquée chez les clients (`Synchro`) : le setter y retourne le sprite
+## et réoriente la gerbe.
+var direction_du_lion: int = 1:
+	set(valeur):
+		if valeur == direction_du_lion:
+			return
+		direction_du_lion = valeur
+		if is_node_ready():
+			_appliquer_direction()
+## Sur l'hôte, l'état de vomi du lion ; répliqué chez les clients (`Synchro`), où il fait vomir la
+## réplique (particules, animation : sa traceuse ne peint pas, voir `GerbeTraceuse`).
+var vomi_de_l_hote := false
 ## État du lion (couleurs, bonus, coups) et source de ses intentions. À fournir avant l'ajout
-## à l'arbre ; à défaut, le joueur local et ses commandes (celles du pilote en démo).
+## à l'arbre : les lions d'une bataille les reçoivent de la scène de jeu (`Main`), en réseau par la
+## `spawn_function` de son `MultiplayerSpawner`, qui les crée chez chaque poste par l'index de leur
+## joueur (des commandes de ce poste pour le lion du joueur local, manuelles pour les autres, qu'en
+## réseau l'hôte remplit de celles que chaque client lui envoie). À défaut (le lion de la scène, en
+## solo), le joueur local et ses commandes (celles du pilote en démo).
 var joueur: Joueur:
 	set(valeur):
 		# `is_node_ready()` vaut déjà true pendant `_ready()` lui-même (pas seulement après) :
@@ -112,13 +131,13 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	_temps += delta
+	if not multiplayer.is_server():
+		_suivre_l_hote(delta)
+		return
 	var input_vector := _direction_voulue()
 
 	if input_vector.x != 0:
-		var nouvelle_direction := 1 if input_vector.x > 0 else -1
-		if nouvelle_direction != direction_du_lion:
-			direction_du_lion = nouvelle_direction
-			_appliquer_direction()
+		direction_du_lion = 1 if input_vector.x > 0 else -1  # le setter réoriente le lion
 
 	_vitesse = _vitesse.move_toward(input_vector * speed, acceleration * delta)
 	_recul = _recul.move_toward(Vector2.ZERO, acceleration * 1.5 * delta)
@@ -147,6 +166,8 @@ func _process(delta: float) -> void:
 			demarrer_vomi()
 	elif est_en_train_de_vomir:
 		arreter_vomi()
+	if multiplayer.is_server():
+		vomi_de_l_hote = est_en_train_de_vomir
 	if (etoiles.visible or _barbouillage_actif()) and not joueur.est_etourdi():
 		# L'étourdissement peut finir sans passer par le signal (`Joueur.reinitialiser` en plein
 		# étourdissement, par exemple, qui n'émet rien) : les effets visuels se corrigent d'eux-mêmes.
@@ -165,12 +186,24 @@ func _marge_haute() -> float:
 	return -etiquette_pseudo.position.y if etiquette_pseudo.visible else 0.0
 
 
+## Sur un client : le lion suit l'hôte. Sa position et sa vitesse sont celles que recopie son
+## `Synchro` ; il ne se déplace pas de lui-même, ne se bloque pas contre les autres lions et ne
+## signale rien aux règles (la prédiction du lion local viendra en phase 16). Seule l'animation
+## (inclinaison, trot) tourne ici, sur la vitesse de l'hôte.
+func _suivre_l_hote(delta: float) -> void:
+	_vitesse = velocity
+	_animer_deplacement(delta)
+
+
 ## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
 func _direction_voulue() -> Vector2:
 	return commandes.direction() if GameState.pret and not joueur.est_etourdi() else Vector2.ZERO
 
 
+## Sur un client, la réplique vomit quand le lion de l'hôte vomit.
 func _veut_vomir() -> bool:
+	if not multiplayer.is_server():
+		return vomi_de_l_hote
 	return GameState.pret and not joueur.est_etourdi() and commandes.vomir()
 
 
@@ -178,8 +211,9 @@ func _on_couleur_debloquee(_couleur: Color) -> void:
 	mettre_a_jour_degrade_vomi()
 
 
-## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ;
-## à rappeler si la couleur ou le pseudo du joueur change ensuite (aperçu du salon, phase 13).
+## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ; à
+## rappeler si la couleur ou le pseudo du joueur change ensuite (jamais en jeu : la table des joueurs
+## d'une bataille est posée avant la scène de jeu, et le salon n'a pas de lion).
 func appliquer_apparence() -> void:
 	if not is_node_ready():
 		return  # sprite et étiquette n'existent pas encore : `_ready` l'appliquera

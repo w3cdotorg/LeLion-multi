@@ -1,10 +1,18 @@
-[gd_scene load_steps=4 format=3 uid="uid://ccpm7pmwv1le5"]
+[gd_scene load_steps=5 format=3 uid="uid://ccpm7pmwv1le5"]
 
 [ext_resource type="Texture2D" uid="uid://c5nevupbjsrl0" path="res://Assets/Sprites/circle_white.png" id="1_ejic6"]
 [ext_resource type="Script" uid="uid://b7geqq08piqgo" path="res://Scripts/ColorPickup.gd" id="2_68htu"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_gk2im"]
 radius = 28.0
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_synchro"]
+properties/0/path = NodePath(".:position")
+properties/0/spawn = true
+properties/0/replication_mode = 0
+properties/1/path = NodePath(".:couleur_index")
+properties/1/spawn = true
+properties/1/replication_mode = 0
 
 [node name="ColorPickup" type="Area2D" groups=["pickup"]]
 script = ExtResource("2_68htu")
@@ -15,5 +23,8 @@ texture = ExtResource("1_ejic6")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("CircleShape2D_gk2im")
+
+[node name="Synchro" type="MultiplayerSynchronizer" parent="."]
+replication_config = SubResource("SceneReplicationConfig_synchro")
 
 [connection signal="body_entered" from="." to="." method="_on_body_entered"]

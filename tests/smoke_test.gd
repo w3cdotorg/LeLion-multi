@@ -277,7 +277,11 @@ func _run() -> void:
 	_check(spawner.difficulte() >= 0.0 and spawner.difficulte() <= 1.0, "difficulté bornée (%.3f)" % spawner.difficulte())
 	var soucoupe: Node = spawner.spawn_soucoupe(20)
 	_check(soucoupe.speed >= spawner.vitesse_soucoupe.x, "la soucoupe reçoit sa vitesse du spawner (%.0f)" % soucoupe.speed)
+	var soucoupe_bis: Node = spawner.spawn_soucoupe(40)
+	_check(not str(soucoupe.name).contains("@") and not str(soucoupe_bis.name).contains("@") and soucoupe.name != soucoupe_bis.name,
+		"deux apparitions de la même scène ont des noms lisibles et distincts, que le MultiplayerSpawner peut répliquer (%s, %s)" % [soucoupe.name, soucoupe_bis.name])
 	soucoupe.queue_free()
+	soucoupe_bis.queue_free()
 	Input.action_release("vomir")
 	await _frames(3)
 	_check(not lion.est_en_train_de_vomir, "le lion arrête de vomir quand l'action est relâchée")
@@ -709,6 +713,27 @@ func _run() -> void:
 		return "" if base == null else base.resource_path)
 	_check(bases_pastilles.all(func(p: String) -> bool: return p == "res://Scripts/Pastille.gd"),
 		"pastille de couleur, étoile et cœur dérivent de la base Pastille (%s)" % [bases_pastilles])
+	# Phase 14 : chaque ennemi et chaque pastille porte son MultiplayerSynchronizer (`Synchro`) : position
+	# à l'apparition (et ensuite pour les ennemis, qui bougent chez l'hôte), couleur d'une pastille, côté
+	# du peintre, inclinaison de la coccinelle.
+	var attendues := {
+		"Soucoupe": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
+		"Coccinelle": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:rotation", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
+		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
+		"ColorPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER], [^".:couleur_index", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+		"BonusPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+		"CoeurPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
+	}
+	for nom: String in attendues:
+		var instance: Node = load("res://Scenes/%s.tscn" % nom).instantiate()
+		var synchro := instance.get_node_or_null("Synchro") as MultiplayerSynchronizer
+		var config: SceneReplicationConfig = null if synchro == null else synchro.replication_config
+		var conforme: bool = config != null and config.get_properties().size() == attendues[nom].size()
+		for attendue: Array in attendues[nom]:
+			conforme = conforme and config.has_property(attendue[0]) and config.property_get_spawn(attendue[0]) \
+				and config.property_get_replication_mode(attendue[0]) == attendue[1]
+		_check(conforme, "%s : son Synchro réplique %s à l'apparition" % [nom, attendues[nom].map(func(a: Array) -> String: return str(a[0]))])
+		instance.free()
 	# L'intrus a un champ `joueur`, comme un lion : sous l'ancien typage (groupe « lion » puis
 	# `body.joueur`), il serait accepté.
 	var script_intrus := GDScript.new()
@@ -779,6 +804,33 @@ func _run() -> void:
 	await _frames(1)
 	_check(is_instance_valid(etoile_client) and etoile_client.has_method("_expirer"),
 		"sur un client, une étoile en fin de vie ne se libère pas d'elle-même (l'hôte la fait disparaître)")
+	# Phase 14 : sur un client, ennemis et Spawner sont inertes : des répliques de ceux de l'hôte, que
+	# seul leur Synchro déplace
+	var soucoupe_client: Node2D = load("res://Scenes/Soucoupe.tscn").instantiate()
+	soucoupe_client.position = Vector2(300, 100)
+	poste_client.add_child(soucoupe_client)
+	var coccinelle_repl: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
+	coccinelle_repl.position = Vector2(900, 100)
+	poste_client.add_child(coccinelle_repl)
+	var boss_client: Node2D = load("res://Scenes/Boss.tscn").instantiate()
+	boss_client.cote = -1  # comme l'état d'apparition reçu de l'hôte, posé avant `_ready`
+	boss_client.position = Vector2(1000, 300)
+	poste_client.add_child(boss_client)
+	var spawner_client: Node = load("res://Scripts/Spawner.gd").new()
+	poste_client.add_child(spawner_client)
+	var enfants_client := poste_client.get_child_count()
+	spawner_client.demarrer()
+	await _frames(5)
+	_check(GS.pret and soucoupe_client.position == Vector2(300, 100) and coccinelle_repl.position == Vector2(900, 100)
+		and coccinelle_repl.speed == 0.0 and boss_client.position == Vector2(1000, 300) and boss_client._tween == null,
+		"sur un client, un ennemi ne bouge pas de lui-même, ne tire rien au hasard et le peintre ne lance aucun tween")
+	_check(boss_client.sprite.scale.x < 0.0 and boss_client.cote == -1, "sur un client, le peintre regarde du côté reçu de l'hôte (sprite en miroir)")
+	_check(not spawner_client._demarre and spawner_client._timer_soucoupe == null and poste_client.get_child_count() == enfants_client,
+		"sur un client, le Spawner ne fait rien apparaître (tout vient de l'hôte)")
+	# Chaque nœud synchronisé quitte le sous-arbre avant que son pair ne change (sinon l'API du client
+	# le suivrait encore).
+	for noeud: Node in [soucoupe_client, coccinelle_repl, boss_client, spawner_client, pastille_client, etoile_client]:
+		noeud.free()
 	set_multiplayer(null, poste_client.get_path())
 	pair_client.close()
 	poste_client.free()
@@ -921,6 +973,7 @@ func _run() -> void:
 	for i in range(3):
 		await process_frame  # le vomi démarre dans _process
 	_check(lr.est_en_train_de_vomir, "un lion de bataille vomit dès le départ, sans pastille")
+	_check(lr.vomi_de_l_hote, "sur l'hôte, l'état de vomi à répliquer suit celui du lion")
 	lr.commandes.vomir_voulu = false
 	await _frames(2)
 
@@ -1107,6 +1160,71 @@ func _run() -> void:
 		"un lion étourdi est poussé par celui qui le percute (%.0f px)" % (lb.global_position.x - x_bleu))
 	_check(distance_min > 2 * 45.0 - 15.0, "même en poussant sans relâche, un lion ne s'enfonce pas dans l'autre (distance min %.0f px)" % distance_min)
 
+	# Phase 14 : sur un client, un lion n'est qu'une réplique du lion de l'hôte (position, vitesse,
+	# orientation et vomi reçus par son Synchro ; réactions par les signaux de son joueur)
+	var synchro_lion := lr.get_node_or_null("Synchro") as MultiplayerSynchronizer
+	var config_lion: SceneReplicationConfig = null if synchro_lion == null else synchro_lion.replication_config
+	_check(config_lion != null and config_lion.get_properties() == [^".:position", ^".:velocity", ^".:direction_du_lion", ^".:vomi_de_l_hote"]
+		and config_lion.property_get_replication_mode(^".:position") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
+		and config_lion.property_get_replication_mode(^".:velocity") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
+		and config_lion.property_get_replication_mode(^".:direction_du_lion") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
+		and config_lion.property_get_replication_mode(^".:vomi_de_l_hote") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
+		and config_lion.get_properties().all(func(p: NodePath) -> bool: return config_lion.property_get_spawn(p)),
+		"le Synchro du lion réplique position et vitesse en continu, orientation et vomi à chaque changement, tous à l'apparition")
+	var poste_lion := Node2D.new()
+	poste_lion.name = "PosteClientLion"
+	root.add_child(poste_lion)
+	var api_lion := SceneMultiplayer.new()
+	var pair_lion := ENetMultiplayerPeer.new()
+	_check(pair_lion.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la réplique d'un lion")
+	api_lion.multiplayer_peer = pair_lion
+	set_multiplayer(api_lion, poste_lion.get_path())
+	var j_repl := Joueur.new()
+	j_repl.couleur = EtatPartie.PALETTE_BATAILLE[3]
+	j_repl.reinitialiser(3, j_repl.nuances())
+	var repl: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	repl.joueur = j_repl
+	repl.commandes = Commandes.manuelles()
+	repl.direction_du_lion = -1  # comme l'état d'apparition reçu de l'hôte, posé avant `_ready`
+	repl.position = Vector2(600, 500)
+	poste_lion.add_child(repl)
+	await _frames(1)
+	_check(repl.sprite.scale.x == -1.0 and repl.bouche.position.x == repl.BOUCHE_X_GAUCHE,
+		"sur un client, l'orientation reçue à l'apparition est appliquée (sprite et bouche à gauche)")
+	repl.commandes.direction_voulue = Vector2.RIGHT
+	repl.commandes.vomir_voulu = true
+	await _frames(5)
+	_check(repl.position == Vector2(600, 500) and repl.velocity == Vector2.ZERO and not repl.est_en_train_de_vomir,
+		"sur un client, un lion ne suit pas ses commandes : il ne bouge ni ne vomit de lui-même")
+	repl.position = Vector2(700, 500)  # ce qu'écrit le Synchro
+	repl.velocity = Vector2(350, 0)
+	repl.direction_du_lion = 1
+	repl.vomi_de_l_hote = true
+	for i in range(3):
+		await process_frame  # le vomi démarre dans _process
+	await _frames(1)
+	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl._vitesse == Vector2(350, 0)
+		and repl.est_en_train_de_vomir and repl.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
+		"la réplique suit l'état reçu : position, vitesse (son animation), orientation, vomi (particules)")
+	repl.vomi_de_l_hote = false
+	for i in range(3):
+		await process_frame
+	_check(not repl.est_en_train_de_vomir, "la réplique arrête de vomir avec le lion de l'hôte")
+	j_repl.etourdir(ReglesBataille.DUREE_ETOURDI_VOMI, ReglesBataille.DUREE_IMMUNITE, repl.global_position + Vector2(-50, 66), j_rouge.couleur)
+	await _frames(2)
+	var mat_repl := repl.sprite.material as ShaderMaterial
+	_check(repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur and repl.position == Vector2(700, 500),
+		"un étourdissement reçu de l'hôte s'affiche sur la réplique (étoiles, barbouillage), sans la déplacer")
+	j_repl.recevoir_fin_etourdissement(ReglesBataille.DUREE_IMMUNITE)
+	await _frames(2)
+	_check(not repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_force") == 0.0
+		and repl._clignotement != null and repl._clignotement.is_running(),
+		"la fin d'étourdissement reçue efface étoiles et barbouillage, l'immunité clignote")
+	repl.free()
+	set_multiplayer(null, poste_lion.get_path())
+	pair_lion.close()
+	poste_lion.free()
+
 	for l in lions_bataille:
 		l.free()
 	GS.configurer_solo()
@@ -1198,6 +1316,81 @@ func _run() -> void:
 		ville_b.peindre(point_vierge, 30, j_r)
 	_check(t.cellules_de(0) > scores_avant[0], "de retour sur l'hôte, les mêmes tampons comptent")
 
+	# Phase 14 : chaque tampon de l'hôte part en événement ; un client le dessine à l'identique (même
+	# jeu de tampons, même variante, même coulure), centres négatifs compris, sans le rediffuser ni
+	# toucher à son territoire. La traceuse d'un lion de client ne peint pas.
+	var emis: Array[Dictionary] = []
+	var sur_tampon := func(tampon: Dictionary) -> void: emis.append(tampon)
+	ville_b.tampon_peint.connect(sur_tampon)
+	ville_b.image.fill(Color(0, 0, 0, 0))
+	ville_b.coulures.clear()
+	ville_b._nb_tampons = 0  # comme une ville neuve : le plafond des coulures compte en tampons peints
+	ville_b._tampons_des_coulures.clear()
+	var coin_ville: Vector2 = ville_b.position - Vector2(ville_b.tex_size) / 2.0
+	ville_b.peindre(coin_ville + Vector2(-10, 40), 30, j_r)  # déborde à gauche : x négatif
+	for i in range(40):
+		ville_b.peindre(coin_ville + Vector2(200 + 11 * i, 60), 21, j_b)
+	ville_b.tampon_peint.disconnect(sur_tampon)
+	_check(emis.size() == 41 and emis[0].index == 0 and emis[0].x == -10 and emis[0].rayon == 30 and emis[1].index == 1
+		and ville_b.coulures.size() > 0,
+		"sur l'hôte, chaque tampon part en événement (index du peintre, centre en pixels de la ville, rayon, graine), coulures comprises")
+	var poste_c := Node2D.new()
+	poste_c.name = "PosteClientVille"
+	root.add_child(poste_c)
+	var api_c := SceneMultiplayer.new()
+	var pair_c := ENetMultiplayerPeer.new()
+	_check(pair_c.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la ville d'un client")
+	api_c.multiplayer_peer = pair_c
+	set_multiplayer(api_c, poste_c.get_path())
+	var ville_c: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	ville_c.position = ville_b.position
+	poste_c.add_child(ville_c)
+	var emis_client: Array[Dictionary] = []
+	ville_c.tampon_peint.connect(func(tampon: Dictionary) -> void: emis_client.append(tampon))
+	for tampon in emis:
+		ville_c.peindre_tampon_recu(tampon)
+	_check(not ville_c.multiplayer.is_server() and ville_c.image.get_data() == ville_b.image.get_data()
+		and ville_c.coulures == ville_b.coulures,
+		"chez un client, les tampons reçus se dessinent pixel pour pixel comme chez l'hôte, coulures comprises (%d coulures)" % ville_c.coulures.size())
+	_check(emis_client.is_empty() and ville_c.territoire.cellules_de(0) == 0 and ville_c.territoire.cellules_de(1) == 0,
+		"un client ne rediffuse pas les tampons reçus et ne les compte pas dans son territoire")
+	ville_c.peindre_tampon_recu({"index": 7, "x": 500, "y": 50, "rayon": 20, "graine": 1})
+	_check(ville_c.image.get_data() == ville_b.image.get_data(), "un tampon reçu pour un joueur inconnu de ce poste est ignoré")
+	# Les mêmes 400 tampons, l'un d'un coup, l'autre avec des coulures qui finissent entre deux
+	# tampons (un autre rythme d'affichage) : les mêmes coulures sont lancées
+	var ville_d: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	var ville_e: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	for v: Node2D in [ville_d, ville_e]:
+		v.position = ville_b.position
+		poste_c.add_child(v)
+	for g in range(400):
+		var tampon := {"index": 1, "x": 100 + (g * 7) % 1800, "y": 60, "rayon": 21, "graine": g}
+		ville_d.peindre_tampon_recu(tampon)
+		ville_e.peindre_tampon_recu(tampon)
+		ville_e._avancer_coulures(1.0)
+	_check(ville_d._tampons_des_coulures == ville_e._tampons_des_coulures and ville_d._tampons_des_coulures.size() > 0
+		and ville_d.coulures.size() > ville_e.coulures.size(),
+		"les mêmes tampons lancent les mêmes coulures, quel que soit le rythme d'affichage (plafond compté en tampons)")
+	ville_d.free()
+	ville_e.free()
+	var lion_c: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	lion_c.joueur = j_r
+	lion_c.commandes = Commandes.manuelles()
+	poste_c.add_child(lion_c)
+	lion_c.global_position = poste_peinture
+	await _frames(2)
+	emis.clear()
+	ville_b.tampon_peint.connect(sur_tampon)
+	lion_c.gerbe_traceuse.monitoring = true  # comme un vomi répliqué
+	await _frames(5)
+	_check(lion_c.gerbe_traceuse.get_overlapping_areas().size() > 0 and emis.is_empty(),
+		"la traceuse d'un lion de client, au-dessus de la ville, ne peint pas (seule celle de l'hôte peint)")
+	ville_b.tampon_peint.disconnect(sur_tampon)
+	lion_c.free()
+	set_multiplayer(null, poste_c.get_path())
+	pair_c.close()
+	poste_c.free()
+
 	# Après terminer_partie, partie_en_cours retombe mais pret reste vrai (pas de retour à
 	# l'intro) ; un lion peut donc encore peindre. Le tampon visuel doit rester, mais plus aucun
 	# score de territoire ne doit bouger.
@@ -1235,6 +1428,8 @@ func _run() -> void:
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false
 	GS.pret = false
+
+	await _tester_manche_reseau()
 
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
@@ -1718,3 +1913,115 @@ func _appuyer(action: StringName, appuye: bool) -> void:
 	evenement.pressed = appuye
 	root.push_input(evenement)
 	await process_frame
+
+
+## Phase 14 : la scène de jeu d'une bataille en réseau, chez un hôte (ce poste héberge ; l'autre
+## joueur est simulé dans `Reseau.inscrits`, comme au salon) : lion de la scène retiré, lions par le
+## MultiplayerSpawner après la barrière de chargement, exclusion d'un absent, départ en cours de
+## manche, commandes reçues et leur silence, menu local sans pause. Les échanges entre postes sont
+## couverts par tests/reseau/lancer.sh (scénario 9).
+func _tester_manche_reseau() -> void:
+	print("-- Manche en réseau (hôte)")
+	var reseau: Node = root.get_node("Reseau")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	var delai_du_jeu: float = script_manche.delai_chargement
+	for essai in ["charge", "absent"]:
+		reseau.pseudo = "Hôte"
+		_check(reseau.heberger(17798) == OK, "(pré-condition, %s) ce poste héberge" % essai)
+		reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+		reseau.manche_en_cours = true
+		GS.niveau_courant = 0
+		GS.configurer_bataille_reseau([{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[0]},
+			{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[3]}] as Array[Dictionary])
+		script_manche.delai_chargement = 0.5
+		var main: Node = load("res://Scenes/Main.tscn").instantiate()
+		root.add_child(main)
+		current_scene = main
+		await _frames(3)
+		var manche: Node = main.get_node("Manche")
+		_check(main.en_reseau and main.get_node_or_null("Lion") == null and main.lions.is_empty() and main.lion == null
+			and not manche.barriere and reseau.scenes_chargees == [1] and not main.get_node("Intro")._lancee
+			and not main.get_node("Spawner")._demarre,
+			"(%s) en réseau, la scène retire le lion du solo et attend la barrière : ni lion, ni intro, ni apparition" % essai)
+		if essai == "charge":
+			reseau._noter_scene_chargee(7)  # comme la RPC de Bob
+			await _frames(2)
+		else:
+			await create_timer(0.7).timeout
+			await _frames(2)
+			_check(manche._exclus == [7] and not manche.barriere,
+				"(absent) délai passé : Bob est exclu, et la barrière attend son départ")
+			reseau._sur_pair_deconnecte(7)  # son départ, vu par Reseau
+			await _frames(2)
+		var noms: Array = main.lions.map(func(l: Node) -> String: return str(l.name))
+		var attendus_noms: Array = ["Lion1", "Lion2"] if essai == "charge" else ["Lion1"]
+		_check(manche.barriere and noms == attendus_noms and main.lion == main.lions[0] and main.lion.joueur == GS.joueur_local()
+			and main.lion.commandes.source == Commandes.Source.LOCALES and main.get_node("Intro")._lancee and main.get_node("Spawner")._demarre,
+			"(%s) barrière passée : un lion par joueur encore là (%s), celui de ce poste lit ses commandes, l'intro et les apparitions commencent" % [essai, noms])
+		if essai == "absent":
+			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
+			main.free()
+			await _frames(1)
+			reseau.quitter()
+			continue
+		var lion_bob: CharacterBody2D = main.lions[1]
+		_check(lion_bob.joueur == GS.joueurs[1] and lion_bob.commandes.source == Commandes.Source.MANUELLES
+			and lion_bob.position.x < main.lion.position.x + 2000.0 and lion_bob.position.y == main.lion.position.y,
+			"le lion de Bob porte son joueur et des commandes manuelles, à sa place de départ")
+		# Commandes reçues de Bob, numérotées, puis son silence
+		var maintenant := Time.get_ticks_msec()
+		_check(manche.recevoir_commandes_de(1, 5, Vector2(0.5, 0.0), true, maintenant) and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0)
+			and lion_bob.commandes.vomir_voulu, "une commande de Bob est écrite dans les commandes de son lion")
+		_check(not manche.recevoir_commandes_de(1, 4, Vector2(-1, 0), false, maintenant) and not manche.recevoir_commandes_de(1, 5, Vector2(-1, 0), false, maintenant)
+			and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0),
+			"une commande plus ancienne ou déjà vue est ignorée")
+		_check(not manche.recevoir_commandes_de(1, 6, "gauche", false, maintenant) and not manche.recevoir_commandes_de(1, 6, Vector2(INF, 0), false, maintenant)
+			and not manche.recevoir_commandes_de(0, 6, Vector2(1, 0), false, maintenant) and main.lion.commandes.direction() == Vector2.ZERO,
+			"une commande mal formée, non finie ou pour le lion de l'hôte est refusée")
+		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES - 10)
+		_check(lion_bob.commandes.vomir_voulu, "pas encore de silence : la dernière commande tient")
+		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES + 10)
+		_check(lion_bob.commandes.direction_voulue == Vector2.ZERO and not lion_bob.commandes.vomir_voulu,
+			"sans commande de Bob depuis %d ms, son lion revient au repos" % manche.SILENCE_COMMANDES)
+		# Chaque tampon de la ville de l'hôte part avec la manche
+		var avant: int = manche.tampons_diffuses
+		GS.pret = true
+		var ville: Node2D = main.get_node("Ville")
+		ville.peindre(ville.position, 21, GS.joueurs[0])
+		await _frames(2)
+		_check(manche.tampons_diffuses == avant + 1, "la manche diffuse chaque tampon de la ville de l'hôte")
+		# Menu local : la partie continue, les commandes de ce poste sont suspendues
+		var menu: CanvasLayer = main.get_node("PauseMenu")
+		menu.ouvrir()
+		await _frames(1)
+		_check(menu.visible and not paused and main.lion.commandes.suspendues
+			and menu.get_node("Centre/Colonne/Titre").text == "PAUSE_RESEAU" and menu.get_node("Centre/Colonne/Menu").text == "QUITTER_PARTIE",
+			"en réseau, Échap ouvre un menu local : la partie continue, les commandes de ce poste sont suspendues, « Quitter la partie »")
+		menu.reprendre()
+		await _frames(1)
+		_check(not menu.visible and not paused and not main.lion.commandes.suspendues, "le menu fermé, les commandes reprennent")
+		# Bob part en pleine manche : son lion disparaît, ses cellules restent
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(1, Vector2i(1000, 200), 40)
+		var cellules_bob: int = ville.territoire.cellules_de(1)
+		reseau._sur_pair_deconnecte(7)
+		await _frames(2)
+		_check(not is_instance_valid(lion_bob) and main.lions.size() == 1 and ville.territoire.cellules_de(1) == cellules_bob and cellules_bob > 0,
+			"un joueur parti en pleine manche perd son lion, ses cellules restent au territoire (%d)" % cellules_bob)
+		# Un hôte perdu (chez un client) : message, tout se fige
+		main._sur_hote_perdu()
+		var message: Label = main.get_node("HotePerdu/Message")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused, "l'hôte perdu : « L'hôte a quitté la partie », la partie se fige")
+		paused = false
+		main.free()
+		await _frames(1)
+		reseau.quitter()
+	script_manche.delai_chargement = delai_du_jeu
+	reseau.pseudo = ""
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+	GS.niveau_courant = 0

@@ -1,7 +1,8 @@
 extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
 ##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
-## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client.
+## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client,
+## manche-muet.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -19,7 +20,8 @@ extends SceneTree
 ##   libéré la place), puis quitte le réseau (ses clients doivent voir l'hôte partir).
 ## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
 ##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
-##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte), --feu=chemin
+##   et un autre client en vue dans la table de l'hôte, quitte de lui-même ; sinon, attend que
+##   l'hôte parte), --feu=chemin
 ##   (écrit « ATTEND LE FEU » puis ne rejoint l'hôte qu'une fois ce fichier créé par lancer.sh,
 ##   DELAI_ETAPE au plus : le démarrage de Godot est déjà fait quand la demande doit partir). Écrit
 ##   une ligne « RESULTAT … » que lancer.sh compte d'un poste à l'autre. `refus_plein` est la
@@ -61,6 +63,26 @@ extends SceneTree
 ##   redéclare prêt une fois --relance=chemin créé), --index=K (son index attendu dans la manche,
 ##   compactés compris). Vérifie à la fin avoir vu « l'hôte peut démarrer », puis attend le départ
 ##   de l'hôte.
+## Manche (phase 14), par les vraies scènes jusqu'à la scène de jeu, puis une manche jouée au clavier
+##   de chaque poste (actions pressées comme un joueur : `Input.action_press`).
+##   Manche-hôte : --clients=N (arrivées attendues, le muet compris), --gel=S (fige son processus S
+##   secondes dès sa scène de jeu chargée : ses clients, qui chargent, ne doivent pas le croire
+##   parti), --delai-chargement=S (délai de la barrière), --rester=chemin, --mesurer-exclusion (I1,
+##   revue finale phase 14 : chronomètre l'écart entre l'exclusion d'un absent et la barrière,
+##   « ECART_EXCLUSION <ms> »). Écrit « HOTE PRET »,
+##   « BARRIERE prets=… exclus=… », « DEPART VU », puis, une fois les lions arrêtés et les coulures
+##   finies, fige la manche (`terminer_partie`) : « EMPREINTE <territoire, scores, tampons,
+##   lions, apparitions> » et « FIGE ».
+##   Manche-client : --sens=1|-1 (sa passe de peinture, vers la droite ou la gauche), --partir (quitte
+##   la manche par le menu local une fois sa passe faite : « PARTI »), --fige=chemin (une fois ce
+##   fichier créé par lancer.sh, attend ses coulures puis écrit sa propre « EMPREINTE »), puis attend
+##   le départ de l'hôte (« L'hôte a quitté la partie », puis le titre).
+##   Manche-muet : rejoint l'hôte sans scène (pas de salon ni de scène de jeu), se dit prêt, reçoit le
+##   lancement de la manche mais ne charge jamais sa scène : l'hôte doit l'exclure après le délai de
+##   la barrière (« EXCLU »). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
+##   reçu, fige tout le processus S secondes (« FIGE_MUET ») avant de reprendre et sortir en 0, sans
+##   rien vérifier lui-même : son ENet ne peut acquitter aucun DISCONNECT pendant ce temps, comme un
+##   poste dont le fil principal compile ses shaders.
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -141,8 +163,12 @@ func _run() -> void:
 		await _jouer_ecouteur()
 	elif role == "salon-hote" or role == "salon-client":
 		await _jouer_salon(role == "salon-hote")
+	elif role == "manche-hote" or role == "manche-client":
+		await _jouer_manche(role == "manche-hote")
+	elif role == "manche-muet":
+		await _jouer_muet()
 	else:
-		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote ou salon-client")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client ou manche-muet")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -261,8 +287,10 @@ func _jouer_client() -> void:
 			if _issue != "inscrit":
 				return
 			if _options.has("partir"):
-				_check(await _attendre(func() -> bool: return root.multiplayer.get_peers().size() >= 2),
-					"un autre client est en vue (pairs : %s)" % [root.multiplayer.get_peers()])
+				# Sans relais du serveur (phase 14, M5), un client ne voit que l'hôte parmi ses pairs :
+				# l'autre client est vu dans la table que l'hôte diffuse (hôte et deux clients).
+				_check(await _attendre(func() -> bool: return reseau.table_salon.size() >= 3),
+					"un autre client est en vue dans la table de l'hôte (%d joueurs)" % reseau.table_salon.size())
 				await _pause(0.5)
 				reseau.quitter()
 				_check(_issue == "inscrit", "partir de soi-même n'émet ni échec ni hôte perdu (%s)" % _issue)
@@ -597,3 +625,227 @@ func _sur_refus(raison: String, version_hote: String) -> void:
 ## client qui reste ; « refuse+echec » trahirait un double signal.
 func _ajouter_issue(quoi: String) -> void:
 	_issue = quoi if _issue.is_empty() else _issue + "+" + quoi
+
+
+
+## Rôles « manche-hote » et « manche-client » (phase 14, voir l'en-tête) : du salon à une manche
+## jouée, jusqu'au départ de l'hôte.
+func _jouer_manche(hote: bool) -> void:
+	var scores: Node = root.get_node("Scores")
+	var gs: Node = root.get_node("GameState")
+	scores.chemin = "user://scores_reseau_%s.cfg" % reseau.pseudo
+	scores.effacer()
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	script_manche.delai_chargement = float(_option("delai-chargement", str(script_manche.DELAI_CHARGEMENT)))
+	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+	reseau.joueur_parti.connect(_sur_depart)
+	change_scene_to_file("res://Scenes/EcranReseau.tscn")
+	_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")), "l'écran Réseau s'ouvre")
+	var ecran: Node = current_scene
+	ecran.port_jeu = int(_option("port", "17777"))
+	ecran.champ_pseudo.text = reseau.pseudo
+	if hote:
+		ecran.heberger()
+	else:
+		ecran.champ_ip.text = "127.0.0.1"
+		ecran.rejoindre_par_ip()
+	_check(await _attendre(func() -> bool: return _scene_est("Salon")), "l'écran Réseau passe la main au salon")
+	if not _scene_est("Salon"):
+		reseau.quitter()
+		return
+	var salon: Node = current_scene
+	if hote:
+		print("HOTE PRET")
+		var nb := 1 + int(_option("clients", "0"))
+		_check(await _attendre(func() -> bool: return reseau.table_salon.size() == nb), "%d joueurs au salon" % nb)
+		salon.basculer_pret()
+		var bouton: Button = salon.bouton_demarrer
+		_check(await _attendre(func() -> bool: return not bouton.disabled), "tous prêts : « Démarrer la partie » s'active")
+		salon.demarrer()
+	else:
+		salon.basculer_pret()
+	_check(await _attendre(func() -> bool: return _scene_est("Main")), "le salon charge la scène de jeu")
+	if not _scene_est("Main"):
+		reseau.quitter()
+		return
+	var main: Node = current_scene
+	var manche: Node = main.get_node("Manche")
+	if hote and _options.has("gel"):
+		# Tout le processus se fige, comme un hôte qui charge ou compile ses shaders : ses clients
+		# chargent pendant ce temps, et leurs « scène chargée » l'attendent.
+		print("GEL")
+		OS.delay_msec(int(float(_option("gel", "0")) * 1000.0))
+	# I1 (revue finale phase 14) : avec --mesurer-exclusion, l'hôte chronomètre lui-même l'écart
+	# entre l'exclusion d'un absent et la barrière qui passe (ECART_EXCLUSION, en ms) : le
+	# correctif d'`_exclure` doit le tenir bien sous le silence de chargement par défaut.
+	var mesurer_exclusion := hote and _options.has("mesurer-exclusion")
+	var ticks_exclu := -1
+	if mesurer_exclusion:
+		_check(await _attendre(func() -> bool: return not manche._exclus.is_empty()), "(I1) un poste est exclu de la barrière")
+		ticks_exclu = Time.get_ticks_msec()
+	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	if mesurer_exclusion and ticks_exclu >= 0:
+		print("ECART_EXCLUSION %d" % (Time.get_ticks_msec() - ticks_exclu))
+	_check(_issue.is_empty(), "personne ne s'est cru abandonné pendant le chargement (%s)" % _issue)
+	if hote:
+		var exclus: Array = manche._exclus
+		print("BARRIERE prets=%s exclus=%s" % [manche._prets, exclus])
+		_check(manche._prets.size() == int(_option("clients", "0")) - 1 and exclus.size() == 1,
+			"les clients chargés sont prêts, le muet est exclu (%s, %s)" % [manche._prets, exclus])
+	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size() - 1), "un lion par joueur resté (%d)" % main.lions.size())
+	var moi: Joueur = gs.joueur_local()
+	_check(main.lion != null and main.lion.joueur == moi and main.lion.commandes.source == Commandes.Source.LOCALES
+		and main.lions.all(func(l: Node) -> bool: return l == main.lion or l.commandes.source == Commandes.Source.MANUELLES),
+		"le lion de ce poste lit ses commandes, les autres ont des commandes manuelles")
+	if not hote:
+		_check(root.multiplayer.get_peers() == PackedInt32Array([1]) and not root.multiplayer.is_server(),
+			"sans relais du serveur, un client ne voit que l'hôte parmi ses pairs (%s)" % [root.multiplayer.get_peers()])
+	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	print("INTRO")
+	await _jouer_passe(main, int(_option("sens", "1")))
+	if hote:
+		await _finir_manche_hote(main, manche, gs)
+	elif _options.has("partir"):
+		main.get_node("PauseMenu").ouvrir()
+		await _pause(0.3)
+		_check(main.lion.commandes.suspendues and not paused, "le menu local suspend les commandes sans mettre la partie en pause")
+		main.get_node("PauseMenu")._on_menu_pressed()  # « Quitter la partie »
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not reseau.en_ligne(), "quitter la partie ramène au titre, hors réseau")
+		print("PARTI")
+	else:
+		await _finir_manche_client(main, manche)
+	scores.effacer()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
+
+
+## La passe de ce poste : descendre jusqu'à la hauteur de peinture (celle du pilote de la démo, 233 px
+## au-dessus des toits ; la position du lion de ce poste est celle que l'hôte lui renvoie), puis
+## peindre la ville en allant dans le sens `sens`.
+func _jouer_passe(main: Node, sens: int) -> void:
+	var ville: Node2D = main.get_node("Ville")
+	var cible: float = ville.position.y - ville.tex_size.y / 2.0 - 233.0
+	Input.action_press("deplacer_bas")
+	_check(await _attendre(func() -> bool: return main.lion.position.y >= cible), "le lion de ce poste descend vers la ville (%.0f)" % main.lion.position.y)
+	Input.action_release("deplacer_bas")
+	var action := "deplacer_droite" if sens > 0 else "deplacer_gauche"
+	Input.action_press(action)
+	Input.action_press("vomir")
+	var pire := 0.0
+	var fin := Time.get_ticks_msec() + 2500
+	var avant := Time.get_ticks_msec()
+	while Time.get_ticks_msec() < fin:
+		await process_frame
+		pire = maxf(pire, Time.get_ticks_msec() - avant)
+		avant = Time.get_ticks_msec()
+	Input.action_release(action)
+	Input.action_release("vomir")
+	print("MESURE %s : %d jeux de tampons en cache, frame la plus longue %.0f ms pendant la passe" % [reseau.pseudo, main.get_node("Ville")._tampons.size(), pire])
+
+
+## L'empreinte de la manche sur ce poste : territoire (propriétaire compté de chaque cellule), scores,
+## tampons (nombre diffusé par l'hôte ou reçu par un client, et l'empreinte de leur suite), lions
+## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position). Pas l'image
+## de la ville : les mêmes tampons y sont dessinés à l'identique (smoke test), mais une coulure qui
+## descend encore quand un tampon la recouvre passe dessus ou dessous selon le rythme de chaque poste.
+func _empreinte(main: Node, manche: Node, hote: bool) -> String:
+	var ville: Node2D = main.get_node("Ville")
+	var territoire: Territoire = ville.territoire
+	var proprietaires := PackedByteArray()
+	proprietaires.resize(territoire.taille_grille.x * territoire.taille_grille.y)
+	for i in range(proprietaires.size()):
+		proprietaires[i] = territoire.proprietaire_compte(i) + 1
+	var lions: Array = main.lions.map(func(l: Node) -> String:
+		return "%s:%.1f,%.1f,%d,%d,%s,%s" % [l.name, l.position.x, l.position.y, l.direction_du_lion, l.joueur.crans,
+			l.joueur.est_etourdi(), l.joueur.bonus_actif()])
+	var scenes: Array[String] = []
+	var spawner: MultiplayerSpawner = main.get_node("Apparitions")
+	for i in range(spawner.get_spawnable_scene_count()):
+		scenes.append(spawner.get_spawnable_scene(i))
+	var apparitions: Array[String] = []
+	for enfant in main.get_children():
+		if scenes.has(enfant.scene_file_path):
+			apparitions.append("%s@%.0f,%.0f" % [enfant.name, enfant.position.x, enfant.position.y])
+	apparitions.sort()
+	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s" % [hash(proprietaires), territoire.scores(),
+		manche.tampons_diffuses if hote else manche.tampons_recus, manche.empreinte_tampons, ";".join(lions), ";".join(apparitions)]
+
+
+func _finir_manche_hote(main: Node, manche: Node, gs: Node) -> void:
+	var ville: Node2D = main.get_node("Ville")
+	_check(await _attendre(func() -> bool: return _departs.size() >= 2), "le client parti en pleine manche (et le muet exclu) sont partis (%d)" % _departs.size())
+	var index_parti := -1
+	for j: Joueur in gs.joueurs:
+		if j.id_reseau == _departs[-1]:
+			index_parti = j.index
+	var cellules_parti: int = ville.territoire.cellules_de(index_parti)
+	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size() - 2) and cellules_parti > 0,
+		"son lion disparaît, ses cellules restent au territoire (%d)" % cellules_parti)
+	print("DEPART VU")
+	# Les réactions d'Anna, décidées ici : un cran, la gerbe XXL, un étourdissement (elle les reçoit
+	# par la manche ; son empreinte doit les montrer)
+	var restants: Array = gs.joueurs.filter(func(j: Joueur) -> bool: return j.id_reseau != 1 and reseau.inscrits.has(j.id_reseau))
+	_check(restants.size() == 1, "(pré-condition) il reste un client, Anna")
+	if restants.size() == 1:
+		var anna: Joueur = restants[0]
+		var crans_avant := anna.crans  # une pastille a pu être ramassée pendant sa passe
+		gs.regles.pastille_ramassee(anna, 0)
+		gs.regles.etoile_ramassee(anna)
+		anna.invulnerable_restant = 0.0
+		gs.regles.lion_touche_par_ennemi(anna, Vector2.INF)
+		_check(anna.crans == mini(crans_avant + 1, Joueur.CRANS_MAX) and anna.bonus_actif() and anna.est_etourdi(),
+			"Anna gagne un cran et la gerbe XXL, puis un ennemi l'étourdit")
+	var calme := func() -> bool:
+		return main.lions.all(func(l: Node) -> bool: return l.velocity == Vector2.ZERO) and ville.coulures.is_empty()
+	_check(await _attendre(calme), "les lions s'arrêtent, les coulures finissent")
+	await _pause(0.3)
+	gs.terminer_partie(false)  # tout se fige chez l'hôte (bataille) ; la manche diffuse encore
+	await _pause(1.0)
+	_check(ville.territoire.cellules_de(index_parti) == cellules_parti, "les cellules du parti restent jusqu'au bout")
+	print("EMPREINTE %s" % _empreinte(main, manche, true))
+	print("FIGE")
+	if _options.has("rester"):
+		var rester := _option("rester", "")
+		print("HOTE RESTE")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+	paused = false
+	reseau.quitter()
+
+
+func _finir_manche_client(main: Node, manche: Node) -> void:
+	var ville: Node2D = main.get_node("Ville")
+	_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("fige", ""))), "l'hôte a figé la manche")
+	_check(await _attendre(func() -> bool: return ville.coulures.is_empty()), "les coulures de ce poste finissent")
+	await _pause(0.5)  # les dernières positions et cellules de l'hôte figé
+	print("EMPREINTE %s" % _empreinte(main, manche, false))
+	_check(await _attendre(func() -> bool: return _issue == "hote_perdu"), "l'hôte finit par partir")
+	var message: Node = main.get_node_or_null("HotePerdu/Message")
+	_check(message != null and message.text == "RESEAU_HOTE_PERDU" and paused, "« L'hôte a quitté la partie » s'affiche, la partie se fige")
+	_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
+		"puis retour au titre, hors réseau")
+
+
+## Rôle « manche-muet » (phase 14) : un joueur prêt qui ne charge jamais sa scène de jeu.
+func _jouer_muet() -> void:
+	reseau.inscrit.connect(_sur_inscription)
+	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+	var lancee := [0]
+	reseau.manche_lancee.connect(func(_f: Array[Dictionary]) -> void: lancee[0] = Time.get_ticks_msec())
+	_check(reseau.rejoindre("127.0.0.1", int(_option("port", "17777"))) == OK, "le client muet est créé")
+	_check(await _attendre(func() -> bool: return _issue == "inscrit"), "le muet est inscrit")
+	_check(await _attendre(func() -> bool: return reseau.table_salon.any(func(f: Dictionary) -> bool: return f.id == root.multiplayer.get_unique_id())),
+		"le muet est à la table du salon")
+	reseau.demander_pret(true)
+	_check(await _attendre(func() -> bool: return lancee[0] > 0), "le muet reçoit le lancement de la manche, sans charger de scène")
+	if _options.has("figer"):
+		# I1 (revue finale phase 14) : le fil principal se fige tout entier, comme un poste qui
+		# compile ses shaders : son ENet n'acquitte plus rien, y compris le DISCONNECT de l'hôte qui
+		# l'exclut (le correctif d'`_exclure` ne doit pas en dépendre pour autant).
+		print("FIGE_MUET")
+		OS.delay_msec(int(float(_option("figer", "0")) * 1000.0))
+	var fin := Time.get_ticks_msec() + int((DELAI_ETAPE + float(_option("gel", "0"))) * 1000.0)
+	while _issue != "inscrit+hote_perdu" and Time.get_ticks_msec() < fin:
+		await process_frame
+	var apres: float = (Time.get_ticks_msec() - lancee[0]) / 1000.0
+	print("EXCLU apres=%.1f s" % apres)
+	_check(_issue == "inscrit+hote_perdu" and apres >= float(_option("delai-chargement", "0")),
+		"l'hôte l'exclut après le délai de la barrière (%.1f s)" % apres)

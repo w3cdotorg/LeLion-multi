@@ -6,12 +6,26 @@ extends Node2D
 ## peinte (mesure par réduction du masque, à intervalle régulier). En bataille, la même grille
 ## porte aussi le territoire (`Territoire`) : l'hôte y reporte chaque tampon, sur toutes les
 ## cellules qu'il recouvre (`EMPREINTE_TERRITOIRE`).
+## En réseau (phase 14), seule la traceuse de l'hôte peint : chaque tampon qu'il applique part en
+## événement (`tampon_peint`), que la manche diffuse ; un client dessine les tampons reçus
+## (`peindre_tampon_recu`), identiques à ceux de l'hôte (`Peinture` : jeux de tampons tirés de leur
+## clé, variante et coulure tirées de la graine du tampon), et son territoire suit celui de l'hôte
+## par les cellules changées reçues (`Territoire.appliquer_changements`).
+
+## Sur l'hôte : un tampon vient d'être appliqué. `tampon` : `{"index": int, "x": int, "y": int,
+## "rayon": int, "graine": int}` (index du peintre, centre en pixels de la ville), le format que
+## `Peinture.encoder_tampons` diffuse.
+signal tampon_peint(tampon: Dictionary)
 
 const TAILLE_CELLULE := 8
-const NB_TAMPONS := 4
-const DENSITE_TAMPON := 0.5
-const CHANCE_COULURE := 0.3
+const NB_TAMPONS := Peinture.NB_TAMPONS
+const CHANCE_COULURE := Peinture.CHANCE_COULURE
+## Coulures lancées au plus parmi les FENETRE_COULURES derniers tampons de la ville : un plafond
+## compté en tampons, pas en coulures encore en cours. Chaque poste peint les mêmes tampons dans le
+## même ordre (ceux que diffuse l'hôte) : il lance donc les mêmes coulures, quel que soit son rythme
+## d'affichage (qui, lui, fait avancer les coulures).
 const COULURES_MAX := 40
+const FENETRE_COULURES := 120
 const VITESSE_COULURE := 70.0  # px/s
 const INTERVALLE_MESURE := 0.2  # s
 const COUVERTURE_CELLULE := 0.4
@@ -47,7 +61,11 @@ var _temps_mesure := 0.0
 
 var _dirty := false
 var coulures: Array[Dictionary] = []
-## Tampons par rayon et jeu de couleurs (clé : `_cle_tampons`) : deux lions qui ont autant de
+## Tampons peints depuis la dernière skyline, et le numéro du tampon de chaque coulure récente (voir
+## FENETRE_COULURES).
+var _nb_tampons := 0
+var _tampons_des_coulures: Array[int] = []
+## Tampons par rayon et jeu de couleurs (clé : `Peinture.cle_tampons`) : deux lions qui ont autant de
 ## couleurs et le même rayon peignent chacun avec les leurs.
 var _tampons: Dictionary[String, Array] = {}
 
@@ -63,6 +81,8 @@ func charger_skyline(nouvelle: Texture2D) -> void:
 	cellules_peignables = 0
 	cellules_peintes = 0
 	coulures.clear()
+	_nb_tampons = 0
+	_tampons_des_coulures.clear()
 	_tampons.clear()
 	_calculer_cellules_peignables()
 	territoire = Territoire.new(grille_taille, _cellules_peignables, TAILLE_CELLULE) \
@@ -133,33 +153,55 @@ func _calculer_cellules_peignables() -> void:
 
 
 ## Applique un tampon de peinture de rayon `rayon`, centré sur une position globale, aux couleurs
-## débloquées de `peintre`. En bataille, sur l'hôte seulement, et tant que la manche est en cours,
-## le tampon est aussi reporté sur le territoire et ses vols sont signalés aux règles.
+## débloquées de `peintre`. Sa graine (variante et coulure, voir `Peinture.tirage`) est tirée ici
+## (`randi`). Sur l'hôte, le tampon part aussi en événement (`tampon_peint`) et, en bataille, tant
+## que la manche est en cours, il est reporté sur le territoire et ses vols sont signalés aux règles.
 func peindre(position_globale: Vector2, rayon: int, peintre: Joueur) -> void:
+	var local := sprite.to_local(position_globale)
+	_peindre_en(Vector2i(int(local.x + tex_size.x / 2.0), int(local.y + tex_size.y / 2.0)), rayon, peintre,
+		randi() & Peinture.GRAINE_MAX)
+
+
+## Chez un client : un tampon diffusé par l'hôte (voir `tampon_peint`), dessiné à l'identique ; un
+## index de joueur inconnu de ce poste est ignoré.
+func peindre_tampon_recu(tampon: Dictionary) -> void:
+	if tampon.index < 0 or tampon.index >= GameState.joueurs.size():
+		return
+	_peindre_en(Vector2i(tampon.x, tampon.y), tampon.rayon, GameState.joueurs[tampon.index], tampon.graine)
+
+
+## Le tampon de rayon `rayon` et de graine `graine`, centré en `centre` (pixels de la ville,
+## éventuellement hors de l'image : un tampon qui déborde est dessiné en partie).
+func _peindre_en(centre: Vector2i, rayon: int, peintre: Joueur, graine: int) -> void:
 	var couleurs := peintre.couleurs_debloquees
 	if couleurs.is_empty() or rayon <= 0:
 		return
-	var local := sprite.to_local(position_globale)
-	var px := int(local.x + tex_size.x / 2.0)
-	var py := int(local.y + tex_size.y / 2.0)
+	var px := centre.x
+	var py := centre.y
 	if px < -rayon or py < -rayon or px >= tex_size.x + rayon or py >= tex_size.y + rayon:
 		return
 
-	var tampons := _tampons_pour(rayon, couleurs)
-	var tampon: Image = tampons[randi() % tampons.size()]
+	var tire := Peinture.tirage(graine, rayon, couleurs.size())
+	var tampon: Image = _tampons_pour(rayon, couleurs)[tire.variante]
 	var taille := tampon.get_width()
 	image.blit_rect_mask(tampon, tampon, Rect2i(0, 0, taille, taille), Vector2i(px - rayon, py - rayon))
-	if coulures.size() < COULURES_MAX and randf() < CHANCE_COULURE:
-		var c := couleurs[randi() % couleurs.size()]
+	_nb_tampons += 1
+	while not _tampons_des_coulures.is_empty() and _tampons_des_coulures[0] <= _nb_tampons - FENETRE_COULURES:
+		_tampons_des_coulures.pop_front()
+	if tire.coulure and _tampons_des_coulures.size() < COULURES_MAX:
+		_tampons_des_coulures.append(_nb_tampons)
+		var c := couleurs[tire.couleur]
 		c.a = 1.0
 		coulures.append({
-			"x": px + randi_range(-rayon, rayon), "y": float(py + randi_range(0, rayon)),
-			"fin": float(py + rayon + randi_range(14, 44)), "couleur": c,
+			"x": px + tire.dx, "y": float(py + tire.dy), "fin": float(py + rayon + tire.longueur), "couleur": c,
 		})
 	_dirty = true
+	if not multiplayer.is_server():
+		return
+	tampon_peint.emit({"index": peintre.index, "x": px, "y": py, "rayon": rayon, "graine": graine})
 	# Le territoire ne bouge que pendant la manche : après terminer_partie, pret reste vrai et un
 	# lion peut encore peindre ; le tampon se dessine, le score reste figé.
-	if territoire != null and multiplayer.is_server() and GameState.regles.manche_en_cours():
+	if territoire != null and GameState.regles.manche_en_cours():
 		var volees := territoire.tamponner(peintre.index, Vector2i(px, py), rayon + EMPREINTE_TERRITOIRE)
 		if volees > 0:
 			GameState.regles.vol_de_cellules(peintre, volees)
@@ -185,44 +227,13 @@ func _avancer_coulures(delta: float) -> void:
 	_dirty = true
 
 
-## Les NB_TAMPONS tampons de ce rayon et de ce jeu de couleurs : générés au premier usage, puis
-## gardés en cache (TAMPONS_EN_CACHE_MAX jeux au plus).
+## Les NB_TAMPONS tampons de ce rayon et de ce jeu de couleurs (`Peinture.generer_tampons`, les
+## mêmes sur chaque poste) : générés au premier usage, puis gardés en cache (TAMPONS_EN_CACHE_MAX
+## jeux au plus).
 func _tampons_pour(rayon: int, couleurs: Array[Color]) -> Array:
-	var cle := _cle_tampons(rayon, couleurs)
+	var cle := Peinture.cle_tampons(rayon, couleurs)
 	if not _tampons.has(cle):
 		if _tampons.size() >= TAMPONS_EN_CACHE_MAX:
 			_tampons.clear()
-		_tampons[cle] = _generer_tampons(rayon, couleurs)
+		_tampons[cle] = Peinture.generer_tampons(rayon, couleurs)
 	return _tampons[cle]
-
-
-## Le rayon puis chaque couleur en RGBA 8 bits, dans l'ordre : deux jeux qui ne diffèrent que par
-## une couleur ont des clés différentes.
-static func _cle_tampons(rayon: int, couleurs: Array[Color]) -> String:
-	var cle := str(rayon)
-	for c in couleurs:
-		cle += ":%08x" % c.to_rgba32()
-	return cle
-
-
-## Tampons denses au centre, épars sur les bords, dont chaque pixel prend une des couleurs.
-func _generer_tampons(rayon: int, couleurs: Array[Color]) -> Array[Image]:
-	var tampons: Array[Image] = []
-	var taille := rayon * 2 + 1
-	for t in range(NB_TAMPONS):
-		var tampon := Image.create(taille, taille, false, Image.FORMAT_RGBA8)
-		tampon.fill(Color(0, 0, 0, 0))
-		for y in range(taille):
-			for x in range(taille):
-				var dx := x - rayon
-				var dy := y - rayon
-				var d := sqrt(dx * dx + dy * dy) / rayon
-				if d > 1.0:
-					continue
-				# Plus dense au centre, éparse sur les bords.
-				if randf() < DENSITE_TAMPON * (1.3 - d):
-					var c := couleurs[randi() % couleurs.size()]
-					c.a = 1.0
-					tampon.set_pixel(x, y, c)
-		tampons.append(tampon)
-	return tampons

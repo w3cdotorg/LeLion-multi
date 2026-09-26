@@ -50,7 +50,7 @@ var _tenues: Dictionary[StringName, bool] = {}
 
 
 func _ready() -> void:
-	get_tree().root.content_scale_size = ReglesBataille.TAILLE_ECRAN
+	Regles.appliquer_ecran(get_tree(), ReglesBataille.TAILLE_ECRAN)
 	for i in range(EtatPartie.NB_JOUEURS_MAX):
 		cartes.append(_creer_carte())
 	Reseau.salon_change.connect(_sur_salon_change)

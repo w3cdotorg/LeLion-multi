@@ -55,7 +55,7 @@ var _message := {"cle": "", "arguments": [], "erreur": false}
 
 
 func _ready() -> void:
-	get_tree().root.content_scale_size = ReglesBataille.TAILLE_ECRAN
+	Regles.appliquer_ecran(get_tree(), ReglesBataille.TAILLE_ECRAN)
 	champ_pseudo.max_length = Reseau.PSEUDO_MAX
 	champ_pseudo.text = Reseau.pseudo_valide(str(Scores.preference("pseudo", "")))
 	Decouverte.parties_changees.connect(_afficher_parties)

@@ -1,10 +1,15 @@
-[gd_scene load_steps=4 format=3 uid="uid://dlelioncoeur0"]
+[gd_scene load_steps=5 format=3 uid="uid://dlelioncoeur0"]
 
 [ext_resource type="Texture2D" path="res://Assets/Sprites/coeur.png" id="1_coeur"]
 [ext_resource type="Script" path="res://Scripts/CoeurPickup.gd" id="2_coeur"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_coeur"]
 radius = 30.0
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_synchro"]
+properties/0/path = NodePath(".:position")
+properties/0/spawn = true
+properties/0/replication_mode = 0
 
 [node name="CoeurPickup" type="Area2D" groups=["coeur_pickup"]]
 script = ExtResource("2_coeur")
@@ -15,5 +20,8 @@ texture = ExtResource("1_coeur")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("CircleShape2D_coeur")
+
+[node name="Synchro" type="MultiplayerSynchronizer" parent="."]
+replication_config = SubResource("SceneReplicationConfig_synchro")
 
 [connection signal="body_entered" from="." to="." method="_on_body_entered"]

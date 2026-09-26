@@ -34,6 +34,10 @@ func _run() -> void:
 	_tester_decouverte()
 	_tester_bataille_reseau()
 	_tester_salon()
+	_tester_peinture()
+	_tester_territoire_reseau()
+	_tester_joueur_replique()
+	_tester_reseau_manche()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -212,6 +216,19 @@ func _tester_commandes() -> void:
 	m.direction_voulue = Vector2(3, 4)
 	_check(is_equal_approx(m.direction().length(), 1.0) and m.direction().is_equal_approx(Vector2(0.6, 0.8)),
 		"direction() borne les commandes manuelles à une longueur de 1")
+	# Phase 14 : le menu local d'une manche en réseau suspend les commandes de ce poste
+	Input.action_press("deplacer_gauche")
+	Input.action_press("vomir")
+	m.vomir_voulu = true
+	l.suspendues = true
+	m.suspendues = true
+	_check(l.direction() == Vector2.ZERO and not l.vomir() and m.direction() == Vector2.ZERO and not m.vomir(),
+		"des commandes suspendues (menu local ouvert) valent le repos, quelle que soit leur source")
+	l.suspendues = false
+	m.suspendues = false
+	_check(l.direction().x < -0.99 and l.vomir() and m.vomir(), "levée la suspension, elles lisent de nouveau leur source")
+	Input.action_release("deplacer_gauche")
+	Input.action_release("vomir")
 
 
 func _tester_regles_solo() -> void:
@@ -1477,3 +1494,244 @@ func _tester_salon() -> void:
 	_check(reseau.table_salon.is_empty() and reseau.niveau_salon == 0 and reseau.places_salon == EtatPartie.NB_JOUEURS_MAX,
 		"quitter() oublie la table du salon")
 	reseau.pseudo = ""
+
+
+## Phase 14 : la peinture identique sur chaque poste (jeux de tampons tirés de leur clé, tirage d'un
+## tampon par sa graine) et le format réseau des tampons.
+func _tester_peinture() -> void:
+	print("-- Peinture (jeux de tampons, tirage, format réseau des tampons)")
+	var nuances: Array[Color] = [Color(0.5, 0.1, 0.0), Color(0.81, 0.14, 0.01), Color(0.9, 0.5, 0.4)]
+	seed(1)
+	var jeu_a := Peinture.generer_tampons(21, nuances)
+	seed(2)
+	randi()
+	var jeu_b := Peinture.generer_tampons(21, nuances)
+	var memes := jeu_a.size() == Peinture.NB_TAMPONS and jeu_b.size() == Peinture.NB_TAMPONS
+	for i in range(mini(jeu_a.size(), jeu_b.size())):
+		memes = memes and jeu_a[i].get_data() == jeu_b[i].get_data()
+	_check(memes and jeu_a[0].get_width() == 43, "un jeu de tampons est le même d'un poste à l'autre, quel que soit le hasard global (graine tirée de sa clé)")
+	_check(jeu_a[0].get_data() != jeu_a[1].get_data(), "les variantes d'un même jeu diffèrent")
+	var autres: Array[Color] = [Color(0.1, 0.2, 0.6), Color(0.24, 0.38, 1.0), Color(0.5, 0.6, 1.0)]
+	_check(Peinture.generer_tampons(21, autres)[0].get_data() != jeu_a[0].get_data(), "un autre jeu de couleurs donne d'autres tampons")
+	seed(3)
+	var etat_global := randi()
+	seed(3)
+	Peinture.generer_tampons(16, nuances)
+	Peinture.tirage(12345, 16, 3)
+	_check(randi() == etat_global, "générer un jeu et tirer un tampon ne consomment pas le hasard global (Spawner, ennemis)")
+	_check(Peinture.tirage(40000, 30, 3) == Peinture.tirage(40000, 30, 3) and Peinture.tirage(40000, 30, 3) != Peinture.tirage(40001, 30, 3),
+		"le tirage d'un tampon ne dépend que de sa graine (le même sur chaque poste)")
+	var coulures := 0
+	var bornes := true
+	for graine in range(2000):
+		var t := Peinture.tirage(graine, 30, 3)
+		coulures += 1 if t.coulure else 0
+		bornes = bornes and t.variante >= 0 and t.variante < Peinture.NB_TAMPONS and t.dx >= -30 and t.dx <= 30 \
+			and t.dy >= 0 and t.dy <= 30 and t.longueur >= 14 and t.longueur <= 44 and t.couleur >= 0 and t.couleur < 3
+	_check(bornes and absf(coulures / 2000.0 - Peinture.CHANCE_COULURE) < 0.04,
+		"tirages dans leurs bornes, une coulure pour %.0f %% des tampons (%d sur 2000)" % [Peinture.CHANCE_COULURE * 100.0, coulures])
+	var lot: Array[Dictionary] = [
+		{"index": 0, "x": 1000, "y": 150, "rayon": 16, "graine": 0},
+		{"index": 5, "x": -40, "y": -12, "rayon": 92, "graine": Peinture.GRAINE_MAX},
+		{"index": 3, "x": 2010, "y": 330, "rayon": 46, "graine": 777},
+	]
+	var octets := Peinture.encoder_tampons(lot)
+	_check(octets.size() == 3 * Peinture.OCTETS_PAR_TAMPON and Peinture.decoder_tampons(octets) == lot,
+		"un lot de tampons fait 8 octets par tampon et se relit à l'identique, dans l'ordre, centres négatifs compris (i16)")
+	var hors_plage: Array[Dictionary] = [{"index": 1, "x": 40000, "y": -40000, "rayon": 300, "graine": 70000}]
+	_check(Peinture.decoder_tampons(Peinture.encoder_tampons(hors_plage)) == [{"index": 1, "x": 32767, "y": -32768, "rayon": 255, "graine": 65535}],
+		"des valeurs hors de leur plage sont ramenées dans leurs bornes, jamais bouclées")
+	var tronque := octets.slice(0, 7)
+	var mauvais_joueur := octets.duplicate()
+	mauvais_joueur.encode_u8(Peinture.OCTETS_PAR_TAMPON, EtatPartie.NB_JOUEURS_MAX)
+	_check(Peinture.decoder_tampons(tronque).is_empty() and Peinture.decoder_tampons(mauvais_joueur).is_empty()
+		and Peinture.decoder_tampons("tampons").is_empty() and Peinture.decoder_tampons(PackedByteArray()).is_empty(),
+		"un lot tronqué, un index de joueur hors plage ou autre chose qu'un lot d'octets est ignoré en entier")
+
+
+## Phase 14 : le territoire d'un client suit celui de l'hôte par la liste des cellules changées.
+func _tester_territoire_reseau() -> void:
+	print("-- Territoire en réseau (cellules changées, scores)")
+	var taille := Vector2i(20, 6)
+	var peignables := PackedByteArray()
+	peignables.resize(taille.x * taille.y)
+	peignables.fill(1)
+	peignables[0] = 0
+	var hote := Territoire.new(taille, peignables, 8)
+	var client := Territoire.new(taille, peignables, 8)
+	for i in range(3):
+		hote.tamponner(0, Vector2i(40, 24), 20)
+		hote.tamponner(1, Vector2i(100, 24), 20)
+	var premier := hote.extraire_changements()
+	_check(client.appliquer_changements(hote.encoder_changements(premier)) and premier.size() > 0,
+		"(pré-condition) des cellules changées chez l'hôte, appliquées chez le client")
+	for i in range(6):
+		hote.tamponner(1, Vector2i(56, 24), 20)  # le joueur 1 vole une partie des cellules du joueur 0
+	hote.tamponner(2, Vector2i(140, 30), 12)  # une passe qui ne suffit pas à compter
+	var second := hote.extraire_changements()
+	var octets := hote.encoder_changements(second)
+	_check(octets.size() == second.size() * Territoire.OCTETS_PAR_CHANGEMENT and client.appliquer_changements(octets),
+		"3 octets par cellule changée (index u16, propriétaire compté u8)")
+	var memes := true
+	for i in range(peignables.size()):
+		memes = memes and client.proprietaire_compte(i) == hote.proprietaire_compte(i)
+	_check(memes and client.scores() == hote.scores() and client.cellules_de(0) == hote.cellules_de(0)
+		and client.cellules_de(1) == hote.cellules_de(1) and hote.cellules_de(0) > 0 and hote.cellules_de(1) > 0,
+		"le client a le même propriétaire compté par cellule et les mêmes scores que l'hôte (%s)" % [client.scores()])
+	var avant := client.scores()
+	var mauvaise_cellule := PackedByteArray([0, 0, 1])  # la cellule 0 n'est pas peignable
+	var hors_grille := PackedByteArray([0xFF, 0xFF, 1])
+	var mauvais_joueur := PackedByteArray([5, 0, EtatPartie.NB_JOUEURS_MAX + 1])
+	_check(not client.appliquer_changements(mauvaise_cellule) and not client.appliquer_changements(hors_grille)
+		and not client.appliquer_changements(mauvais_joueur) and not client.appliquer_changements(PackedByteArray([1, 0]))
+		and not client.appliquer_changements(octets.slice(0, 3) + PackedByteArray([0xFF, 0xFF, 1])) and client.scores() == avant,
+		"un lot mal formé (cellule non peignable ou hors grille, joueur hors plage, taille tronquée) est refusé sans rien changer")
+	var vide := client.extraire_changements()
+	_check(vide.is_empty(), "appliquer les changements de l'hôte n'en crée pas d'autres chez le client")
+
+
+
+## Phase 14 : chez un client, les réactions des joueurs viennent de l'hôte (signaux compris), qui seul
+## décompte leurs minuteries ; la fenêtre suit le format de l'écran.
+func _tester_joueur_replique() -> void:
+	print("-- Joueur répliqué (réactions reçues de l'hôte, minuteries de l'hôte)")
+	var j := Joueur.new()
+	j.reinitialiser(3)
+	var journal: Array[String] = []
+	j.crans_changes.connect(func(c: int) -> void: journal.append("crans:%d" % c))
+	j.etourdissement_fini.connect(func() -> void: journal.append("fin_etourdi"))
+	j.bonus_change.connect(func(actif: bool) -> void: journal.append("bonus:%s" % actif))
+	j.recevoir_crans(4)
+	j.recevoir_crans(4)
+	j.recevoir_crans(99)
+	_check(journal == ["crans:4", "crans:%d" % Joueur.CRANS_MAX] and j.crans == Joueur.CRANS_MAX,
+		"les crans de l'hôte sont posés et signalés une fois, dans leurs bornes (%s)" % [journal])
+	journal.clear()
+	j.recevoir_fin_etourdissement(0.5)
+	j.etourdir(1.5, 1.0, Vector2.INF, Color.RED)
+	j.recevoir_fin_etourdissement(0.97)
+	j.recevoir_fin_etourdissement(0.9)
+	_check(journal == ["fin_etourdi"] and not j.est_etourdi() and is_equal_approx(j.invulnerable_restant, 0.97),
+		"la fin d'étourdissement de l'hôte n'est signalée qu'à un joueur étourdi, une fois, avec l'immunité qui reste chez l'hôte")
+	journal.clear()
+	j.recevoir_fin_bonus()
+	j.activer_bonus(8.0)
+	j.recevoir_fin_bonus()
+	j.recevoir_fin_bonus()
+	_check(journal == ["bonus:true", "bonus:false"] and not j.bonus_actif(), "la fin de la gerbe XXL de l'hôte est signalée une fois (%s)" % [journal])
+
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	gs.pret = true
+	var joueur: Joueur = gs.joueurs[1]
+	joueur.etourdir(1.5, 1.0, Vector2.INF, Color.RED)
+	var fins: Array[int] = []
+	var sur_fin := func() -> void: fins.append(1)
+	joueur.etourdissement_fini.connect(sur_fin)
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17795) == OK, "(pré-condition) GameState sur un pair client")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	gs._process(2.0)
+	_check(is_equal_approx(gs.temps_ecoule, 2.0) and joueur.est_etourdi() and is_equal_approx(joueur.etourdi_restant, 1.5) and fins.is_empty(),
+		"sur un client, le chrono tourne mais les minuteries des joueurs attendent l'hôte (aucune fin émise)")
+	set_multiplayer(null, gs.get_path())
+	pair.close()
+	gs._process(2.0)
+	_check(not joueur.est_etourdi() and fins.size() == 1, "sur l'hôte (hors réseau compris), GameState décompte les minuteries des joueurs")
+	joueur.etourdissement_fini.disconnect(sur_fin)
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+	_check(Regles.taille_fenetre(ReglesBataille.TAILLE_ECRAN, Vector2i(1400, 454)) == Vector2i(1400, 788)
+		and Regles.taille_fenetre(Regles.TAILLE_ECRAN_SOLO, Vector2i(1400, 788)) == Vector2i(1400, 454),
+		"hors du solo, la fenêtre prend le format 16:9 (1400×788), et le reprend du solo au retour (1400×454)")
+
+
+
+## Phase 14 : ce que `Reseau` ajoute pour la manche (relais du serveur coupé, fiches revérifiées au
+## lancement, silences, barrière de chargement, départ propre).
+func _tester_reseau_manche() -> void:
+	print("-- Réseau de la manche (relais, lancement revérifié, silences, scènes chargées, départ)")
+	var reseau: Node = root.get_node("Reseau")
+	var api := root.multiplayer as SceneMultiplayer
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(17788) == OK and not api.server_relay and reseau.silence == reseau.SILENCE_SESSION,
+		"l'hôte écoute, sans relais entre clients (M5), silence de session")
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob", "arrive": true, "pret": true}
+	reseau.inscrits[9] = {"index": 3, "couleur": palette[2], "pseudo": "Chloé", "arrive": true, "pret": true}
+	var hote: Dictionary = reseau.inscrits[1]
+	reseau.inscrits.erase(1)  # une table où l'hôte n'est plus : `fiches_de_manche` la refuse
+	var lancees: Array = []
+	var sur_lancement := func(f: Array[Dictionary]) -> void: lancees.append(f)
+	reseau.manche_lancee.connect(sur_lancement)
+	_check(reseau.salon_pret(reseau.inscrits) and not reseau.lancer_manche() and not reseau.manche_en_cours and lancees.is_empty()
+		and reseau.inscrits[9].index == 3 and reseau.silence == reseau.SILENCE_SESSION,
+		"M1 : des fiches de manche incohérentes font refuser le lancement sans rien changer, même quand le salon est prêt (ligne ERROR attendue)")
+	hote.pret = true
+	reseau.inscrits[1] = hote
+	reseau.signaler_scene_chargee()
+	_check(reseau.lancer_manche() and reseau.manche_en_cours and lancees.size() == 1 and reseau.scenes_chargees.is_empty()
+		and reseau.silence == reseau.SILENCE_CHARGEMENT,
+		"au lancement : plus aucune scène chargée d'une manche précédente, silence de chargement")
+	var chargees: Array[int] = []
+	var sur_scene := func(id: int) -> void: chargees.append(id)
+	reseau.scene_chargee.connect(sur_scene)
+	reseau.signaler_scene_chargee()
+	reseau.signaler_scene_chargee()
+	_check(reseau.scenes_chargees == [1] and chargees == [1], "chez l'hôte, sa scène chargée est notée et signalée une fois")
+	reseau.scene_chargee.disconnect(sur_scene)
+	reseau.manche_lancee.disconnect(sur_lancement)
+	reseau.definir_silence(reseau.SILENCE_SESSION)
+	_check(reseau.silence == reseau.SILENCE_SESSION, "fin du chargement : silence de session")
+	reseau.quitter()
+	_check(reseau.scenes_chargees.is_empty() and reseau._partants.is_empty() and reseau.heberger(17788) == OK,
+		"quitter oublie les scènes chargées ; sans autre poste connecté, le port se libère aussitôt")
+	# Un autre poste connecté au niveau d'ENet (sa poignée de main ne finit jamais) : un départ propre
+	# le prévient par un DISCONNECT fiable, renvoyé jusqu'à son accusé de réception.
+	var autre := ENetMultiplayerPeer.new()
+	_check(autre.create_client("127.0.0.1", 17788) == OK, "(pré-condition) un autre poste se connecte à l'hôte")
+	_check(_connecter(autre, reseau), "(pré-condition) connecté au niveau d'ENet")
+	reseau.quitter()
+	_check(reseau._partants.size() == 1 and not reseau.en_ligne(), "quitter avec un poste connecté : ce poste est hors réseau, son départ part en arrière-plan")
+	var prevenu := false
+	for i in range(200):
+		autre.poll()
+		reseau._process(0.0)
+		if autre.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED and reseau._partants.is_empty():
+			prevenu = true
+			break
+		OS.delay_msec(5)
+	_check(prevenu, "l'autre poste reçoit le départ, qui est clos une fois reçu")
+	autre = ENetMultiplayerPeer.new()
+	_check(reseau.heberger(17788) == OK and autre.create_client("127.0.0.1", 17788) == OK, "(pré-condition) l'hôte rouvre, l'autre poste se reconnecte")
+	var connecte := _connecter(autre, reseau)
+	reseau.quitter()
+	_check(connecte and reseau._partants.size() == 1 and reseau.heberger(17788) == OK and reseau._partants.is_empty(),
+		"héberger aussitôt après un départ en cours : le port de la session quittée est libéré d'abord")
+	reseau.quitter()
+	autre.close()
+	reseau.pseudo = ""
+
+
+
+## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
+## côtés (l'hôte la tient pour établie à l'accusé de réception de sa réponse) ; 1 s au plus.
+func _connecter(autre: ENetMultiplayerPeer, reseau: Node) -> bool:
+	var tours_apres := -1
+	for i in range(200):
+		autre.poll()
+		reseau.multiplayer.poll()
+		if tours_apres < 0 and autre.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+			tours_apres = 0
+		if tours_apres >= 0:
+			tours_apres += 1
+			if tours_apres > 10:
+				return true
+		OS.delay_msec(5)
+	return false

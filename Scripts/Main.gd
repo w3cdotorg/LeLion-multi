@@ -1,6 +1,13 @@
 extends Node2D
 ## Racine de la partie : met l'écran à la taille du mode, place la ville, le ciel, la caméra et
 ## un lion par joueur, écoute la fin de partie et affiche le bilan du solo.
+## En réseau (phase 14), la manche synchronisée (`Manche`) passe entre l'hôte et les clients : le
+## lion de la scène (celui du solo) est retiré, tous les lions apparaissent par le
+## `MultiplayerSpawner` de la scène (`Apparitions`, par l'index de leur joueur, sa `spawn_function`
+## leur donnant joueur et commandes avant l'ajout), comme les ennemis et les pastilles que fait
+## apparaître le Spawner de l'hôte ; lions, Spawner et intro attendent la barrière de chargement.
+## Échap y ouvre un menu local qui ne met pas la partie en pause ; un hôte perdu ramène au titre
+## après son message.
 
 @export var game_over_scene: PackedScene
 
@@ -13,15 +20,24 @@ extends Node2D
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const SCRIPT_PILOTE := preload("res://Scripts/Pilote.gd")
 const SCENE_LION := preload("res://Scenes/Lion.tscn")
+## Temps pendant lequel « L'hôte a quitté la partie » reste affiché avant le retour au titre.
+const DELAI_HOTE_PERDU := 2.5
 
 @onready var ville: Node2D = $Ville
-@onready var lion: Lion = $Lion
 @onready var camera: Camera2D = $Camera
 @onready var ciel: TextureRect = $Ciel
+@onready var apparitions: MultiplayerSpawner = $Apparitions
+@onready var manche: Node = $Manche
+@onready var menu_pause: CanvasLayer = $PauseMenu
 
-## Un lion par joueur, dans l'ordre de `GameState.joueurs` : le premier est celui de la scène,
-## le lion du joueur local.
+## Le lion du joueur local : celui de la scène hors réseau ; en réseau, celui qui apparaît pour le
+## joueur de ce poste (null avant son apparition).
+var lion: Lion
+## Un lion par joueur, dans l'ordre de `GameState.joueurs` (des index) : hors réseau, le premier est
+## celui de la scène, le lion du joueur local ; en réseau, ceux qui ont apparu, sans les partis.
 var lions: Array[Lion] = []
+## Vrai pour une bataille en réseau (fixé en entrant dans l'arbre).
+var en_reseau := false
 
 var _tremblement_restant := 0.0
 var _demo_restant := 0.0
@@ -36,8 +52,11 @@ const ACTIONS_DE_JEU := ["deplacer_gauche", "deplacer_droite", "deplacer_haut", 
 func _enter_tree() -> void:
 	for action in ACTIONS_DE_JEU:
 		Input.action_release(action)
-	get_tree().root.content_scale_size = GameState.regles.taille_ecran()
+	Regles.appliquer_ecran(get_tree(), GameState.regles.taille_ecran())
 	GameState.nouvelle_partie()
+	en_reseau = Reseau.en_ligne()
+	# Avant le `_ready` de l'intro : en réseau, elle attend la barrière de chargement.
+	$Intro.automatique = not en_reseau
 
 
 func _ready() -> void:
@@ -48,9 +67,128 @@ func _ready() -> void:
 	ville.charger_skyline(load(GameState.niveau().texture))
 	_placer_ville()
 	_placer_ciel_et_camera()
+	if en_reseau:
+		_preparer_manche_en_reseau()
+		return
+	lion = $Lion
 	_ajouter_lions()
+	$Spawner.demarrer()
 	if GameState.demo:
 		_installer_demo()
+
+
+## En réseau : le lion de la scène (celui du solo) s'en va avant tout tick, les lions viendront
+## d'`apparitions` ; la manche commence (barrière de chargement).
+func _preparer_manche_en_reseau() -> void:
+	var lion_du_solo: Node = $Lion
+	remove_child(lion_du_solo)
+	lion_du_solo.free()
+	apparitions.spawn_function = _creer_lion
+	apparitions.spawned.connect(_sur_apparition)
+	manche.barriere_passee.connect(_sur_barriere_passee)
+	manche.joueur_parti.connect(_sur_joueur_parti)
+	menu_pause.visibility_changed.connect(_suspendre_commandes)
+	# M2 (revue finale) : `Reseau.hote_perdu` peut aussi partir chez l'hôte (son propre pair ENet en
+	# erreur, N4 de `Reseau.gd`) ; sans ce branchement, l'hôte continuait seul une manche que
+	# personne ne recevait plus, sans aucun message.
+	Reseau.hote_perdu.connect(_sur_hote_perdu)
+	manche.demarrer(ville)
+
+
+## La `spawn_function` d'`apparitions`, sur chaque poste : le lion du joueur d'index `index`, avec
+## son joueur et ses commandes avant l'ajout à l'arbre (celles de ce poste pour le joueur local,
+## manuelles pour les autres), à sa place de départ.
+func _creer_lion(index: Variant) -> Node:
+	if not (index is int) or index < 0 or index >= GameState.joueurs.size():
+		push_error("Main : apparition d'un lion pour un index inconnu (%s)" % [index])
+		return null
+	var joueur: Joueur = GameState.joueurs[index]
+	var nouveau: Lion = SCENE_LION.instantiate()
+	nouveau.name = "Lion%d" % (index + 1)
+	nouveau.joueur = joueur
+	nouveau.commandes = Commandes.locales() if joueur == GameState.joueur_local() else Commandes.manuelles()
+	nouveau.position = _position_de_depart(index, GameState.joueurs.size())
+	return nouveau
+
+
+## Barrière passée : chez l'hôte, un lion par joueur encore là, puis les apparitions du Spawner ; sur
+## chaque poste, l'intro.
+func _sur_barriere_passee() -> void:
+	if multiplayer.is_server():
+		for i in range(GameState.joueurs.size()):
+			if manche.joue(i):
+				_enregistrer_lion(apparitions.spawn(i))
+		$Spawner.demarrer()
+	$Intro.lancer()
+
+
+## Chez un client : un nœud apparu par `apparitions` (un lion, ou un ennemi, une pastille).
+func _sur_apparition(noeud: Node) -> void:
+	if noeud is Lion:
+		_enregistrer_lion(noeud)
+
+
+func _enregistrer_lion(nouveau: Lion) -> void:
+	lions.append(nouveau)
+	lions.sort_custom(func(a: Lion, b: Lion) -> bool: return a.joueur.index < b.joueur.index)
+	if nouveau.joueur == GameState.joueur_local():
+		lion = nouveau
+		_suspendre_commandes()
+	manche.suivre_lion(nouveau)
+	nouveau.tree_exited.connect(_oublier_lion.bind(nouveau))
+
+
+func _oublier_lion(parti: Lion) -> void:
+	lions.erase(parti)
+	if lion == parti:
+		lion = null
+
+
+## Chez l'hôte : le joueur d'index `index` a quitté la manche ; son lion s'en va chez tous (sa
+## disparition est répliquée), ses cellules restent au territoire.
+func _sur_joueur_parti(index: int) -> void:
+	for l in lions:
+		if l.joueur.index == index:
+			l.queue_free()
+
+
+## Menu local ouvert pendant une manche en réseau : les commandes de ce poste valent le repos.
+func _suspendre_commandes() -> void:
+	if lion != null:
+		lion.commandes.suspendues = menu_pause.visible
+
+
+## L'hôte est parti, vu d'un client, ou son propre pair ENet en erreur chez l'hôte lui-même (M2 de
+## la revue finale) : ce poste est déjà hors réseau. Tout se fige sous le message, puis retour au
+## titre (spec §9).
+func _sur_hote_perdu() -> void:
+	# M1 (revue finale) : ce poste est déjà hors réseau (`Reseau.en_ligne()` est faux) ; sans ceci,
+	# Échap ouvrirait le menu local par-dessus le message (il se croit encore hors ligne comme en
+	# solo) puis un second Échap dépauserait l'arbre en le refermant, repartant la ville figée.
+	menu_pause.hide()
+	menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
+	var couche := CanvasLayer.new()
+	couche.name = "HotePerdu"
+	couche.layer = 10
+	couche.process_mode = Node.PROCESS_MODE_ALWAYS
+	var message := Label.new()
+	message.name = "Message"
+	message.text = "RESEAU_HOTE_PERDU"
+	message.add_theme_font_size_override("font_size", 56)
+	message.add_theme_color_override("font_outline_color", Color(0.1, 0.05, 0.15))
+	message.add_theme_constant_override("outline_size", 10)
+	message.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	message.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	message.grow_vertical = Control.GROW_DIRECTION_BOTH
+	couche.add_child(message)
+	add_child(couche)
+	get_tree().paused = true
+	get_tree().create_timer(DELAI_HOTE_PERDU, true).timeout.connect(_revenir_au_titre)
+
+
+func _revenir_au_titre() -> void:
+	get_tree().paused = false
+	get_tree().change_scene_to_file(SCENE_TITRE)
 
 
 ## Attract mode : un pilote automatique joue, une étiquette clignote, toute touche ramène au titre.
@@ -131,10 +269,14 @@ func _ajouter_lions() -> void:
 
 ## Centres des lions régulièrement espacés sur la largeur, tous à la même hauteur.
 func _repartir_lions() -> void:
-	var taille := get_viewport_rect().size
 	for i in range(lions.size()):
-		var centre_x := taille.x * (i + 0.5) / lions.size()
-		lions[i].position = Vector2(centre_x - Lion.CENTRE.x, taille.y * hauteur_depart_lions)
+		lions[i].position = _position_de_depart(i, lions.size())
+
+
+## Place de départ du lion `i` sur `nb` : centres régulièrement espacés sur la largeur, en haut du ciel.
+func _position_de_depart(i: int, nb: int) -> Vector2:
+	var taille := get_viewport_rect().size
+	return Vector2(taille.x * (i + 0.5) / nb - Lion.CENTRE.x, taille.y * hauteur_depart_lions)
 
 
 func _process(delta: float) -> void:

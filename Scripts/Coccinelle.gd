@@ -11,6 +11,8 @@ var start_y := 0.0
 
 
 func _ready() -> void:
+	if est_replique():
+		return
 	start_y = position.y
 	speed = randf_range(80.0, 180.0)
 	frequency = randf_range(0.5, 3.0)
@@ -20,6 +22,8 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if est_replique():
+		return
 	time += delta
 	position.x -= speed * delta
 

@@ -1,5 +1,8 @@
 extends CanvasLayer
 ## Menu de pause : Échap (ou Start) l'ouvre et le ferme ; Continuer / Revenir au menu.
+## En réseau (spec §4), un menu local : il ne met pas la partie en pause (elle continue chez tous ;
+## la scène de jeu suspend les commandes de ce poste tant qu'il est ouvert), et « Quitter la
+## partie » ramène au titre, qui quitte le réseau.
 
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const SCENE_REGLAGES := preload("res://Scenes/Reglages.tscn")
@@ -8,6 +11,12 @@ const SCENE_REGLAGES := preload("res://Scenes/Reglages.tscn")
 @onready var bouton_reglages: Button = $Centre/Colonne/Reglages
 
 var _reglages_ouverts := false
+
+
+func _ready() -> void:
+	if Reseau.en_ligne():
+		$Centre/Colonne/Titre.text = "PAUSE_RESEAU"
+		$Centre/Colonne/Menu.text = "QUITTER_PARTIE"
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -21,7 +30,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func ouvrir() -> void:
-	get_tree().paused = true
+	if not Reseau.en_ligne():
+		get_tree().paused = true
 	visible = true
 	Audio.arreter_vomi()
 	bouton_continuer.grab_focus()
@@ -29,7 +39,8 @@ func ouvrir() -> void:
 
 func reprendre() -> void:
 	visible = false
-	get_tree().paused = false
+	if not Reseau.en_ligne():
+		get_tree().paused = false
 
 
 func ouvrir_reglages() -> void:
