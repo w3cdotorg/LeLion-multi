@@ -777,6 +777,15 @@ func _tester_reseau() -> void:
 	_check(reseau.pseudo_valide("  Léa\n\t ") == "Léa" and reseau.pseudo_valide("Zoé la grande dompteuse") == "Zoé la grand"
 		and reseau.pseudo_valide("Zoé la grande dompteuse").length() == reseau.PSEUDO_MAX,
 		"le pseudo est nettoyé (contrôles, espaces) et coupé à %d caractères" % reseau.PSEUDO_MAX)
+	var brut := "a" + char(0x007F) + "b" + char(0x009C) + "c" + char(0x200B) + "d" + char(0x202E) \
+		+ "e" + char(0x2028) + "f" + char(0xFEFF) + "g"
+	_check(reseau.pseudo_valide(brut) == "abcdefg",
+		"le pseudo est aussi nettoyé du DEL, des contrôles C1, des forçages de sens et des caractères invisibles")
+	_check(reseau.pseudo_valide("abcdefghijk lmn") == "abcdefghijk",
+		"la coupe à %d caractères ne laisse pas d'espace finale (nettoyage après la coupe)" % reseau.PSEUDO_MAX)
+	_check(reseau.pseudo_valide("   \n\t  ") == "", "un pseudo qui ne contient rien d'affichable devient une chaîne vide")
+	_check(reseau.pseudo_ou_defaut("   ", 3) == "Joueur 4" and reseau.pseudo_ou_defaut("Zita", 3) == "Zita",
+		"un pseudo vide après nettoyage retombe sur « Joueur N » (N = index + 1) ; un pseudo valable reste inchangé")
 
 	# Décision de l'hôte sur une demande
 	var version: String = reseau.version
@@ -813,6 +822,20 @@ func _tester_reseau() -> void:
 		var reponse: Dictionary = reseau.examiner_demande(d)
 		return not reponse.accepte and reponse.raison == reseau.REFUS_DEMANDE)
 	_check(refus_demande, "une demande mal formée ou d'un autre programme est refusée, sans erreur")
+	var demande_vide := {"jeu": reseau.JEU, "version": version, "pseudo": "   "}
+	var r_vide: Dictionary = reseau.examiner_demande(demande_vide)
+	_check(r_vide.accepte and r_vide.pseudo == "Joueur %d" % (r_vide.index + 1),
+		"un pseudo vide après nettoyage est accepté avec un repli « Joueur N » (%s)" % [r_vide])
+
+	# Taille de la poignée de main avant décodage : bytes_to_var ne doit rien coûter pour un envoi
+	# trop gros (M2), quel qu'en soit le contenu.
+	var petite := var_to_bytes(demande)
+	_check(reseau.decoder_poignee_de_main(petite) == demande,
+		"une poignée de main de taille normale (%d octets) se décode normalement" % petite.size())
+	var enorme := PackedByteArray()
+	enorme.resize(reseau.TAILLE_POIGNEE_DE_MAIN_MAX + 1)
+	_check(reseau.decoder_poignee_de_main(enorme) == null,
+		"une poignée de main de plus de %d octets n'est pas décodée" % reseau.TAILLE_POIGNEE_DE_MAIN_MAX)
 
 	# Départs vus par l'hôte
 	var partis: Array[int] = []
@@ -844,4 +867,41 @@ func _tester_reseau() -> void:
 	_check(not reseau.en_ligne() and api.multiplayer_peer is OfflineMultiplayerPeer and api.is_server()
 		and reseau.inscrits.is_empty() and reseau.index_local == -1 and api.auth_callback.is_null(),
 		"quitter revient hors réseau : pair hors ligne, hôte de soi-même, plus d'inscrits ni de poignée de main")
+
+	# places est bornée à l'hébergement (N3) : sinon un hôte à 0 place ne trouverait pas d'index
+	reseau.places = 0
+	_check(reseau.heberger(port) == OK and reseau.places == 2 and reseau.index_local == 0,
+		"places <= 0 est bornée à 2 par heberger() : l'hôte trouve tout de même son index")
+	reseau.quitter()
+	reseau.places = EtatPartie.NB_JOUEURS_MAX + 5
+	_check(reseau.heberger(port) == OK and reseau.places == EtatPartie.NB_JOUEURS_MAX,
+		"places au-delà de NB_JOUEURS_MAX est bornée à NB_JOUEURS_MAX par heberger()")
+	reseau.quitter()
+	reseau.places = places
+	reseau.manche_en_cours = true
+	reseau.quitter()
+	_check(not reseau.manche_en_cours and reseau.examiner_demande(demande).accepte,
+		"quitter() remet manche_en_cours à faux : un hôte relancé après une manche quittée accepte de nouveau")
+
+	# Pseudo vide à l'hébergement : l'hôte s'inscrit lui-même avec le repli « Joueur 1 »
+	reseau.pseudo = ""
+	_check(reseau.heberger(port) == OK and reseau.inscrits[1].pseudo == "Joueur 1",
+		"un hôte au pseudo vide s'inscrit lui-même avec le repli « Joueur 1 »")
+
+	# Fermeture différée obsolète (M5) : si une nouvelle session commence avant qu'un appel différé
+	# de _decider ne s'exécute, il ne doit ni la fermer, ni émettre son signal périmé.
+	reseau.pseudo = "Hôte"
+	reseau.heberger(port)
+	var generation_perimee: int = reseau._generation
+	var refus_recu := false
+	var sur_refus_perime := func(_r: String, _v: String) -> void: refus_recu = true
+	reseau.refuse.connect(sur_refus_perime)
+	reseau.quitter()
+	reseau.heberger(port)  # une nouvelle session a démarré entre-temps : sa génération a changé
+	_check(reseau._generation != generation_perimee, "la génération change à chaque quitter() (donc à chaque nouvelle session)")
+	reseau._fermer_puis_emettre("refuse", ["x", "y"], generation_perimee)
+	_check(not refus_recu and reseau.en_ligne() and reseau.inscrits.size() == 1,
+		"une fermeture différée obsolète (génération périmée) ne ferme pas la nouvelle session ni n'émet son signal")
+	reseau.refuse.disconnect(sur_refus_perime)
+	reseau.quitter()
 	reseau.pseudo = ""

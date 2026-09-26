@@ -32,7 +32,10 @@ signal refuse(raison: String, version_hote: String)
 ## est déjà revenu hors réseau quand le signal part.
 signal connexion_echouee()
 ## Chez le client : l'hôte a quitté la partie ou ne répond plus. Le poste est déjà revenu hors
-## réseau quand le signal part.
+## réseau quand le signal part. N4 : si le pair ENet de l'hôte tombe lui-même en erreur, ce même
+## signal part aussi chez l'hôte (server_disconnected n'y distingue pas les deux cas) ; personne ne
+## l'écoute encore côté hôte à cette phase, mais un futur appelant ne doit pas supposer « jamais
+## chez l'hôte ».
 signal hote_perdu()
 
 const PORT := 7777
@@ -45,9 +48,14 @@ const DELAI_POIGNEE_DE_MAIN := 3.0
 ## Longueur maximale d'un pseudo, en caractères, imposée par l'hôte (l'étiquette du lion est
 ## centrée sur lui et coupée par le bord de l'écran au-delà d'une douzaine de caractères).
 const PSEUDO_MAX := 12
-## Connexions ENet acceptées au-delà des places : de quoi recevoir, et refuser explicitement, les
-## demandes d'une partie pleine au lieu de les laisser échouer sans explication.
+## Connexions ENet (`max_clients`) acceptées au-delà de `places` : l'hôte ne consomme pas de
+## connexion vers lui-même, donc `places - 1` suffiraient aux vrais clients ; ce solde donne de quoi
+## recevoir, et refuser explicitement, les demandes d'une partie déjà pleine au lieu de les laisser
+## échouer sans explication côté ENet (N1 : la marge réelle est donc de CONNEXIONS_EN_TROP + 1).
 const CONNEXIONS_EN_TROP := 2
+## Taille maximale, en octets, d'un envoi de poignée de main : au-delà, `bytes_to_var` ne décode
+## pas (le coût du décodage doit rester borné, même pour un émetteur quelconque sur le port UDP).
+const TAILLE_POIGNEE_DE_MAIN_MAX := 1024
 const REFUS_VERSION := "RESEAU_REFUS_VERSION"
 const REFUS_PLEIN := "RESEAU_REFUS_PLEIN"
 const REFUS_MANCHE := "RESEAU_REFUS_MANCHE"
@@ -58,7 +66,9 @@ const REFUS_DEMANDE := "RESEAU_REFUS_DEMANDE"
 var version: String = ProjectSettings.get_setting("application/config/version", "")
 ## Pseudo de ce poste, présenté à l'hôte (ou inscrit tel quel quand ce poste héberge).
 var pseudo := ""
-## Nombre de joueurs d'une partie hébergée, hôte compris (au plus `EtatPartie.NB_JOUEURS_MAX`).
+## Nombre de joueurs d'une partie hébergée, hôte compris ; `heberger()` la borne à
+## [2, `EtatPartie.NB_JOUEURS_MAX`] (N3 : au-delà, `premier_index_libre` renverrait -1 pour l'hôte
+## lui-même).
 var places := EtatPartie.NB_JOUEURS_MAX
 ## Posé par la partie (phase 13 au lancement de la manche, phase 18 au retour au salon) : tant
 ## qu'il est vrai, l'hôte refuse tout nouveau venu (pas d'arrivée en cours de manche, spec §1).
@@ -73,6 +83,11 @@ var couleur_locale := Color.TRANSPARENT
 ## Vrai dès que l'issue d'une connexion est décidée (refus, échec, hôte perdu) : un seul signal
 ## part, même quand ENet signale ensuite la fermeture qui en découle.
 var _issue_decidee := false
+## Incrémenté à chaque `quitter()` (donc à chaque `heberger()` ou `rejoindre()`, qui commencent par
+## lui) : la génération de la session en cours. `_decider` capture la sienne avant de différer sa
+## fermeture ; si une nouvelle session a déjà commencé quand l'appel différé s'exécute, il ne doit
+## ni la fermer, ni émettre un signal qui ne la concerne plus.
+var _generation := 0
 var _delai: Timer
 
 
@@ -93,10 +108,13 @@ func _ready() -> void:
 	api.server_disconnected.connect(_sur_hote_perdu)
 
 
-## Héberge une partie sur `port`. Ce poste s'inscrit lui-même (index 0, première couleur).
-## Renvoie l'erreur d'ENet sans rien changer si le port est pris (spec §9 : « port occupé »).
+## Héberge une partie sur `port` : quitte d'abord toute session en cours, borne `places`, puis ce
+## poste s'inscrit lui-même (index 0, première couleur). Si le port est pris, renvoie l'erreur
+## d'ENet sans rien changer de plus (spec §9 : « port occupé ») : la session précédente reste
+## close, mais rien de neuf n'est créé.
 func heberger(port := PORT) -> Error:
 	quitter()
+	places = clampi(places, 2, EtatPartie.NB_JOUEURS_MAX)
 	var pair := ENetMultiplayerPeer.new()
 	var erreur := pair.create_server(port, places + CONNEXIONS_EN_TROP)
 	if erreur != OK:
@@ -105,7 +123,7 @@ func heberger(port := PORT) -> Error:
 	multiplayer.multiplayer_peer = pair
 	index_local = premier_index_libre(inscrits, places)
 	couleur_locale = premiere_couleur_libre(inscrits)
-	inscrits[multiplayer.get_unique_id()] = {"index": index_local, "couleur": couleur_locale, "pseudo": pseudo_valide(pseudo)}
+	inscrits[multiplayer.get_unique_id()] = {"index": index_local, "couleur": couleur_locale, "pseudo": pseudo_ou_defaut(pseudo, index_local)}
 	return OK
 
 
@@ -125,9 +143,11 @@ func rejoindre(adresse: String, port := PORT) -> Error:
 
 
 ## Quitte le réseau : ferme le pair (les autres postes voient partir ce joueur, ou l'hôte), remet
-## `OfflineMultiplayerPeer` et oublie inscrits, index et couleur. Sans effet visible hors réseau :
-## chaque chemin de retour au titre peut l'appeler (point de vigilance des phases 12/13).
+## `OfflineMultiplayerPeer` et oublie inscrits, index, couleur et manche en cours (une session
+## hébergée finie n'a plus lieu d'être). Sans effet visible hors réseau : chaque chemin de retour
+## au titre peut l'appeler (point de vigilance des phases 12/13).
 func quitter() -> void:
+	_generation += 1
 	_delai.stop()
 	var pair := multiplayer.multiplayer_peer
 	if pair != null and not (pair is OfflineMultiplayerPeer):
@@ -137,6 +157,7 @@ func quitter() -> void:
 	inscrits.clear()
 	index_local = -1
 	couleur_locale = Color.TRANSPARENT
+	manche_en_cours = false
 	_issue_decidee = false
 
 
@@ -160,7 +181,7 @@ func examiner_demande(demande: Variant) -> Dictionary:
 	var index := premier_index_libre(inscrits, places)
 	if index < 0:
 		return _refus(REFUS_PLEIN)
-	return {"accepte": true, "index": index, "couleur": premiere_couleur_libre(inscrits), "pseudo": pseudo_valide(demande.pseudo)}
+	return {"accepte": true, "index": index, "couleur": premiere_couleur_libre(inscrits), "pseudo": pseudo_ou_defaut(demande.pseudo, index)}
 
 
 ## Le plus petit index de joueur qu'aucun inscrit n'occupe, parmi les `places` premiers (au plus
@@ -184,10 +205,36 @@ static func premiere_couleur_libre(occupes: Dictionary[int, Dictionary]) -> Colo
 	return Color.TRANSPARENT
 
 
-## Le pseudo tel que l'hôte l'inscrit : sans caractères de contrôle ni espaces autour, au plus
-## PSEUDO_MAX caractères.
+## Vrai pour un point de code que l'étiquette du lion ne doit jamais afficher : les contrôles C0
+## (`strip_escapes` ne va que jusqu'à U+001F) et C1, les caractères invisibles (espaces et joints de
+## largeur nulle, U+FEFF) et les forçages de sens (RLO/LRO, isolats) qui casseraient la lecture ou
+## la mise en page d'un pseudo hostile.
+static func _code_point_interdit(c: int) -> bool:
+	return c <= 0x1F or (c >= 0x7F and c <= 0x9F) \
+		or (c >= 0x200B and c <= 0x200F) or c == 0x2028 or c == 0x2029 \
+		or (c >= 0x202A and c <= 0x202E) or (c >= 0x2060 and c <= 0x206F) or c == 0xFEFF
+
+
+## Le pseudo tel que l'hôte l'inscrit : sans caractères de contrôle, invisibles ni forçages de sens
+## (voir `_code_point_interdit`), coupé à PSEUDO_MAX caractères puis sans espaces autour (pour ne
+## pas laisser d'espace finale à la coupe). Peut être vide : c'est `pseudo_ou_defaut` qui y met un
+## repli.
 static func pseudo_valide(texte: String) -> String:
-	return texte.strip_escapes().strip_edges().left(PSEUDO_MAX)
+	var propre := ""
+	for i in texte.length():
+		var c := texte.unicode_at(i)
+		if not _code_point_interdit(c):
+			propre += texte.substr(i, 1)
+	# Un premier strip_edges avant la coupe ne gâche pas le quota sur des espaces qui l'entourent ;
+	# le second retire celle que la coupe peut exposer en fin de chaîne (spec M3).
+	return propre.strip_edges().left(PSEUDO_MAX).strip_edges()
+
+
+## `pseudo_valide(texte)`, ou « Joueur N » (N = index + 1) si le nettoyage ne laisse rien : un
+## pseudo vide ne doit jamais atteindre `inscrits` ni l'étiquette du lion.
+static func pseudo_ou_defaut(texte: String, index: int) -> String:
+	var propre := pseudo_valide(texte)
+	return propre if not propre.is_empty() else "Joueur %d" % (index + 1)
 
 
 func _api() -> SceneMultiplayer:
@@ -215,12 +262,21 @@ func _sur_debut_poignee_de_main(id: int) -> void:
 	_api().send_auth(id, var_to_bytes({"jeu": JEU, "version": version, "pseudo": pseudo}))
 
 
+## Décode les octets d'une poignée de main, ou renvoie `null` sans décoder si `donnees` dépasse
+## TAILLE_POIGNEE_DE_MAIN_MAX : le coût de `bytes_to_var` doit rester borné, quel que soit
+## l'émetteur sur le port UDP (spec M2). `examiner_demande` et `_lire_reponse` refusent déjà
+## n'importe quoi qui n'est pas le dictionnaire attendu, `null` y compris.
+static func decoder_poignee_de_main(donnees: PackedByteArray) -> Variant:
+	return null if donnees.size() > TAILLE_POIGNEE_DE_MAIN_MAX else bytes_to_var(donnees)
+
+
 ## Octets de poignée de main reçus de `id` : une demande (chez l'hôte) ou la réponse de l'hôte.
 func _sur_donnees_poignee_de_main(id: int, donnees: PackedByteArray) -> void:
+	var contenu: Variant = decoder_poignee_de_main(donnees)
 	if multiplayer.is_server():
-		_repondre(id, bytes_to_var(donnees))
+		_repondre(id, contenu)
 	else:
-		_lire_reponse(bytes_to_var(donnees))
+		_lire_reponse(contenu)
 
 
 func _repondre(id: int, demande: Variant) -> void:
@@ -239,7 +295,8 @@ func _repondre(id: int, demande: Variant) -> void:
 
 func _lire_reponse(reponse: Variant) -> void:
 	var valide := reponse is Dictionary and reponse.get("accepte") is bool
-	if valide and reponse.accepte and reponse.get("index") is int and reponse.get("couleur") is Color:
+	if valide and reponse.accepte and reponse.get("index") is int and reponse.get("couleur") is Color \
+			and reponse.index >= 0 and reponse.index < EtatPartie.NB_JOUEURS_MAX:
 		index_local = reponse.index
 		couleur_locale = reponse.couleur
 		_api().complete_auth(MultiplayerPeer.TARGET_PEER_SERVER)
@@ -287,16 +344,22 @@ func _sur_delai_depasse() -> void:
 
 
 ## Décide l'issue de la connexion (signal `nom`), une seule fois. Différé : on ne change pas de
-## pair pendant que SceneMultiplayer traite ses paquets.
+## pair pendant que SceneMultiplayer traite ses paquets. Capture la génération de la session en
+## cours (M5) : si une nouvelle session démarre avant que l'appel différé s'exécute, il ne doit
+## rien faire à celle-ci.
 func _decider(nom: StringName, arguments: Array = []) -> void:
 	if _issue_decidee:
 		return
 	_issue_decidee = true
-	_fermer_puis_emettre.call_deferred(nom, arguments)
+	_fermer_puis_emettre.call_deferred(nom, arguments, _generation)
 
 
 ## Revient hors réseau, puis émet le signal `nom` : ceux qui le reçoivent trouvent déjà le poste
-## hors réseau (un retour au titre y relance une partie solo qui fonctionne).
-func _fermer_puis_emettre(nom: StringName, arguments: Array) -> void:
+## hors réseau (un retour au titre y relance une partie solo qui fonctionne). Sans effet si une
+## nouvelle session a déjà commencé (`generation` périmée) : ni la fermer, ni émettre un signal
+## qui ne la concerne plus (M5).
+func _fermer_puis_emettre(nom: StringName, arguments: Array, generation: int) -> void:
+	if generation != _generation:
+		return
 	quitter()
 	callv("emit_signal", [nom] + arguments)
