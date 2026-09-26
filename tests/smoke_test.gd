@@ -1198,6 +1198,81 @@ func _run() -> void:
 		ville_b.peindre(point_vierge, 30, j_r)
 	_check(t.cellules_de(0) > scores_avant[0], "de retour sur l'hôte, les mêmes tampons comptent")
 
+	# Phase 14 : chaque tampon de l'hôte part en événement ; un client le dessine à l'identique (même
+	# jeu de tampons, même variante, même coulure), centres négatifs compris, sans le rediffuser ni
+	# toucher à son territoire. La traceuse d'un lion de client ne peint pas.
+	var emis: Array[Dictionary] = []
+	var sur_tampon := func(tampon: Dictionary) -> void: emis.append(tampon)
+	ville_b.tampon_peint.connect(sur_tampon)
+	ville_b.image.fill(Color(0, 0, 0, 0))
+	ville_b.coulures.clear()
+	ville_b._nb_tampons = 0  # comme une ville neuve : le plafond des coulures compte en tampons peints
+	ville_b._tampons_des_coulures.clear()
+	var coin_ville: Vector2 = ville_b.position - Vector2(ville_b.tex_size) / 2.0
+	ville_b.peindre(coin_ville + Vector2(-10, 40), 30, j_r)  # déborde à gauche : x négatif
+	for i in range(40):
+		ville_b.peindre(coin_ville + Vector2(200 + 11 * i, 60), 21, j_b)
+	ville_b.tampon_peint.disconnect(sur_tampon)
+	_check(emis.size() == 41 and emis[0].index == 0 and emis[0].x == -10 and emis[0].rayon == 30 and emis[1].index == 1
+		and ville_b.coulures.size() > 0,
+		"sur l'hôte, chaque tampon part en événement (index du peintre, centre en pixels de la ville, rayon, graine), coulures comprises")
+	var poste_c := Node2D.new()
+	poste_c.name = "PosteClientVille"
+	root.add_child(poste_c)
+	var api_c := SceneMultiplayer.new()
+	var pair_c := ENetMultiplayerPeer.new()
+	_check(pair_c.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la ville d'un client")
+	api_c.multiplayer_peer = pair_c
+	set_multiplayer(api_c, poste_c.get_path())
+	var ville_c: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	ville_c.position = ville_b.position
+	poste_c.add_child(ville_c)
+	var emis_client: Array[Dictionary] = []
+	ville_c.tampon_peint.connect(func(tampon: Dictionary) -> void: emis_client.append(tampon))
+	for tampon in emis:
+		ville_c.peindre_tampon_recu(tampon)
+	_check(not ville_c.multiplayer.is_server() and ville_c.image.get_data() == ville_b.image.get_data()
+		and ville_c.coulures == ville_b.coulures,
+		"chez un client, les tampons reçus se dessinent pixel pour pixel comme chez l'hôte, coulures comprises (%d coulures)" % ville_c.coulures.size())
+	_check(emis_client.is_empty() and ville_c.territoire.cellules_de(0) == 0 and ville_c.territoire.cellules_de(1) == 0,
+		"un client ne rediffuse pas les tampons reçus et ne les compte pas dans son territoire")
+	ville_c.peindre_tampon_recu({"index": 7, "x": 500, "y": 50, "rayon": 20, "graine": 1})
+	_check(ville_c.image.get_data() == ville_b.image.get_data(), "un tampon reçu pour un joueur inconnu de ce poste est ignoré")
+	# Les mêmes 400 tampons, l'un d'un coup, l'autre avec des coulures qui finissent entre deux
+	# tampons (un autre rythme d'affichage) : les mêmes coulures sont lancées
+	var ville_d: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	var ville_e: Node2D = load("res://Scenes/Ville.tscn").instantiate()
+	for v: Node2D in [ville_d, ville_e]:
+		v.position = ville_b.position
+		poste_c.add_child(v)
+	for g in range(400):
+		var tampon := {"index": 1, "x": 100 + (g * 7) % 1800, "y": 60, "rayon": 21, "graine": g}
+		ville_d.peindre_tampon_recu(tampon)
+		ville_e.peindre_tampon_recu(tampon)
+		ville_e._avancer_coulures(1.0)
+	_check(ville_d._tampons_des_coulures == ville_e._tampons_des_coulures and ville_d._tampons_des_coulures.size() > 0
+		and ville_d.coulures.size() > ville_e.coulures.size(),
+		"les mêmes tampons lancent les mêmes coulures, quel que soit le rythme d'affichage (plafond compté en tampons)")
+	ville_d.free()
+	ville_e.free()
+	var lion_c: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	lion_c.joueur = j_r
+	lion_c.commandes = Commandes.manuelles()
+	poste_c.add_child(lion_c)
+	lion_c.global_position = poste_peinture
+	await _frames(2)
+	emis.clear()
+	ville_b.tampon_peint.connect(sur_tampon)
+	lion_c.gerbe_traceuse.monitoring = true  # comme un vomi répliqué
+	await _frames(5)
+	_check(lion_c.gerbe_traceuse.get_overlapping_areas().size() > 0 and emis.is_empty(),
+		"la traceuse d'un lion de client, au-dessus de la ville, ne peint pas (seule celle de l'hôte peint)")
+	ville_b.tampon_peint.disconnect(sur_tampon)
+	lion_c.free()
+	set_multiplayer(null, poste_c.get_path())
+	pair_c.close()
+	poste_c.free()
+
 	# Après terminer_partie, partie_en_cours retombe mais pret reste vrai (pas de retour à
 	# l'intro) ; un lion peut donc encore peindre. Le tampon visuel doit rester, mais plus aucun
 	# score de territoire ne doit bouger.
