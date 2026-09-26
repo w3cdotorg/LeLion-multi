@@ -1,6 +1,7 @@
 extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
-##   godot --headless --script tests/reseau/joueur.gd -- --role=hote|client|lent|ecouteur [options]
+##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
+## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -40,9 +41,30 @@ extends SceneTree
 ##   plus PERIODE_BALISE + DELAI_EXPIRATION (plus une marge) après le départ de l'hôte. Avec
 ##   --occupe : un second écouteur sur un port de balises déjà pris ; `ecouter()` doit renvoyer une
 ##   erreur sans planter (deux LeLion sur un même PC).
+## Salon (phase 13), par les vraies scènes : l'écran Réseau (Héberger, ou Rejoindre par IP vers
+##   127.0.0.1), qui passe la main au salon, puis la scène de jeu. Chaque poste écrit
+##   « SALON OUVERT » à l'ouverture de son salon, note la ligne d'état du salon après chaque
+##   `salon_change` (vérifiée à la fin), et écrit « MANCHE <empreinte> » une fois la scène de jeu
+##   chargée (identifiant, pseudo et couleur de chaque index de `GameState.joueurs`, puis le
+##   niveau : la même sur tous les postes).
+##   Salon-hôte : --clients=N (arrivées attendues), --partants=K (départs attendus), --niveau=L (le
+##   niveau qu'il choisit, par haut/bas), --rester=chemin (comme l'hôte). Écrit « HOTE PRET » une
+##   fois son salon ouvert, « SALON COMPLET » quand la table compte 1 + N - K joueurs, puis se
+##   déclare prêt ; « BOUTON ACTIF » chaque fois que « Démarrer la partie » s'active. La première
+##   fois, il attend qu'un client repasse non prêt (le bouton se regrise), essaie quand même de
+##   démarrer (« DEMARRAGE REFUSE » : la manche ne part pas) ; la seconde, il démarre.
+##   Salon-client : --voir=N (attend d'avoir vu la table compter N joueurs : « SALON VU N »), puis
+##   --partir (quitte le salon par Retour : l'écran Réseau revient) ou --reste=M (attend que la
+##   table compte M joueurs ; défaut 2), --couleur=S et --feu=chemin (« ATTEND LE FEU », puis
+##   demande la couleur voisine dans le sens S au feu : « COULEUR <html> »), prêt ensuite ;
+##   --annuler=chemin (une fois ce fichier créé, repasse non prêt : « PLUS PRET » ; puis se
+##   redéclare prêt une fois --relance=chemin créé), --index=K (son index attendu dans la manche,
+##   compactés compris). Vérifie à la fin avoir vu « l'hôte peut démarrer », puis attend le départ
+##   de l'hôte.
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
-## `Reseau` et `Decouverte` par `root.get_node`, ne nomme ni `Reseau`, ni `Decouverte`, ni
-## `GameState` (il peut nommer `EtatPartie`, dont le script ne nomme aucun autoload).
+## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
+## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
+## aucun autoload, et `ReglesBataille`).
 
 const DELAI_ETAPE := 15.0  # secondes au plus pour chaque attente
 
@@ -58,6 +80,13 @@ var _raison := ""
 var _version_hote := ""
 var _index := -1
 var _couleur := Color.TRANSPARENT
+var _fiches_manche: Array[Dictionary] = []  # salon : les fiches reçues avec le lancement de la manche
+## Salon : la taille de la table à chaque `salon_change` reçu, dans l'ordre. Une table à 4 joueurs
+## qui ne dure qu'une image (un départ aussitôt après une arrivée) y reste, là où une attente qui
+## relirait la table à chaque image pourrait la manquer.
+var _tailles_vues: Array[int] = []
+## Salon : la ligne d'état du salon notée après chaque `salon_change`, une fois l'affichage à jour.
+var _textes_etat: Array[String] = []
 
 
 func _init() -> void:
@@ -110,8 +139,10 @@ func _run() -> void:
 		await _jouer_lent()
 	elif role == "ecouteur":
 		await _jouer_ecouteur()
+	elif role == "salon-hote" or role == "salon-client":
+		await _jouer_salon(role == "salon-hote")
 	else:
-		_check(false, "rôle inconnu : --role=hote, --role=client, --role=lent ou --role=ecouteur")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote ou salon-client")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -377,6 +408,153 @@ func _jouer_ecouteur() -> void:
 		_check(depuis_depart <= borne,
 			"et au plus %.0f s après le départ de l'hôte, dont le processus vit encore : sa balise s'arrête avec la session (%.1f s)" % [borne, depuis_depart])
 	decouverte.arreter_ecoute()
+
+
+## Rôles « salon-hote » et « salon-client » (phase 13, voir l'en-tête) : un poste passe par l'écran
+## Réseau et le salon comme un joueur, jusqu'à la scène de jeu.
+func _jouer_salon(hote: bool) -> void:
+	var scores: Node = root.get_node("Scores")
+	var gs: Node = root.get_node("GameState")
+	scores.chemin = "user://scores_reseau_%s.cfg" % reseau.pseudo  # jamais les préférences du joueur
+	scores.effacer()
+	reseau.salon_change.connect(func() -> void: _noter_etat.call_deferred())
+	reseau.salon_change.connect(func() -> void: _tailles_vues.append(reseau.table_salon.size()))
+	reseau.manche_lancee.connect(func(fiches: Array[Dictionary]) -> void: _fiches_manche.assign(fiches))
+	reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+	change_scene_to_file("res://Scenes/EcranReseau.tscn")
+	_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")), "l'écran Réseau s'ouvre")
+	var ecran: Node = current_scene
+	ecran.port_jeu = int(_option("port", "17777"))
+	ecran.champ_pseudo.text = reseau.pseudo
+	if hote:
+		ecran.heberger()
+	else:
+		ecran.champ_ip.text = "127.0.0.1"
+		ecran.rejoindre_par_ip()
+	_check(await _attendre(func() -> bool: return _scene_est("Salon")), "l'écran Réseau passe la main au salon")
+	if not _scene_est("Salon"):
+		reseau.quitter()
+		return
+	var salon: Node = current_scene
+	print("SALON OUVERT")
+	if hote:
+		await _animer_salon_hote(salon, gs)
+	else:
+		if not await _animer_salon_client(salon):
+			scores.effacer()
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
+			return
+	# La scène de jeu, chargée par le salon sur chaque poste, avec la même table des joueurs
+	_check(await _attendre(func() -> bool: return _scene_est("Main")), "le salon charge la scène de jeu")
+	var empreinte := ";".join(gs.joueurs.map(func(j: Joueur) -> String: return "%d:%s:%s" % [j.id_reseau, j.pseudo, j.couleur.to_html(false)]))
+	var attendues := ";".join(_fiches_manche.map(func(f: Dictionary) -> String: return "%d:%s:%s" % [f.id_reseau, f.pseudo, f.couleur.to_html(false)]))
+	var moi: Joueur = gs.joueur_local()
+	_check(gs.regles is ReglesBataille and gs.joueurs.size() == _fiches_manche.size() and empreinte == attendues
+		and gs.joueurs.map(func(j: Joueur) -> int: return j.index) == range(gs.joueurs.size()),
+		"règles de bataille et un joueur par fiche reçue, index 0..n-1, identifiants, pseudos et couleurs de l'hôte (%s)" % empreinte)
+	_check(moi.id_reseau == root.multiplayer.get_unique_id() and moi.index == reseau.index_local and moi.couleur == reseau.couleur_locale
+		and gs.joueurs[0].id_reseau == 1 and root.content_scale_size == Vector2i(ReglesBataille.TAILLE_ECRAN),
+		"le joueur local est celui de ce poste (index %d), l'index 0 celui de l'hôte, écran 16:9" % moi.index)
+	if _options.has("index"):
+		_check(moi.index == int(_option("index", "")), "index compacté attendu : %s (%d)" % [_option("index", ""), moi.index])
+	_check(gs.niveau_courant == int(_option("niveau", str(gs.niveau_courant))), "le niveau choisi au salon (%d)" % gs.niveau_courant)
+	print("MANCHE %s|%d" % [empreinte, gs.niveau_courant])
+	if hote:
+		_check(_textes_etat.has(tr("SALON_ATTENTE_PRETS")) and _textes_etat.has(tr("SALON_PRET_A_DEMARRER")),
+			"l'hôte a vu pourquoi le bouton était grisé, puis « tu peux démarrer la partie »")
+		_check(reseau.manche_en_cours, "manche lancée : l'hôte refuse désormais tout nouveau venu")
+		if _options.has("rester"):
+			var rester := _option("rester", "")
+			print("HOTE RESTE")
+			_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+		reseau.quitter()
+	else:
+		_check(_textes_etat.has(tr("SALON_ATTENTE_HOTE")), "un client a vu « Tout le monde est prêt : l'hôte peut démarrer. »")
+		_check(await _attendre(func() -> bool: return _issue.ends_with("hote_perdu")), "l'hôte finit par partir")
+	scores.effacer()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
+
+
+func _animer_salon_hote(salon: Node, gs: Node) -> void:
+	var niveau := int(_option("niveau", "0"))
+	while reseau.niveau_salon != niveau:
+		salon.changer_niveau(1)
+	_check(gs.niveau_courant == niveau, "le niveau choisi au salon devient celui de la partie (%d), que la balise annonce" % niveau)
+	print("HOTE PRET")
+	var nb_clients := int(_option("clients", "0"))
+	var nb_partants := int(_option("partants", "0"))
+	reseau.joueur_arrive.connect(_sur_arrivee)
+	reseau.joueur_parti.connect(_sur_depart)
+	var complet := func() -> bool:
+		return _arrivees.size() >= nb_clients and _departs.size() >= nb_partants and reseau.table_salon.size() == 1 + nb_clients - nb_partants
+	_check(await _attendre(complet),
+		"%d arrivée(s), %d départ(s) : la table compte %d joueurs" % [_arrivees.size(), _departs.size(), reseau.table_salon.size()])
+	print("SALON COMPLET")
+	salon.basculer_pret()
+	var bouton: Button = salon.bouton_demarrer
+	_check(await _attendre(func() -> bool: return not bouton.disabled), "tous prêts : « Démarrer la partie » s'active")
+	print("BOUTON ACTIF")
+	_check(await _attendre(func() -> bool: return bouton.disabled), "un client repasse non prêt : le bouton se regrise")
+	salon.demarrer()
+	_check(not reseau.manche_en_cours and _scene_est("Salon"), "démarrer quand même est refusé : la manche ne part pas")
+	print("DEMARRAGE REFUSE")
+	_check(await _attendre(func() -> bool: return not bouton.disabled), "de nouveau tous prêts : le bouton revient")
+	print("BOUTON ACTIF")
+	salon.demarrer()
+
+
+## Renvoie faux si ce poste quitte le salon avant la manche (--partir).
+func _animer_salon_client(salon: Node) -> bool:
+	if _options.has("voir"):
+		var voir := int(_option("voir", ""))
+		_check(await _attendre(func() -> bool: return _tailles_vues.has(voir)), "la table du salon a compté %d joueurs (%s)" % [voir, _tailles_vues])
+		print("SALON VU %d" % voir)
+	if _options.has("partir"):
+		salon.retour()
+		_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")) and not reseau.en_ligne(),
+			"Retour quitte le réseau et ramène à l'écran Réseau")
+		if current_scene != null:
+			current_scene.free()  # son écoute des balises se ferme avec lui
+		return false
+	var reste := int(_option("reste", "2"))
+	_check(await _attendre(func() -> bool: return reseau.table_salon.size() == reste), "la table compte %d joueurs (%s)" % [reste, _tailles_vues])
+	print("SALON VU %d" % reste)
+	if _options.has("feu"):
+		var avant: Color = reseau.couleur_locale
+		print("ATTEND LE FEU")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("feu", ""))), "lancer.sh donne le feu")
+		salon.changer_couleur(int(_option("couleur", "1")))
+		_check(await _attendre(func() -> bool: return reseau.couleur_locale != avant), "l'hôte change la couleur de ce poste")
+		var couleurs: Array = reseau.table_salon.map(func(f: Dictionary) -> Color: return f.couleur)
+		_check(couleurs.all(func(c: Color) -> bool: return couleurs.count(c) == 1), "chacun garde une couleur à lui (%s)" % [couleurs])
+		print("COULEUR %s" % reseau.couleur_locale.to_html(false))
+	salon.basculer_pret()
+	if _options.has("annuler"):
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("annuler", ""))), "lancer.sh demande de repasser non prêt")
+		salon.basculer_pret()
+		_check(await _attendre(func() -> bool: return not _ma_fiche_pret()), "l'hôte enregistre ce poste non prêt")
+		print("PLUS PRET")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("relance", ""))), "lancer.sh relance (%s)" % _option("relance", ""))
+		salon.basculer_pret()
+	return true
+
+
+func _scene_est(nom: String) -> bool:
+	return current_scene != null and current_scene.scene_file_path == "res://Scenes/%s.tscn" % nom and current_scene.is_node_ready()
+
+
+## Appelé en différé après chaque `salon_change` : le salon a déjà mis sa ligne d'état à jour.
+func _noter_etat() -> void:
+	if _scene_est("Salon"):
+		_textes_etat.append(current_scene.etat.text)
+
+
+## Vrai si la table du salon dit ce poste prêt.
+func _ma_fiche_pret() -> bool:
+	for fiche: Dictionary in reseau.table_salon:
+		if fiche.id == root.multiplayer.get_unique_id():
+			return fiche.pret
+	return false
 
 
 ## La clé (« ip:port ») d'une partie de la liste dont l'hôte a ce pseudo, la première dans l'ordre de

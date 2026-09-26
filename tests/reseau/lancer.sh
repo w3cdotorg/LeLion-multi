@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Test réseau du transport (phase 11) et de la découverte (phase 12) : des postes headless sur
-# localhost, un processus Godot par poste (tests/reseau/joueur.gd), scénario après scénario.
+# Test réseau du transport (phase 11), de la découverte (phase 12) et du salon (phase 13) : des
+# postes headless sur localhost, un processus Godot par poste (tests/reseau/joueur.gd), scénario
+# après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
 # et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778).
@@ -254,6 +255,49 @@ if [ "${DIFFUSION:-0}" = "1" ]; then
 else
 	echo "  (scénario 7, découverte en vraie diffusion : DIFFUSION=1 pour le lancer)"
 fi
+
+# 8. Salon (phase 13), par les vraies scènes : un hôte et trois clients passent par l'écran Réseau
+#    et le salon, arrivés dans l'ordre (index 1, 2, 3). B repart du salon par Retour : sa carte se
+#    libère chez tous, un trou reste à l'index 2. A et C demandent au même feu la couleur voisine
+#    (A la suivante, C la précédente : toutes deux visent celle de B) ; l'hôte arbitre, chacun garde
+#    une couleur à lui. Tous prêts : le bouton « Démarrer la partie » de l'hôte s'active ; A repasse
+#    non prêt, le bouton se regrise et un démarrage tenté quand même est refusé ; A de nouveau prêt,
+#    l'hôte démarre : chaque poste charge la scène de jeu avec les mêmes fiches, index compactés (C
+#    passe de 3 à 2). Un retardataire est alors refusé « manche en cours » : c'est le salon qui l'a
+#    posée.
+P=$((PORT_BASE + 8))
+B=$((PORT_BASE + 1008))
+lancer hote8 --role=salon-hote --port=$P --port-balise=$B --pseudo=Hote8 --clients=3 --partants=1 --niveau=2 --rester="$JOURNAUX/rester8"
+if attendre_hote hote8; then
+	lancer a8 --role=salon-client --port=$P --port-balise=$B --pseudo=Anna --voir=4 --reste=3 --couleur=1 --feu="$JOURNAUX/feu8" \
+		--annuler="$JOURNAUX/annule8" --relance="$JOURNAUX/relance8" --index=1 --niveau=2
+	if attendre_ligne a8 "SALON OUVERT"; then
+		lancer b8 --role=salon-client --port=$P --port-balise=$B --pseudo=Bruno --voir=4 --partir
+		if attendre_ligne b8 "SALON OUVERT"; then
+			lancer c8 --role=salon-client --port=$P --port-balise=$B --pseudo=Chloe --reste=3 --couleur=-1 --feu="$JOURNAUX/feu8" \
+				--index=2 --niveau=2
+			if attendre_ligne a8 "ATTEND LE FEU" && attendre_ligne c8 "ATTEND LE FEU"; then
+				touch "$JOURNAUX/feu8"
+				if attendre_ligne hote8 "BOUTON ACTIF"; then
+					touch "$JOURNAUX/annule8"
+					if attendre_ligne hote8 "DEMARRAGE REFUSE"; then
+						touch "$JOURNAUX/relance8"
+						if attendre_ligne hote8 "MANCHE" && attendre_ligne a8 "MANCHE" && attendre_ligne c8 "MANCHE"; then
+							lancer tard8 --role=client --port=$P --pseudo=Tard --attendu=refus_manche
+							attendre_fin tard8
+						fi
+					fi
+				fi
+			fi
+		fi
+	fi
+	touch "$JOURNAUX/rester8"
+fi
+terminer "salon : arrivées, départ (carte libérée), couleurs arbitrées, démarrage refusé tant qu'un joueur n'est pas prêt, manche lancée par l'hôte chez tous, retardataire refusé"
+[ "$(grep -h "^MANCHE " "$JOURNAUX/hote8.log" "$JOURNAUX/a8.log" "$JOURNAUX/c8.log" 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^MANCHE " hote8 a8 c8)" -eq 3 ] || echec "salon : les trois postes doivent charger la manche avec la même empreinte"
+[ "$(compter "BOUTON ACTIF" hote8)" -eq 2 ] && [ "$(compter "DEMARRAGE REFUSE" hote8)" -eq 1 ] && [ "$(compter "PLUS PRET" a8)" -eq 1 ] \
+	|| echec "salon : le bouton de l'hôte doit s'activer deux fois, et le démarrage être refusé une fois entre les deux"
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then
