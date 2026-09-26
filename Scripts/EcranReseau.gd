@@ -3,14 +3,16 @@ extends Control
 ## (`Decouverte`), Rejoindre par IP en secours, messages des refus et des échecs. En 16:9, comme le
 ## salon (spec §7) ; le titre remet l'écran du solo au retour.
 ##
-## Quatre états : ACCUEIL (tout est permis, la liste écoute les balises), CONNEXION (en attente de
-## l'hôte), HEBERGE et INSCRIT. Tant que le salon n'existe pas (phase 13), une partie hébergée ou
-## rejointe attend ici : l'hôte voit ses joueurs arriver, le client son inscription. Retour (ou
-## Échap, B à la manette) annule l'état en cours, puis ramène au titre.
+## Trois états : ACCUEIL (tout est permis, la liste écoute les balises), CONNEXION (en attente de
+## l'hôte) et SALON (partie hébergée, ou inscription reçue : en route vers le salon, tout reste
+## grisé le temps du changement de scène). Retour (ou Échap, B à la manette) annule l'état en
+## cours, puis ramène au titre. Le salon revient ici avec un message (`message_a_l_arrivee`) si
+## l'hôte est perdu.
 
-enum Etat { ACCUEIL, CONNEXION, HEBERGE, INSCRIT }
+enum Etat { ACCUEIL, CONNEXION, SALON }
 
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
+const SCENE_SALON := "res://Scenes/Salon.tscn"
 const COULEUR_INFO := Color(1, 1, 1, 0.85)
 # M3 (revue finale 12 bis) : le remplissage passe en blanc pour le contraste (le contour salmon
 # reste l'accent qui distingue un refus/échec d'une simple information).
@@ -33,6 +35,9 @@ var _parties_affichees: Dictionary[String, Dictionary] = {}
 ## rendre le focus après un refus ou un échec (M10, revue finale 12 bis) ; repli sur Héberger s'il
 ## n'existe plus (la partie a disparu de la liste pendant la tentative).
 var _dernier_controle: Control = null
+## Clé d'un message d'erreur à afficher à la prochaine ouverture de l'écran, puis oubliée : le salon
+## la pose avant d'y revenir (« L'hôte a quitté la partie »).
+static var message_a_l_arrivee := ""
 
 @onready var champ_pseudo: LineEdit = $Centre/Colonne/RangeePseudo/Pseudo
 @onready var bouton_heberger: Button = $Centre/Colonne/Heberger
@@ -58,14 +63,15 @@ func _ready() -> void:
 	Reseau.refuse.connect(_sur_refus)
 	Reseau.connexion_echouee.connect(_sur_connexion_echouee)
 	Reseau.hote_perdu.connect(_sur_hote_perdu)
-	Reseau.joueur_arrive.connect(_sur_joueurs_changes)
-	Reseau.joueur_parti.connect(_sur_joueurs_changes)
 	Parametres.langue_changee.connect(_sur_langue_changee)
 	_changer_etat(Etat.ACCUEIL)
+	if not message_a_l_arrivee.is_empty():
+		_afficher_message(message_a_l_arrivee, [], true)
+		message_a_l_arrivee = ""
 
 
 ## Les autoloads survivent à l'écran : ne rien leur laisser (écoute, connexions). Ne quitte pas le
-## réseau : le salon (phase 13) prendra la suite d'une partie hébergée ou rejointe.
+## réseau : le salon prend la suite d'une partie hébergée ou rejointe.
 func _exit_tree() -> void:
 	Decouverte.arreter_ecoute()
 	Decouverte.parties_changees.disconnect(_afficher_parties)
@@ -73,8 +79,6 @@ func _exit_tree() -> void:
 	Reseau.refuse.disconnect(_sur_refus)
 	Reseau.connexion_echouee.disconnect(_sur_connexion_echouee)
 	Reseau.hote_perdu.disconnect(_sur_hote_perdu)
-	Reseau.joueur_arrive.disconnect(_sur_joueurs_changes)
-	Reseau.joueur_parti.disconnect(_sur_joueurs_changes)
 	Parametres.langue_changee.disconnect(_sur_langue_changee)
 
 
@@ -105,8 +109,7 @@ func heberger() -> void:
 	elif erreur != OK:
 		_afficher_message("RESEAU_HEBERGER_IMPOSSIBLE", [erreur], true)
 	else:
-		_changer_etat(Etat.HEBERGE)
-		_afficher_hebergement()
+		_ouvrir_salon()
 
 
 ## Rejoint la partie de la liste `cle` (« ip:port », ou « 127.0.0.1:port » pour une partie hébergée
@@ -292,13 +295,6 @@ func _raison_injoignable(partie: Dictionary) -> String:
 	return ""
 
 
-func _afficher_hebergement() -> void:
-	# I1 (revue finale 12 bis) : triées par interface (physique d'abord), pas seulement par plage
-	# IPv4, sans quoi une carte virtuelle (bridge, vEthernet, VMware…) pouvait passer devant le Wi-Fi.
-	var adresses := ", ".join(Decouverte.adresses_hote(IP.get_local_interfaces()))
-	_afficher_message("RESEAU_HEBERGE", [Reseau.inscrits.size(), Reseau.places, adresses if not adresses.is_empty() else "?"], false)
-
-
 func _afficher_message(cle: String, arguments: Array, erreur: bool) -> void:
 	_message = {"cle": cle, "arguments": arguments, "erreur": erreur}
 	_rendre_message()
@@ -322,13 +318,19 @@ func _reprendre_focus_echec() -> void:
 		_dernier_controle.grab_focus()
 
 
-func _sur_inscription(index: int, _couleur: Color) -> void:
+func _sur_inscription(_index: int, _couleur: Color) -> void:
 	if etat == Etat.CONNEXION:
 		# La tentative a réussi : un « hôte perdu » bien plus tard (M10) ne doit pas rendre le focus
 		# à un champ IP ou une ligne utilisés il y a longtemps, mais à Héberger comme d'habitude.
 		_dernier_controle = null
-		_changer_etat(Etat.INSCRIT)
-		_afficher_message("RESEAU_INSCRIT", [index + 1], false)
+		_ouvrir_salon()
+
+
+## Une partie hébergée ou rejointe continue au salon ; tout est grisé d'ici au changement de scène
+## (un second Héberger dans la même image ne relance rien).
+func _ouvrir_salon() -> void:
+	_changer_etat(Etat.SALON)
+	get_tree().change_scene_to_file(SCENE_SALON)
 
 
 ## `Reseau` a déjà remis ce poste hors réseau quand ses signaux d'échec partent.
@@ -350,11 +352,6 @@ func _sur_hote_perdu() -> void:
 	_changer_etat(Etat.ACCUEIL)
 	_reprendre_focus_echec()
 	_afficher_message("RESEAU_HOTE_PERDU", [], true)
-
-
-func _sur_joueurs_changes(_id: int) -> void:
-	if etat == Etat.HEBERGE:
-		_afficher_hebergement()
 
 
 func _sur_langue_changee(_langue: String) -> void:

@@ -134,6 +134,7 @@ func _run() -> void:
 
 	await _tester_ecran_reseau(scores, params)
 	await _tester_titre_reseau(scores)
+	await _tester_salon(params)
 
 	# Scores
 	_check(scores.enregistrer("skyline/facile", 50.0) == 0 and scores.meilleur_temps("metropole/facile") < 0.0
@@ -1259,7 +1260,14 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 		and ecran.bouton_heberger.disabled and not ecran.champ_ip.editable and ecran.bouton_retour.has_focus(),
 		"pendant la connexion : plus d'écoute ni de liste, tout est grisé sauf Retour, qui a le focus")
 	reseau.inscrit.emit(2, palette[2])
-	_check(ecran.etat == ecran.Etat.INSCRIT and ecran.message.text == tr("RESEAU_INSCRIT") % 3, "inscrit par l'hôte : « tu es le joueur 3 »")
+	_check(ecran.etat == ecran.Etat.SALON and ecran.bouton_heberger.disabled and not decouverte.ecoute_active(),
+		"inscrit par l'hôte : en route vers le salon, tout reste grisé")
+	await _frames(2)
+	var salon_client: Node = current_scene
+	_check(salon_client != null and salon_client.scene_file_path == "res://Scenes/Salon.tscn" and reseau.en_ligne(),
+		"puis le salon prend la suite, toujours en ligne (phase 13)")
+	if salon_client != null:
+		salon_client.free()
 	reseau.quitter()
 	reseau.hote_perdu.emit()
 	_check(ecran.etat == ecran.Etat.ACCUEIL and ecran.message.text == tr("RESEAU_HOTE_PERDU") and decouverte.ecoute_active()
@@ -1281,17 +1289,21 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	_check(faux.is_empty() and tr("RESEAU_REFUS_VERSION") % "0.9" == "Version différente de l'hôte (0.9)",
 		"chaque refus a son texte traduit, la version de l'hôte dans le refus de version, une raison inconnue lue comme demande incomprise (%s)" % [faux])
 
-	# Héberger : en ligne, hôte, plus d'écoute ; les arrivées s'affichent ; Échap arrête
+	# Héberger : en ligne, hôte, plus d'écoute, puis le salon (phase 13) ; Échap arrête
 	ecran.port_jeu = 17797
 	ecran.heberger()
-	_check(ecran.etat == ecran.Etat.HEBERGE and reseau.en_ligne() and root.multiplayer.is_server()
+	_check(ecran.etat == ecran.Etat.SALON and reseau.en_ligne() and root.multiplayer.is_server()
 		and reseau.inscrits[1].pseudo == "Zoé la gran" and not decouverte.ecoute_active() and ecran.bouton_retour.has_focus(),
 		"Héberger : ce poste héberge avec son pseudo, n'écoute plus les balises (il ne se verrait pas lui-même)")
-	_check(ecran.message.text.begins_with(tr("RESEAU_HEBERGE").get_slice("%", 0)) and "1/6" in ecran.message.text,
-		"l'hôte voit ses joueurs et ses adresses (%s)" % ecran.message.text)
-	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob"}
-	reseau.joueur_arrive.emit(5)
-	_check("2/6" in ecran.message.text, "un joueur arrive : l'hôte le voit (%s)" % ecran.message.text)
+	ecran.heberger()
+	_check(reseau.en_ligne() and reseau.inscrits.size() == 1 and ecran.etat == ecran.Etat.SALON,
+		"un second Héberger avant le changement de scène ne relance rien")
+	await _frames(2)
+	var salon_hote: Node = current_scene
+	_check(salon_hote != null and salon_hote.scene_file_path == "res://Scenes/Salon.tscn" and reseau.en_ligne() and root.multiplayer.is_server(),
+		"puis le salon prend la suite, toujours hôte (phase 13 : il affiche les adresses de l'hôte)")
+	if salon_hote != null:
+		salon_hote.free()
 	var echap := InputEventAction.new()
 	echap.action = "ui_cancel"
 	echap.pressed = true
@@ -1422,3 +1434,204 @@ func _tester_titre_reseau(scores: Node) -> void:
 	decouverte.destinations_forcees = PackedStringArray()
 	reseau.pseudo = ""
 	scores.effacer()
+
+
+## Phase 13 : le salon, sur un seul poste (le salon à plusieurs postes, du lancement de la manche
+## compris, est couvert par tests/reseau/lancer.sh, scénario 8). Les arrivées sont simulées dans
+## `Reseau.inscrits`, comme `Reseau` les y inscrit : place réservée, puis arrivée.
+func _tester_salon(params: Node) -> void:
+	print("-- Salon")
+	var reseau: Node = root.get_node("Reseau")
+	var decouverte: Node = root.get_node("Decouverte")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var port_balise := 17896  # la balise de l'hôte : jamais le 7778 d'une vraie partie
+	decouverte.port_balise = port_balise
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+	reseau.pseudo = "MMMMMMMMMMMM"  # 12 caractères larges : ils doivent tenir dans la carte
+	GS.niveau_courant = 1
+	_check(reseau.heberger(17797) == OK, "(pré-condition) ce poste héberge")
+	var salon: Control = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(salon)
+	await process_frame
+
+	# L'hôte seul : sa carte, les places libres, le niveau du titre, ses adresses ; aucun focus
+	var c0: Dictionary = salon.cartes[0]
+	_check(root.content_scale_size == Vector2i(2000, 1125) and salon.cartes.size() == 6
+		and salon.cartes.all(func(c: Dictionary) -> bool: return c.cadre.visible), "le salon est en 16:9, une carte par place (6)")
+	_check(c0.pseudo.text == "MMMMMMMMMMMM" and c0.badge.text == "HÔTE · TOI" and c0.etat.text == tr("SALON_PAS_PRET")
+		and c0.lion.material == c0.teinte and c0.teinte.get_shader_parameter("couleur_joueur") == palette[0] and c0.style.border_color == palette[0],
+		"la carte de l'hôte : pseudo, badges, pas prêt, lion et contour à sa couleur")
+	var police: Font = c0.pseudo.get_theme_font("font")
+	var largeur_w: float = police.get_string_size("WWWWWWWWWWWW", HORIZONTAL_ALIGNMENT_LEFT, -1, c0.pseudo.get_theme_font_size("font_size")).x \
+		+ 2 * c0.pseudo.get_theme_constant("outline_size")
+	_check(largeur_w <= c0.pseudo.size.x and salon.rangee_cartes.get_combined_minimum_size().x <= 2000.0,
+		"12 caractères larges (« WWWWWWWWWWWW », %d px) tiennent dans une carte (%d px) ; les six cartes dans l'écran" % [largeur_w, c0.pseudo.size.x])
+	_check(salon.cartes.slice(1).all(func(c: Dictionary) -> bool: return c.pseudo.text == tr("SALON_LIBRE") and c.lion.material == null),
+		"les autres places sont libres : une silhouette sans couleur")
+	_check(salon.titre_niveau.text == "Niveau : Métropole" and reseau.niveau_salon == 1 and salon.aide.text == tr("SALON_AIDE_HOTE")
+		and salon.adresses.visible and salon.etat.text == tr("SALON_ATTENTE_JOUEURS") and salon.bouton_demarrer.visible and salon.bouton_demarrer.disabled,
+		"le niveau choisi au titre, l'aide de l'hôte, ses adresses, Démarrer grisé : « Il faut au moins 2 joueurs pour démarrer. »")
+	_check(root.gui_get_focus_owner() == null and salon.bouton_retour.focus_mode == Control.FOCUS_NONE,
+		"aucun contrôle ne prend le focus : flèches, croix, stick, vomir et démarrer vont au salon")
+
+	# Une place réservée (poignée de main en cours) n'a pas de carte ; un joueur arrivé a la sienne
+	reseau.inscrits[7] = {"index": 2, "couleur": palette[2], "pseudo": "Rita", "arrive": false, "pret": false}
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob", "arrive": false, "pret": false}
+	reseau._sur_pair_connecte(5)
+	_check(salon.cartes[1].pseudo.text == "Bob" and salon.cartes[1].badge.text == " " and salon.cartes[2].pseudo.text == tr("SALON_LIBRE")
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1, 5],
+		"une place seulement réservée n'a pas de carte (M4) ; un joueur arrivé a la sienne")
+
+	# Couleurs : la voisine libre (celle d'une place réservée est prise) ; une seule par appui
+	salon.changer_couleur(1)
+	_check(reseau.inscrits[1].couleur == palette[3] and reseau.couleur_locale == palette[3] and c0.teinte.get_shader_parameter("couleur_joueur") == palette[3],
+		"droite : la couleur libre suivante, bleu et jaune (réservé) sautés : vert")
+	salon.changer_couleur(-1)
+	_check(reseau.inscrits[1].couleur == palette[0], "gauche : la libre précédente : rouge")
+	await _appuyer(&"deplacer_gauche", true)
+	await _appuyer(&"deplacer_gauche", true)  # le stick encore penché : un autre événement, pas un autre appui
+	await _appuyer(&"deplacer_gauche", false)
+	_check(reseau.inscrits[1].couleur == palette[5], "gauche tenue (clavier, croix ou stick) ne change la couleur qu'une fois, la palette en boucle : cyan")
+	await _appuyer(&"deplacer_droite", true)
+	await _appuyer(&"deplacer_droite", false)
+	_check(reseau.inscrits[1].couleur == palette[0], "droite : de nouveau rouge, en boucle")
+	_check(reseau.changer_couleur(5, 1) and reseau.inscrits[5].couleur == palette[3],
+		"l'hôte arbitre la demande d'un client : Bob passe à la suivante libre, vert")
+	_check(not reseau.changer_couleur(7, 1) and not reseau.changer_couleur(99, 1) and not reseau.changer_couleur(5, 2),
+		"refusées : une place seulement réservée, un inconnu, un sens hors de ±1")
+
+	# Prêt : couleur figée. Le bouton « Démarrer la partie » de l'hôte, grisé avec sa raison tant que
+	# la partie ne peut pas démarrer ; l'hôte revérifie au moment de l'appui
+	var bouton: Button = salon.bouton_demarrer
+	await _appuyer(&"vomir", true)
+	await _appuyer(&"vomir", false)
+	_check(reseau.inscrits[1].pret and c0.etat.text == tr("SALON_PRET"), "vomir : prêt")
+	salon.changer_couleur(1)
+	_check(reseau.inscrits[1].couleur == palette[0], "prêt, sa couleur est figée")
+	_check(reseau.definir_pret(5, true) and bouton.visible and bouton.disabled and bouton.focus_mode == Control.FOCUS_NONE
+		and salon.etat.text == tr("SALON_ATTENTE_ARRIVEE"),
+		"tous les arrivés sont prêts, mais une place est réservée : bouton grisé, « Un joueur est en train d'arriver… »")
+	await _appuyer(&"demarrer", true)
+	await _appuyer(&"demarrer", false)
+	_check(not reseau.manche_en_cours and root.get_children().has(salon), "Tab (ou Start) sur un bouton grisé ne démarre rien")
+	reseau._sur_echec_poignee_de_main(7)
+	_check(not bouton.disabled and salon.etat.text == tr("SALON_PRET_A_DEMARRER"),
+		"la place libérée, tous prêts : le bouton s'active, « tu peux démarrer la partie »")
+	reseau.inscrits[5].pret = false  # Bob repasse non prêt dans la même image que l'appui, avant tout affichage
+	salon.demarrer()
+	_check(not reseau.manche_en_cours and bouton.disabled and salon.etat.text == tr("SALON_ATTENTE_PRETS") and root.get_children().has(salon),
+		"l'hôte revérifie au moment de démarrer : refusé, le bouton se regrise, « tous les joueurs doivent être prêts »")
+	reseau.definir_pret(5, true)
+	_check(not bouton.disabled, "(Bob de nouveau prêt : le bouton revient)")
+	reseau.definir_pret(5, false)
+	_check(bouton.disabled and salon.etat.text == tr("SALON_ATTENTE_PRETS"), "Bob repasse non prêt : le bouton se regrise aussitôt")
+	salon.changer_niveau(1)
+	_check(reseau.niveau_salon == 2, "l'hôte change de niveau quand il veut, même quand tous ne sont pas prêts")
+	salon.changer_niveau(-1)
+	reseau._sur_pair_deconnecte(5)
+	_check(salon.cartes[1].pseudo.text == tr("SALON_LIBRE") and bouton.disabled and salon.etat.text == tr("SALON_ATTENTE_JOUEURS"),
+		"Bob part : sa carte se libère, « il faut au moins 2 joueurs pour démarrer »")
+
+	# Niveau (l'hôte, haut/bas, en boucle) : la partie et la balise le suivent
+	await _appuyer(&"deplacer_bas", true)
+	await _appuyer(&"deplacer_bas", false)
+	_check(reseau.niveau_salon == 2 and GS.niveau_courant == 2 and salon.titre_niveau.text == "Niveau : Village", "bas : le niveau suivant")
+	salon.changer_niveau(1)
+	_check(reseau.niveau_salon == 0 and GS.niveau_courant == 0, "après le dernier, le premier (en boucle)")
+	salon.changer_niveau(-1)
+	var recepteur := PacketPeerUDP.new()
+	_check(recepteur.bind(port_balise, "0.0.0.0") == OK, "(pré-condition) un récepteur écoute la balise de l'hôte")
+	decouverte._emettre_balise()
+	var balise := {}
+	var fin := Time.get_ticks_msec() + 500
+	while balise.is_empty() and Time.get_ticks_msec() < fin:
+		if recepteur.get_available_packet_count() > 0:
+			balise = decouverte.decoder_balise(recepteur.get_packet())
+		else:
+			OS.delay_msec(5)
+	recepteur.close()
+	_check(balise.get("niveau") == 2 and balise.get("nb_joueurs") == 1 and balise.get("manche_en_cours") == false,
+		"la balise de l'hôte annonce le niveau choisi au salon (%s)" % [balise])
+
+	# Langue ; Retour ; plus aucune connexion aux autoloads
+	params.definir_langue("en")
+	await process_frame
+	_check(salon.titre_niveau.text == "Level: Village" and salon.cartes[1].pseudo.text == "Free slot" and c0.etat.text == "READY!"
+		and salon.aide.text.begins_with("Left/Right"), "changer de langue retraduit le salon (%s)" % salon.titre_niveau.text)
+	params.definir_langue("fr")
+	salon.retour(false)
+	_check(not reseau.en_ligne() and reseau.table_salon.is_empty(), "Retour quitte le réseau : les clients voient partir l'hôte")
+	salon.free()
+	_check(reseau.salon_change.get_connections().is_empty()
+		and reseau.manche_lancee.get_connections().is_empty() and reseau.hote_perdu.get_connections().is_empty(),
+		"le salon fermé ne laisse aucune connexion aux autoloads")
+
+	# Un client : ni niveau ni adresses ; l'hôte perdu ramène à l'écran Réseau, avec son message
+	_check(reseau.rejoindre("127.0.0.1", 17796) == OK, "(pré-condition) ce poste est un client")
+	var salon_client: Control = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(salon_client)
+	await process_frame
+	_check(salon_client.aide.text == tr("SALON_AIDE") and not salon_client.adresses.visible and not salon_client.bouton_demarrer.visible,
+		"un client : l'aide sans le niveau ni Démarrer, pas d'adresses, pas de bouton")
+	salon_client.changer_niveau(1)
+	salon_client.demarrer()
+	_check(reseau.niveau_salon == 0 and not reseau.manche_en_cours, "un client ne change pas le niveau et ne démarre pas la partie")
+	var id_client: int = root.multiplayer.get_unique_id()
+	reseau.table_salon.assign([{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Hôte", "pret": true},
+		{"id": id_client, "index": 1, "couleur": palette[1], "pseudo": "Moi", "pret": false}])
+	reseau.salon_change.emit()
+	var attente_client: String = salon_client.etat.text
+	reseau.table_salon[1].pret = true
+	reseau.salon_change.emit()
+	_check(attente_client == tr("SALON_ATTENTE_PRETS") and salon_client.etat.text == tr("SALON_ATTENTE_HOTE"),
+		"un client voit pourquoi la partie attend, puis « l'hôte peut démarrer » (%s | %s)" % [attente_client, salon_client.etat.text])
+	reseau.quitter()
+	reseau.hote_perdu.emit()
+	await _frames(2)
+	var ecran: Node = current_scene
+	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.etat == ecran.Etat.ACCUEIL
+		and ecran.message.text == tr("RESEAU_HOTE_PERDU"), "hôte perdu : retour à l'écran Réseau, « L'hôte a quitté la partie »")
+	salon_client.free()
+	if ecran != null:
+		ecran.free()
+
+	# Échap (ou B) : quitte le réseau, écran Réseau sans message (celui de l'hôte perdu ne s'affiche
+	# qu'une fois)
+	_check(reseau.rejoindre("127.0.0.1", 17796) == OK, "(pré-condition) ce poste est de nouveau un client")
+	salon_client = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(salon_client)
+	await process_frame
+	await _appuyer(&"ui_cancel", true)
+	await _frames(2)
+	ecran = current_scene
+	_check(not reseau.en_ligne() and ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.message.text.is_empty(),
+		"Échap (ou B) quitte le réseau et revient à l'écran Réseau, sans message")
+	salon_client.free()
+	if ecran != null:
+		ecran.free()
+
+	# Un salon ouvert hors réseau (l'hôte parti pendant le chargement du salon : son signal n'a
+	# trouvé personne)
+	var orphelin: Control = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(orphelin)
+	await _frames(2)
+	ecran = current_scene
+	_check(ecran != null and ecran.scene_file_path == "res://Scenes/EcranReseau.tscn" and ecran.message.text == tr("RESEAU_HOTE_PERDU"),
+		"un salon ouvert hors réseau revient à l'écran Réseau avec « L'hôte a quitté la partie »")
+	orphelin.free()
+	if ecran != null:
+		ecran.free()
+
+	decouverte.port_balise = decouverte.PORT_BALISE
+	decouverte.destinations_forcees = PackedStringArray()
+	reseau.pseudo = ""
+	GS.niveau_courant = 0
+
+
+## Un appui (ou un relâchement) de `action`, comme le clavier ou la manette l'envoient au jeu.
+func _appuyer(action: StringName, appuye: bool) -> void:
+	var evenement := InputEventAction.new()
+	evenement.action = action
+	evenement.pressed = appuye
+	root.push_input(evenement)
+	await process_frame

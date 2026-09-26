@@ -1,0 +1,112 @@
+[gd_scene load_steps=4 format=3 uid="uid://dlelionsalon"]
+
+[ext_resource type="Script" path="res://Scripts/Salon.gd" id="1_salon"]
+
+[sub_resource type="Gradient" id="Gradient_ciel"]
+offsets = PackedFloat32Array(0, 0.55, 1)
+colors = PackedColorArray(0.09, 0.1, 0.24, 1, 0.42, 0.25, 0.43, 1, 0.9, 0.5, 0.32, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_ciel"]
+gradient = SubResource("Gradient_ciel")
+fill_to = Vector2(0, 1)
+
+[node name="Salon" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_salon")
+
+[node name="Ciel" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = SubResource("GradientTexture2D_ciel")
+
+[node name="Centre" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Colonne" type="VBoxContainer" parent="Centre"]
+layout_mode = 2
+theme_override_constants/separation = 28
+alignment = 1
+
+[node name="Titre" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_font_sizes/font_size = 110
+text = "SALON"
+horizontal_alignment = 1
+
+[node name="Niveau" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_font_sizes/font_size = 40
+horizontal_alignment = 1
+
+[node name="Cartes" type="HBoxContainer" parent="Centre/Colonne"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Etat" type="Label" parent="Centre/Colonne"]
+custom_minimum_size = Vector2(1600, 0)
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_outline_color = Color(0.1, 0.05, 0.12, 0.85)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 34
+horizontal_alignment = 1
+
+[node name="Demarrer" type="Button" parent="Centre/Colonne"]
+custom_minimum_size = Vector2(520, 80)
+layout_mode = 2
+size_flags_horizontal = 4
+focus_mode = 0
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_hover_color = Color(1, 0.9, 0.4, 1)
+theme_override_colors/font_pressed_color = Color(1, 0.85, 0.2, 1)
+theme_override_font_sizes/font_size = 38
+disabled = true
+text = "SALON_DEMARRER"
+
+[node name="Aide" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.75)
+theme_override_font_sizes/font_size = 26
+horizontal_alignment = 1
+
+[node name="Adresses" type="Label" parent="Centre/Colonne"]
+custom_minimum_size = Vector2(1600, 0)
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.75)
+theme_override_colors/font_outline_color = Color(0.1, 0.05, 0.12, 0.85)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 26
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="BoutonRetour" type="Button" parent="."]
+layout_mode = 1
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 284.0
+offset_bottom = 100.0
+focus_mode = 0
+theme_override_font_sizes/font_size = 26
+text = "RETOUR"
+
+[connection signal="pressed" from="BoutonRetour" to="." method="retour"]
+[connection signal="pressed" from="Centre/Colonne/Demarrer" to="." method="demarrer"]

@@ -70,8 +70,6 @@ RESEAU_ADRESSE_IP,Adresse IP,IP address
 RESEAU_REJOINDRE,Rejoindre,Join
 RESEAU_IP_INVALIDE,"Adresse IP invalide (exemple : 192.168.1.20)","Invalid IP address (example: 192.168.1.20)"
 RESEAU_CONNEXION,Connexion à %s…,Connecting to %s…
-RESEAU_HEBERGE,"Partie hébergée : %d/%d joueurs. Les autres la voient dans leur liste, ou tapent ton adresse : %s","Game hosted: %d/%d players. Others see it in their list, or type your address: %s"
-RESEAU_INSCRIT,"Connecté : tu es le joueur %d. En attente de l'hôte…","Connected: you are player %d. Waiting for the host…"
 RESEAU_REFUS_VERSION,Version différente de l'hôte (%s),Different version from the host (%s)
 RESEAU_REFUS_PLEIN,La partie est complète.,The game is full.
 RESEAU_REFUS_MANCHE,"Une manche est en cours : réessaie à la fin.","A round is in progress: try again when it ends."
@@ -80,3 +78,19 @@ RESEAU_ECHEC_CONNEXION,"Pas de réponse de l'hôte. Pare-feu de l'hôte ? Résea
 RESEAU_HOTE_PERDU,L'hôte a quitté la partie,The host left the game
 RESEAU_PORT_OCCUPE,Impossible d'héberger : port %d occupé,Can't host: port %d in use
 RESEAU_HEBERGER_IMPOSSIBLE,Impossible d'héberger (erreur %d),Can't host (error %d)
+SALON,Salon,Lobby
+SALON_NIVEAU,Niveau : %s,Level: %s
+SALON_HOTE,HÔTE,HOST
+SALON_TOI,TOI,YOU
+SALON_LIBRE,Place libre,Free slot
+SALON_PRET,PRÊT !,READY!
+SALON_PAS_PRET,pas prêt,not ready
+SALON_ATTENTE_JOUEURS,"Il faut au moins 2 joueurs pour démarrer.","At least 2 players are needed to start."
+SALON_ATTENTE_ARRIVEE,"Un joueur est en train d'arriver…","A player is joining…"
+SALON_ATTENTE_PRETS,"Tous les joueurs doivent être prêts.","Every player must be ready."
+SALON_PRET_A_DEMARRER,"Tout le monde est prêt : tu peux démarrer la partie.","Everyone is ready: you can start the game."
+SALON_ATTENTE_HOTE,"Tout le monde est prêt : l'hôte peut démarrer.","Everyone is ready: the host can start."
+SALON_DEMARRER,Démarrer la partie,Start the game
+SALON_AIDE,"Gauche/Droite : couleur   ·   Espace : prêt   ·   Échap : quitter","Left/Right: color   ·   Space: ready   ·   Esc: leave"
+SALON_AIDE_HOTE,"Gauche/Droite : couleur   ·   Haut/Bas : niveau   ·   Espace : prêt   ·   Tab : démarrer   ·   Échap : quitter","Left/Right: color   ·   Up/Down: level   ·   Space: ready   ·   Tab: start   ·   Esc: leave"
+SALON_ADRESSES,"Les autres te voient dans leur liste, ou tapent ton adresse : %s","Others see you in their list, or type your address: %s"
