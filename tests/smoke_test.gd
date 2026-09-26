@@ -662,14 +662,25 @@ func _run() -> void:
 	await _frames(1)
 	_check(not is_instance_valid(coeur_autre), "le cœur ramassé disparaît")
 
-	# Base commune des ennemis : seul un lion compte (`body is Lion`, pas le groupe « lion »), et
-	# seul l'hôte tranche un contact
+	# Bases communes des ennemis et des pastilles : seul un lion compte (`body is Lion`, pas le
+	# groupe « lion »), et seul l'hôte tranche un contact
 	var bases: Array = ["Soucoupe", "Coccinelle", "Boss"].map(func(nom: String) -> String:
 		var base: Script = load("res://Scripts/%s.gd" % nom).get_base_script()
 		return "" if base == null else base.resource_path)
 	_check(bases.all(func(p: String) -> bool: return p == "res://Scripts/Ennemi.gd"),
 		"soucoupe, coccinelle et peintre dérivent de la base Ennemi (%s)" % [bases])
+	var bases_pastilles: Array = ["ColorPickup", "BonusPickup", "CoeurPickup"].map(func(nom: String) -> String:
+		var base: Script = load("res://Scripts/%s.gd" % nom).get_base_script()
+		return "" if base == null else base.resource_path)
+	_check(bases_pastilles.all(func(p: String) -> bool: return p == "res://Scripts/Pastille.gd"),
+		"pastille de couleur, étoile et cœur dérivent de la base Pastille (%s)" % [bases_pastilles])
+	# L'intrus a un champ `joueur`, comme un lion : sous l'ancien typage (groupe « lion » puis
+	# `body.joueur`), il serait accepté.
+	var script_intrus := GDScript.new()
+	script_intrus.source_code = "extends CharacterBody2D\nvar joueur: Joueur = Joueur.new()\n"
+	script_intrus.reload()
 	var intrus := CharacterBody2D.new()  # sur la couche 1 et dans le groupe « lion », mais pas un lion
+	intrus.set_script(script_intrus)
 	intrus.add_to_group("lion")
 	var forme_intrus := CollisionShape2D.new()
 	forme_intrus.shape = CircleShape2D.new()
@@ -681,9 +692,20 @@ func _run() -> void:
 	soucoupe_intrus.position = intrus.position
 	root.add_child(soucoupe_intrus)
 	await _frames(3)
-	_check(soucoupe_intrus.get_overlapping_bodies().has(intrus) and autre.vies == 2 and local.vies == 2,
-		"un ennemi ignore un corps qui n'est pas un lion, même dans le groupe « lion »")
+	_check(soucoupe_intrus.get_overlapping_bodies().has(intrus) and autre.vies == 2 and local.vies == 2
+		and intrus.joueur.vies == 3 and not intrus.joueur.est_invulnerable(),
+		"un ennemi ignore un corps qui n'est pas un lion, même dans le groupe « lion » et avec un joueur")
 	soucoupe_intrus.free()
+	for nom in ["ColorPickup", "BonusPickup", "CoeurPickup"]:
+		var pastille_intrus: Area2D = load("res://Scenes/%s.tscn" % nom).instantiate()
+		pastille_intrus.position = intrus.position
+		root.add_child(pastille_intrus)
+		await _frames(3)
+		_check(is_instance_valid(pastille_intrus) and pastille_intrus.get_overlapping_bodies().has(intrus)
+			and intrus.joueur.couleurs_debloquees.is_empty() and intrus.joueur.crans == 1 and not intrus.joueur.bonus_actif(),
+			"%s : une pastille ignore un corps qui n'est pas un lion, même dans le groupe « lion » et avec un joueur" % nom)
+		if is_instance_valid(pastille_intrus):
+			pastille_intrus.free()
 	intrus.free()
 	autre.invulnerable_restant = 0.0
 	lion_autre._recul = Vector2.ZERO  # le recul des coups précédents l'éloigne encore
@@ -694,7 +716,7 @@ func _run() -> void:
 	root.add_child(poste_client)
 	var api_client := SceneMultiplayer.new()
 	var pair_client := ENetMultiplayerPeer.new()
-	pair_client.create_client("127.0.0.1", 7779)  # jamais connecté : un client qui attend l'hôte
+	_check(pair_client.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client, jamais connecté : un client qui attend l'hôte")
 	api_client.multiplayer_peer = pair_client
 	set_multiplayer(api_client, poste_client.get_path())
 	var coccinelle_client: Node2D = load("res://Scenes/Coccinelle.tscn").instantiate()
@@ -704,6 +726,24 @@ func _run() -> void:
 	_check(not coccinelle_client.multiplayer.is_server() and coccinelle_client.get_overlapping_bodies().has(lion_autre)
 		and autre.vies == 2 and not autre.est_invulnerable(),
 		"sur un client, un ennemi au contact d'un lion ne le signale pas aux règles (seul l'hôte tranche)")
+	coccinelle_client.free()
+	var crans_client := autre.crans
+	var pastille_client: Area2D = load("res://Scenes/ColorPickup.tscn").instantiate()
+	pastille_client.couleur_index = 6
+	pastille_client.position = lion_autre.global_position + Vector2(68, 66)
+	poste_client.add_child(pastille_client)
+	var etoile_client: Area2D = load("res://Scenes/BonusPickup.tscn").instantiate()
+	etoile_client.position = Vector2(-500, -500)
+	poste_client.add_child(etoile_client)
+	await _frames(3)
+	_check(is_instance_valid(pastille_client) and pastille_client.get_overlapping_bodies().has(lion_autre)
+		and not autre.couleurs_debloquees.has(GS.couleur(6)) and autre.crans == crans_client,
+		"sur un client, une pastille au contact d'un lion n'est pas ramassée (seul l'hôte tranche)")
+	if etoile_client.has_method("_expirer"):
+		etoile_client._expirer()
+	await _frames(1)
+	_check(etoile_client.has_method("_expirer") and is_instance_valid(etoile_client),
+		"sur un client, une étoile en fin de vie ne se libère pas d'elle-même (l'hôte la fait disparaître)")
 	set_multiplayer(null, poste_client.get_path())
 	pair_client.close()
 	poste_client.free()
@@ -1098,7 +1138,7 @@ func _run() -> void:
 	# Sur un client, la ville dessine le tampon mais ne touche pas au territoire : l'hôte décide
 	var api_ville := SceneMultiplayer.new()
 	var pair_ville := ENetMultiplayerPeer.new()
-	pair_ville.create_client("127.0.0.1", 7779)
+	_check(pair_ville.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la ville")
 	api_ville.multiplayer_peer = pair_ville
 	set_multiplayer(api_ville, ville_b.get_path())
 	var scores_avant := [t.cellules_de(0), t.cellules_de(1)]
