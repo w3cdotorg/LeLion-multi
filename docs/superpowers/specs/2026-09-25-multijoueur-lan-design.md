@@ -61,7 +61,7 @@ de jeu.
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. | `Joueur`, `Commandes` |
 | `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, vol de cellules, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille), dit si la partie se joue au territoire (en bataille seulement), donne l'écran du mode (2000×648 en solo, 2000×1125 en bataille), l'avancement de la partie (la ville peinte rapportée au seuil en solo, le temps de la manche en bataille : il accélère le peintre et les ennemis) et ce qui peut apparaître (pastille et sa couleur, étoile, cœurs), que lit le Spawner. `ReglesSolo` / `ReglesBataille`. Ses événements s'exécutent sur l'hôte uniquement ; l'écran et le territoire sont lus partout. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel), tampons en cache par rayon et jeu de couleurs, + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille : un `Territoire`, créé quand les règles se jouent au territoire, tamponné par l'hôte seul, qui tient aussi les scores). Chaque tampon est peint pour un `Joueur`, dans ses couleurs. | `Joueur`, `Territoire`, `Regles` |
-| `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon, attribution des index et couleurs, signaux de connexion / déconnexion. | `MultiplayerAPI` |
+| `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon (la table : arrivés seulement, couleur, Prêt ; tenue par l'hôte, diffusée à chaque changement), attribution des index et couleurs, arbitrage des demandes des clients, relais du niveau et du lancement de la manche, revérifié par l'hôte au moment où il démarre (RPC fiables sur l'autoload, présent sur chaque poste dès la connexion), signaux de connexion / déconnexion et du salon. Le salon (scène) porte le bouton « Démarrer la partie » de l'hôte. | `MultiplayerAPI` |
 | `Decouverte` (autoload) | Balise UDP de l'hôte (émise tant que `Reseau` héberge, sans qu'on la relance), écoute et liste des parties entendues, validation d'une adresse IPv4 saisie. Ne nomme aucun autoload (phase 12). | `Reseau` (par son chemin) |
 | `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène), relaie tampons et scores. | tout le reste |
 
@@ -120,15 +120,29 @@ de jeu.
   des parties où les pleines, en cours ou d'une autre version sont grisées avec la raison,
   *Rejoindre par IP*, IPv4 seulement) → **Salon**. Le titre remet toujours le poste hors réseau
   (`Reseau.quitter()`) avant le solo.
-- **Salon** : 6 cartes synchronisées par l'hôte (pseudo, aperçu du lion teinté, état Prêt).
-  Gauche/droite change de couleur parmi les libres, l'hôte arbitre les conflits. L'hôte choisit le
-  niveau (haut/bas). Vomir bascule Prêt. Dès que ≥ 2 joueurs sont inscrits et que tous sont prêts,
-  compte à rebours de 3 s, annulé si quelqu'un repasse non prêt. Retour quitte le salon.
+- **Salon** : 6 cartes synchronisées par l'hôte (pseudo, aperçu du lion teinté, état Prêt, badges
+  « HÔTE » et « TOI » ; une place seulement réservée par une poignée de main en cours n'a pas de
+  carte). Gauche/droite change de couleur parmi les libres (celles des places réservées sont
+  prises), l'hôte arbitre les conflits ; la couleur d'un joueur prêt est figée. L'hôte choisit le
+  niveau (haut/bas, en boucle, à tout moment) ; la balise l'annonce. Vomir bascule Prêt. Pas de
+  compte à rebours (décision de l'utilisateur du 26/09 : la manche s'ouvre déjà sur l'intro « Prêt ?
+  Vomissez ! ») : l'hôte seul a un bouton « Démarrer la partie » (souris, Tab, Start), actif quand au
+  moins 2 joueurs sont arrivés, tous prêts, sans place encore réservée ; grisé, il dit pourquoi
+  (« Il faut au moins 2 joueurs pour démarrer. », « Un joueur est en train d'arriver… », « Tous les
+  joueurs doivent être prêts. »), et les clients voient cette raison ou « Tout le monde est prêt :
+  l'hôte peut démarrer. ». Un appui lance aussitôt la manche ; l'hôte revérifie au moment même (un
+  joueur parti ou repassé non prêt dans la même image : refusé, le bouton se regrise). Il pose la
+  manche en cours (plus aucune arrivée), compacte les index sur 0..n-1 et lance la manche : chaque
+  poste branche les règles de bataille et la même table des joueurs (identifiant, pseudo et couleur
+  de chaque index, `GameState.configurer_bataille_reseau`), puis charge la scène de jeu. Retour
+  (Échap, B) quitte le salon pour l'écran Réseau. Aucun contrôle du salon ne prend le focus : une
+  action n'agit qu'à l'appui (ni répétition du clavier, ni stick tenu).
 - **Commandes** : chaque joueur utilise les commandes actuelles de son PC (clavier ou manette).
 - **Pause** : aucune en réseau. Échap / Start ouvre un menu local (Reprendre, Quitter la partie)
   pendant que le jeu continue.
 - **Déconnexions** :
-  - hôte perdu : message « L'hôte a quitté la partie » puis retour au titre ;
+  - hôte perdu : message « L'hôte a quitté la partie », puis retour à l'écran Réseau depuis le salon
+    (on peut aussitôt rejoindre une autre partie), au titre depuis une manche ;
   - client perdu en salon : sa carte se libère ;
   - client perdu en manche : son lion disparaît, ses cellules restent, il reste au classement en
     grisé.
@@ -273,7 +287,7 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 | Connexion à une IP qui ne répond pas | Délai de 5 s puis « Pas de réponse de l'hôte. Pare-feu de l'hôte ? Réseau Privé ? », retour à l'accueil de l'écran Réseau |
 | Version différente, salon plein, manche en cours | Refus explicite côté client (textes traduits, clés `Reseau.REFUS_*`) |
 | Aucune balise reçue | Liste vide avec l'indice « Pare-feu ? Réseau Privé ? Essaie par IP » |
-| Hôte perdu | Message « L'hôte a quitté la partie » puis retour au titre (salon, manche) ; sur l'écran Réseau, retour à son accueil |
+| Hôte perdu | Message « L'hôte a quitté la partie » puis retour à l'écran Réseau (depuis le salon, ou l'écran Réseau lui-même : son accueil), au titre depuis une manche |
 | Client perdu | Voir section 4 |
 
 ## 10. Tests
@@ -298,7 +312,12 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   Depuis la phase 12, la découverte : balise vers 127.0.0.1 (ports de balise 18778 et suivants),
   partie vue puis rejointe par sa balise, balise suivante à 2 joueurs, expiration 3 s après la
   dernière balise alors que le processus de l'hôte vit encore, port des balises occupé par un
-  second écouteur ; la vraie diffusion avec `DIFFUSION=1`, hors CI. De bout en bout (phase
+  second écouteur ; la vraie diffusion avec `DIFFUSION=1`, hors CI. Depuis la phase 13, le salon
+  (scénario 8, par les vraies scènes) : 1 hôte + 3 clients arrivés dans l'ordre, départ d'un client
+  (sa carte se libère), deux demandes de couleur au même feu arbitrées par l'hôte, bouton Démarrer
+  regrisé par un client repassé non prêt et démarrage alors refusé, puis démarrage par l'hôte, tous
+  prêts, manche chargée chez tous avec la même
+  table (index compactés), retardataire refusé « manche en cours ». De bout en bout (phase
   15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
   propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
   déconnexion d'un client en cours de manche.
