@@ -12,15 +12,27 @@ enum Etat { ACCUEIL, CONNEXION, HEBERGE, INSCRIT }
 
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const COULEUR_INFO := Color(1, 1, 1, 0.85)
-const COULEUR_ERREUR := Color(1.0, 0.72, 0.64)
+# M3 (revue finale 12 bis) : le remplissage passe en blanc pour le contraste (le contour salmon
+# reste l'accent qui distingue un refus/échec d'une simple information).
+const COULEUR_ERREUR := Color(1, 1, 1, 0.95)
+const COULEUR_CONTOUR_INFO := Color(0.1, 0.05, 0.12, 0.85)
+const COULEUR_CONTOUR_ERREUR := Color(0.85, 0.22, 0.14, 0.9)
 const TAILLE_BOUTON_PARTIE := Vector2(1100, 64)
 
 ## Port de jeu d'`heberger()` et de la saisie par IP (modifiable par les tests).
 var port_jeu: int = Reseau.PORT
 var etat := Etat.ACCUEIL
-## Un bouton par partie entendue, par « ip:port », dans l'ordre de la liste (mis à jour en place :
-## le bouton qui a le focus le garde quand sa partie change).
+## Un bouton par partie entendue, par « ip:port » (ou « 127.0.0.1:port » pour une partie hébergée
+## par ce poste, I2), dans l'ordre de la liste (mis à jour en place : le bouton qui a le focus le
+## garde quand sa partie change).
 var boutons_parties: Dictionary[String, Button] = {}
+## La dernière fiche affichée par clé (I2 : fusionnée via `fusionner_parties_locales`), pour que
+## `rejoindre_partie` retrouve l'adresse réellement jointe (127.0.0.1 pour ce poste lui-même).
+var _parties_affichees: Dictionary[String, Dictionary] = {}
+## Le contrôle qui a lancé la tentative en cours (une ligne de partie ou le champ IP), pour lui
+## rendre le focus après un refus ou un échec (M10, revue finale 12 bis) ; repli sur Héberger s'il
+## n'existe plus (la partie a disparu de la liste pendant la tentative).
+var _dernier_controle: Control = null
 
 @onready var champ_pseudo: LineEdit = $Centre/Colonne/RangeePseudo/Pseudo
 @onready var bouton_heberger: Button = $Centre/Colonne/Heberger
@@ -67,9 +79,19 @@ func _exit_tree() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel"):
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	# M1 (revue finale 12 bis) : Échap dans un LineEdit en édition n'en sort pas de lui-même (le
+	# champ ne marque pas l'entrée traitée), donc ce gestionnaire renvoyait déjà à l'écran d'avant en
+	# même temps qu'un simple abandon de saisie. On sort d'abord le champ de l'édition ; un second
+	# Échap ramènera bien à l'accueil ou au titre.
+	var proprietaire := get_viewport().gui_get_focus_owner()
+	if proprietaire is LineEdit and (proprietaire as LineEdit).is_editing():
+		(proprietaire as LineEdit).unedit()
 		get_viewport().set_input_as_handled()
-		retour()
+		return
+	get_viewport().set_input_as_handled()
+	retour()
 
 
 ## Héberge une partie sur `port_jeu` avec le pseudo saisi.
@@ -87,10 +109,12 @@ func heberger() -> void:
 		_afficher_hebergement()
 
 
-## Rejoint la partie de la liste `cle` (« ip:port »), si elle est encore là et joignable.
+## Rejoint la partie de la liste `cle` (« ip:port », ou « 127.0.0.1:port » pour une partie hébergée
+## par ce poste, I2), si elle est encore là et joignable.
 func rejoindre_partie(cle: String) -> void:
-	var partie: Dictionary = Decouverte.parties.get(cle, {})
+	var partie: Dictionary = _parties_affichees.get(cle, {})
 	if etat == Etat.ACCUEIL and not partie.is_empty() and _raison_injoignable(partie).is_empty():
+		_dernier_controle = boutons_parties.get(cle)  # M10 : lui rendre le focus après un échec
 		_rejoindre(partie.ip, partie.port)
 
 
@@ -104,6 +128,7 @@ func rejoindre_par_ip() -> void:
 		champ_ip.grab_focus()
 		return
 	champ_ip.text = adresse
+	_dernier_controle = champ_ip  # M10 : lui rendre le focus après un échec
 	_rejoindre(adresse, port_jeu)
 
 
@@ -158,20 +183,52 @@ func _changer_etat(nouvel_etat: Etat) -> void:
 		bouton_retour.grab_focus()
 
 
-## Met la liste à jour en place : un bouton par partie, dans l'ordre de `Decouverte.parties_triees`.
+## Fusionne dans `parties` les entrées dont l'adresse source est une adresse locale de ce poste
+## (I2, revue finale de la phase 12 bis) : une partie que ce poste héberge apparaît une fois par
+## interface (une par diffusion dirigée, `Decouverte.destinations_balise`), avec des adresses que
+## les autres joueurs ne peuvent pas tous joindre. Une seule ligne par port de jeu, jointe via
+## 127.0.0.1 (l'adresse à laquelle ce poste se rejoint toujours lui-même). Fonction statique pure,
+## testée sans dépendre de l'OS ni d'une vraie liste. Ne distingue pas deux hôtes différents portant
+## le même port sur des postes différents (une balise sans identifiant de session, feuille de
+## route : phase 13 au plus tard, un id de session par balise).
+static func fusionner_parties_locales(parties: Array[Dictionary], adresses_locales: PackedStringArray) -> Dictionary[String, Dictionary]:
+	var vues: Dictionary[String, Dictionary] = {}
+	for partie in parties:
+		var locale := adresses_locales.has(partie.ip)
+		var cle := "127.0.0.1:%d" % partie.port if locale else "%s:%d" % [partie.ip, partie.port]
+		if vues.has(cle):
+			continue
+		if locale and partie.ip != "127.0.0.1":
+			var copie := partie.duplicate()
+			copie["ip"] = "127.0.0.1"
+			vues[cle] = copie
+		else:
+			vues[cle] = partie
+	return vues
+
+
+## Met la liste à jour en place : un bouton par partie, dans l'ordre de `Decouverte.parties_triees`
+## (fusionnée, I2).
 func _afficher_parties() -> void:
 	var parties: Array[Dictionary] = []
 	if etat == Etat.ACCUEIL:
 		parties = Decouverte.parties_triees()
+	_parties_affichees = fusionner_parties_locales(parties, IP.get_local_addresses())
 	var cles: Array[String] = []
-	for partie in parties:
-		var cle := "%s:%d" % [partie.ip, partie.port]
+	for cle: String in _parties_affichees:
+		var partie: Dictionary = _parties_affichees[cle]
 		cles.append(cle)
 		var bouton: Button = boutons_parties.get(cle)
 		if bouton == null:
 			bouton = Button.new()
 			bouton.custom_minimum_size = TAILLE_BOUTON_PARTIE
 			bouton.add_theme_font_size_override("font_size", 28)
+			# I3 (revue finale 12 bis) : un anneau de focus qui ne dépasse pas du bouton (le
+			# ScrollContainer qui le contient clippe tout ce qui dépasse), plus un fond éclairci pour
+			# qu'un joueur au clavier ou à la manette voie clairement quelle ligne il va rejoindre.
+			bouton.add_theme_stylebox_override("focus", _style_focus_partie())
+			bouton.focus_entered.connect(func() -> void: bouton.modulate = Color(1.18, 1.18, 1.18))
+			bouton.focus_exited.connect(func() -> void: bouton.modulate = Color(1, 1, 1))
 			bouton.pressed.connect(rejoindre_partie.bind(cle))
 			liste.add_child(bouton)
 			boutons_parties[cle] = bouton
@@ -205,6 +262,17 @@ func _chainer_focus(cles: Array[String]) -> void:
 	bouton_rejoindre.focus_neighbor_top = bouton_rejoindre.get_path_to(chaine[chaine.size() - 2])
 
 
+## Le style de focus des lignes de partie (I3, revue finale 12 bis) : une bordure intérieure sans
+## marge d'expansion, pour ne pas se faire clipper par le `ScrollContainer` qui contient la liste.
+static func _style_focus_partie() -> StyleBoxFlat:
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color(0, 0, 0, 0)
+	focus.border_color = Styles.JAUNE
+	focus.set_border_width_all(3)
+	focus.set_corner_radius_all(6)
+	return focus
+
+
 func _texte_partie(partie: Dictionary) -> String:
 	var niveau: String = tr(GameState.NIVEAUX[partie.niveau].nom)
 	var texte: String = tr("RESEAU_PARTIE") % [partie.pseudo, partie.nb_joueurs, partie.places, niveau]
@@ -225,7 +293,9 @@ func _raison_injoignable(partie: Dictionary) -> String:
 
 
 func _afficher_hebergement() -> void:
-	var adresses := ", ".join(Decouverte.adresses_privees(IP.get_local_addresses()))
+	# I1 (revue finale 12 bis) : triées par interface (physique d'abord), pas seulement par plage
+	# IPv4, sans quoi une carte virtuelle (bridge, vEthernet, VMware…) pouvait passer devant le Wi-Fi.
+	var adresses := ", ".join(Decouverte.adresses_hote(IP.get_local_interfaces()))
 	_afficher_message("RESEAU_HEBERGE", [Reseau.inscrits.size(), Reseau.places, adresses if not adresses.is_empty() else "?"], false)
 
 
@@ -238,11 +308,25 @@ func _rendre_message() -> void:
 	var cle: String = _message.cle
 	var arguments: Array = _message.arguments
 	message.text = "" if cle.is_empty() else (tr(cle) % arguments if not arguments.is_empty() else tr(cle))
+	# M3 (revue finale 12 bis) : un remplissage blanc porte le contraste, le contour reste l'accent
+	# qui distingue un refus/échec (salmon) d'une simple information (sombre, comme avant).
 	message.add_theme_color_override("font_color", COULEUR_ERREUR if _message.erreur else COULEUR_INFO)
+	message.add_theme_color_override("font_outline_color", COULEUR_CONTOUR_ERREUR if _message.erreur else COULEUR_CONTOUR_INFO)
+
+
+## Rend le focus au contrôle qui a lancé la tentative en cours (M10), ou le laisse sur Héberger
+## (déjà focusé par `_changer_etat`) si ce contrôle n'existe plus ou n'est plus dans l'arbre (la
+## partie visée a disparu de la liste pendant la tentative).
+func _reprendre_focus_echec() -> void:
+	if is_instance_valid(_dernier_controle) and _dernier_controle.is_inside_tree():
+		_dernier_controle.grab_focus()
 
 
 func _sur_inscription(index: int, _couleur: Color) -> void:
 	if etat == Etat.CONNEXION:
+		# La tentative a réussi : un « hôte perdu » bien plus tard (M10) ne doit pas rendre le focus
+		# à un champ IP ou une ligne utilisés il y a longtemps, mais à Héberger comme d'habitude.
+		_dernier_controle = null
 		_changer_etat(Etat.INSCRIT)
 		_afficher_message("RESEAU_INSCRIT", [index + 1], false)
 
@@ -252,16 +336,19 @@ func _sur_refus(raison: String, version_hote: String) -> void:
 	var connues := [Reseau.REFUS_VERSION, Reseau.REFUS_PLEIN, Reseau.REFUS_MANCHE, Reseau.REFUS_DEMANDE]
 	var cle := raison if connues.has(raison) else Reseau.REFUS_DEMANDE
 	_changer_etat(Etat.ACCUEIL)
+	_reprendre_focus_echec()
 	_afficher_message(cle, [version_hote] if cle == Reseau.REFUS_VERSION else [], true)
 
 
 func _sur_connexion_echouee() -> void:
 	_changer_etat(Etat.ACCUEIL)
+	_reprendre_focus_echec()
 	_afficher_message("RESEAU_ECHEC_CONNEXION", [], true)
 
 
 func _sur_hote_perdu() -> void:
 	_changer_etat(Etat.ACCUEIL)
+	_reprendre_focus_echec()
 	_afficher_message("RESEAU_HOTE_PERDU", [], true)
 
 

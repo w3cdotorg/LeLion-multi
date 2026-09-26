@@ -332,6 +332,67 @@ static func adresses_privees(adresses: PackedStringArray) -> PackedStringArray:
 	return privees
 
 
+## Motifs (en minuscules) qui trahissent une carte virtuelle dans son nom ou son libellé : testés
+## avant les motifs physiques, car « vEthernet » contient « ethernet » (I1, revue finale de la
+## phase 12 bis : virtuelle en dernier recours, l'hôte ne peut pas y répondre).
+const _MOTIFS_INTERFACE_VIRTUELLE := ["vethernet", "virtualbox", "vboxnet", "vmware", "vmnet",
+	"hyper-v", "wsl", "docker", "bridge", "br-", "virbr", "veth", "utun", "tun", "tap", "tailscale",
+	"zerotier", "hamachi", "wireguard", "openvpn", "nordlynx", "vpn", "awdl", "llw", "anpi",
+	"loopback", "npcap"]
+## Débuts de libellé qui trahissent une vraie carte réseau (Wi-Fi, Ethernet) : testés seulement si
+## aucun motif virtuel n'a déjà répondu.
+const _PREFIXES_INTERFACE_PHYSIQUE := ["wi-fi", "wlan", "ethernet", "eth", "wl", "enp"]
+static var _motif_interface_en: RegEx = RegEx.create_from_string("^en\\d+$")
+
+
+## Le rang de `interface` (un élément d'`IP.get_local_interfaces()`) : 0 une carte probablement
+## physique (Wi-Fi, Ethernet, en0…), 2 une carte probablement virtuelle (vEthernet, VirtualBox,
+## VMware, Hyper-V, WSL, Docker, bridges, tunnels VPN…), 1 sinon (nom inconnu ou libellé localisé,
+## par exemple « Connexion au réseau local »).
+static func _rang_interface(interface: Dictionary) -> int:
+	var etiquette: String = ("%s %s" % [str(interface.get("friendly", "")), str(interface.get("name", ""))]).to_lower()
+	for motif in _MOTIFS_INTERFACE_VIRTUELLE:
+		if etiquette.contains(motif):
+			return 2
+	var friendly: String = str(interface.get("friendly", "")).to_lower()
+	for prefixe in _PREFIXES_INTERFACE_PHYSIQUE:
+		if friendly.begins_with(prefixe):
+			return 0
+	if _motif_interface_en.search(friendly) != null:
+		return 0
+	return 1
+
+
+## Les adresses à lire à voix haute pour héberger (I1, revue finale de la phase 12 bis) : parmi
+## `interfaces` (la forme d'`IP.get_local_interfaces()` : des dictionnaires {name, friendly, index,
+## addresses, …}), celles du meilleur rang d'interface non vide (`_rang_interface` : les cartes
+## physiques d'abord, les virtuelles seulement en dernier recours), triées à l'intérieur du rang
+## comme `adresses_privees` (cartes réelles d'une LAN domestique d'abord, puis 10/8, puis
+## 172.16/12, 169.254 en tout dernier recours). Fonction statique pure : testée sur de faux
+## tableaux, sans l'OS. `Decouverte` n'est plus gelé à partir de cette phase (le salon de la phase
+## 13 réutilisera cette fonction pour afficher l'adresse de l'hôte).
+static func adresses_hote(interfaces: Array) -> PackedStringArray:
+	var brutes := PackedStringArray()
+	var rangs_par_adresse: Dictionary[String, int] = {}
+	for interface: Dictionary in interfaces:
+		var rang: int = _rang_interface(interface)
+		for adresse: String in interface.get("addresses", PackedStringArray()):
+			brutes.append(adresse)
+			if not rangs_par_adresse.has(adresse) or rang < rangs_par_adresse[adresse]:
+				rangs_par_adresse[adresse] = rang
+	var triees := adresses_privees(brutes)
+	if triees.is_empty():
+		return PackedStringArray()
+	var meilleur_rang := 2
+	for adresse in triees:
+		meilleur_rang = mini(meilleur_rang, rangs_par_adresse.get(adresse, 1))
+	var hote := PackedStringArray()
+	for adresse in triees:
+		if rangs_par_adresse.get(adresse, 1) == meilleur_rang:
+			hote.append(adresse)
+	return hote
+
+
 ## L'adresse IPv4 saisie `texte` sous sa forme normale (« 192.168.001.010 » → « 192.168.1.10 »), ou
 ## une chaîne vide si ce n'est pas une adresse joignable : quatre nombres de 0 à 255 d'un à trois
 ## chiffres, ni 0.x.x.x, ni multidiffusion ou réservée (224 et au-delà, 255.255.255.255 compris).

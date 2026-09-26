@@ -1206,8 +1206,26 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 		and b_bob.text.ends_with(tr("RESEAU_PARTIE_VERSION") % "0.1") and b_chloe.disabled and b_chloe.text.ends_with(tr("RESEAU_PARTIE_MANCHE")),
 		"pleine, autre version, manche en cours : grisées, avec la raison (%s | %s | %s)" % [b_anna.text, b_bob.text, b_chloe.text])
 	_check(ecran.bouton_heberger.get_node(ecran.bouton_heberger.focus_neighbor_bottom) == b_anna
-		and b_zoe.get_node(b_zoe.focus_neighbor_bottom) == ecran.champ_ip and ecran.champ_ip.get_node(ecran.champ_ip.focus_neighbor_top) == b_zoe,
-		"haut et bas : Héberger, les parties dans l'ordre, puis l'adresse IP")
+		and b_zoe.get_node(b_zoe.focus_neighbor_bottom) == ecran.champ_ip and ecran.champ_ip.get_node(ecran.champ_ip.focus_neighbor_top) == b_zoe
+		# M5 (b), revue finale 12 bis : le bas de Rejoindre n'était pas vérifié (mutation qui l'enlève
+		# passait). Zoé est la dernière partie (ordre alphabétique Anna, Bob, Chloé, Zoé).
+		and ecran.bouton_rejoindre.get_node(ecran.bouton_rejoindre.focus_neighbor_top) == b_zoe,
+		"haut et bas : Héberger, les parties dans l'ordre, puis l'adresse IP, puis Rejoindre")
+	# I3 (revue finale 12 bis) : l'anneau de focus des lignes ne dépasse pas du bouton (sinon le
+	# ScrollContainer qui contient la liste le clippe et le joueur ne voit presque rien).
+	var style_focus: StyleBoxFlat = b_zoe.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(style_focus != null and style_focus.expand_margin_left == 0.0 and style_focus.expand_margin_top == 0.0
+		and style_focus.expand_margin_right == 0.0 and style_focus.expand_margin_bottom == 0.0 and style_focus.border_width_left > 0,
+		"I3 : le focus d'une ligne de partie est une bordure sans marge d'expansion (visible, jamais clippée)")
+	# I2 (revue finale 12 bis) : le même hôte vu sur plusieurs interfaces (adresses locales de ce
+	# poste) ne fait qu'une ligne, jointe via 127.0.0.1 ; une adresse non locale garde la sienne.
+	var multi: Array[Dictionary] = [zoe.merged({"ip": "192.168.1.5"}, true), zoe.merged({"ip": "192.168.56.1"}, true)]
+	var fusion: Dictionary = ecran.fusionner_parties_locales(multi, PackedStringArray(["192.168.1.5", "192.168.56.1"]))
+	_check(fusion.size() == 1 and fusion.has("127.0.0.1:17797") and fusion["127.0.0.1:17797"].ip == "127.0.0.1",
+		"I2 : un hôte vu sur deux interfaces (adresses locales) ne fait qu'une ligne, jointe via 127.0.0.1 (%s)" % [fusion.keys()])
+	var distincts: Dictionary = ecran.fusionner_parties_locales(multi, PackedStringArray(["192.168.1.5"]))
+	_check(distincts.size() == 2 and distincts.has("127.0.0.1:17797") and distincts.has("192.168.56.1:17797"),
+		"I2 : seule l'adresse reconnue comme locale est jointe, l'autre garde sa propre ligne (%s)" % [distincts.keys()])
 	ecran.rejoindre_partie("10.0.0.2:17797")
 	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne(), "une partie grisée ne se rejoint pas")
 	b_zoe.grab_focus()
@@ -1289,10 +1307,20 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	ecran.heberger()
 	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne() and ecran.message.text == "Impossible d'héberger : port 17798 occupé",
 		"port occupé : « Impossible d'héberger : port 17798 occupé », sans quitter l'accueil (%s)" % ecran.message.text)
+	# M5 (c) : une partie encore dans la liste (le passage par CONNEXION plus haut a vidé
+	# `decouverte.parties` en fermant l'écoute) pour vérifier que la langue retraduit aussi les lignes.
+	decouverte.enregistrer_partie(decouverte.parties, "10.0.0.9", zoe.merged({"pseudo": "Nina"}, true), futur)
+	decouverte.parties_changees.emit()
+	await _frames(1)
 	params.definir_langue("en")
 	await _frames(1)
 	_check(ecran.message.text == "Can't host: port 17798 in use" and ecran.indice.text.begins_with("No game found"),
 		"changer de langue retraduit le message et l'indice (%s | %s)" % [ecran.message.text, ecran.indice.text])
+	# M5 (c), revue finale 12 bis : la retraduction des lignes de la liste n'était pas vérifiée
+	# (mutation qui enlève l'appel à _afficher_parties() passait quand même).
+	var lignes_en: Array = ecran.boutons_parties.values().map(func(b: Button) -> String: return b.text)
+	_check(not lignes_en.is_empty() and lignes_en.any(func(t: String) -> bool: return "players" in t),
+		"changer de langue retraduit aussi les lignes de la liste, pas seulement le message (%s)" % [lignes_en])
 	params.definir_langue("fr")
 	occupant.close()
 	var erreur_attendue := ENetMultiplayerPeer.new().create_server(70000)
@@ -1305,10 +1333,15 @@ func _tester_ecran_reseau(scores: Node, params: Node) -> void:
 	# bouton Multijoueur) ; l'écran fermé ne laisse ni écoute ni connexion aux autoloads
 	ecran.retour(false)
 	_check(not reseau.en_ligne() and scores.preference("pseudo", "") == "Zoé la gran", "Retour quitte le réseau et garde le pseudo mémorisé")
-	ecran.free()
+	# M5 (a), revue finale 12 bis : retirer de l'arbre sans détruire, pour vérifier que c'est bien
+	# `_exit_tree` (les `disconnect` explicites) qui nettoie, pas seulement le nettoyage automatique
+	# des connexions d'un nœud détruit (une simple `ecran.free()` faisait passer une mutation qui
+	# enlève les 8 `disconnect`).
+	root.remove_child(ecran)
 	_check(not decouverte.ecoute_active() and decouverte.parties_changees.get_connections().is_empty()
 		and reseau.refuse.get_connections().is_empty() and reseau.joueur_arrive.get_connections().is_empty(),
-		"l'écran fermé ne laisse ni écoute ni connexion aux autoloads")
+		"l'écran retiré de l'arbre (pas encore détruit) ne laisse ni écoute ni connexion aux autoloads")
+	ecran.free()
 
 	# Port des balises déjà pris (deux LeLion sur un PC) : la liste le dit, sans planter
 	var intrus := PacketPeerUDP.new()
