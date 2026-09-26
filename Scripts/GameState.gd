@@ -38,9 +38,9 @@ const NIVEAUX: Array[Dictionary] = [
 ]
 
 ## Le tableau est rempli ou réinitialisé en place (append, resize, échange de cases) et jamais
-## réassigné, et un `Joueur` n'est jamais remplacé par un autre objet pour le même poste : les
-## scènes s'abonnent au joueur local dans leur `_ready`, `Audio` pour toute la session (il suit
-## `joueur_local_change`).
+## réassigné. Les abonnés valables pour plus d'une manche suivent `joueur_local_change` (`Audio`,
+## pour toute la session) : l'identité d'objet du `Joueur` de ce poste n'est PAS garantie d'une
+## manche à l'autre en réseau (le salon, phase 13, écrit la table par index).
 var joueurs: Array[Joueur] = [Joueur.new()]
 ## Règles de la partie : celles du solo par défaut ; `configurer_solo` et `configurer_bataille`
 ## les changent.
@@ -67,13 +67,19 @@ func _init() -> void:
 
 
 ## Le joueur de ce poste : celui dont `id_reseau` est l'identifiant réseau du poste
-## (`multiplayer.get_unique_id()` : 1 chez l'hôte et hors réseau). À défaut (client dont les
+## (`multiplayer.get_unique_id()` : 1 chez l'hôte et hors réseau). Hors réseau ou pair fermé/absent
+## (revue phase 11 bis, M1), 1 ne veut rien dire de ce poste (c'est aussi la case de l'hôte) : le
+## dernier joueur local annoncé (`_dernier_joueur_local`) est gardé s'il est toujours dans le
+## tableau, identique en solo, en bataille locale et chez l'hôte. À défaut (client dont les
 ## identifiants ne sont pas encore attribués), le premier joueur.
 func joueur_local() -> Joueur:
 	var id := _id_reseau_local()
-	for j in joueurs:
-		if j.id_reseau == id:
-			return j
+	if id == MultiplayerPeer.TARGET_PEER_SERVER and joueurs.has(_dernier_joueur_local):
+		return _dernier_joueur_local
+	if id != Joueur.SANS_PAIR:  # N1 : un identifiant nul ne doit désigner aucun poste
+		for j in joueurs:
+			if j.id_reseau == id:
+				return j
 	return joueurs[0]
 
 
@@ -86,7 +92,7 @@ func joueur_local() -> Joueur:
 ## lance est une partie solo).
 func configurer_solo() -> void:
 	regles = ReglesSolo.new(self)
-	var local := _dernier_joueur_local if joueurs.has(_dernier_joueur_local) else joueur_local()
+	var local := joueur_local()  # au retour au titre, `joueur_local()` garde déjà le dernier annoncé
 	var k := joueurs.find(local)
 	joueurs[k] = joueurs[0]  # échange en place : le tableau reste le même objet
 	joueurs[0] = local

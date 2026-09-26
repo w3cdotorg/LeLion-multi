@@ -919,8 +919,20 @@ func _tester_joueur_local() -> void:
 		"hors réseau, le joueur du solo porte l'identifiant de l'hôte (1), celui de ce poste : c'est le joueur local")
 	_check(Joueur.new().id_reseau == Joueur.SANS_PAIR, "un nouveau joueur n'appartient à aucun poste")
 	_check(solo.couleur_debloquee.is_connected(son_pastille), "Audio joue le son de pastille du joueur local")
+
+	# N2 (revue phase 11 bis) : deux joueurs pour que le check discrimine vraiment le dernier
+	# joueur local annoncé (celui de _init, ici relogé en case 1) d'un simple joueurs[0] (un décor
+	# en case 0) — sans is_inside_tree() dans _id_reseau_local(), l'identifiant se perd et ce check
+	# retomberait sur le décor.
 	var hors_arbre := EtatPartie.new()
-	_check(hors_arbre.joueur_local() == hors_arbre.joueurs[0], "un état de partie hors de l'arbre a pour joueur local son premier joueur")
+	var annonce_initiale := hors_arbre.joueurs[0]
+	hors_arbre.joueurs.append(Joueur.new())
+	hors_arbre.joueurs[0] = hors_arbre.joueurs[1]
+	hors_arbre.joueurs[1] = annonce_initiale
+	hors_arbre.joueurs[0].id_reseau = 5
+	hors_arbre.joueurs[1].id_reseau = MultiplayerPeer.TARGET_PEER_SERVER
+	_check(hors_arbre.joueur_local() == hors_arbre.joueurs[1],
+		"un état de partie hors de l'arbre a pour joueur local le dernier annoncé, l'identifiant de l'hôte (1), pas forcément joueurs[0]")
 	hors_arbre.free()
 
 	# Bataille locale : les couleurs viennent de la palette, ou de l'appelant (le salon, phase 13)
@@ -948,15 +960,16 @@ func _tester_joueur_local() -> void:
 	gs.joueur_local_change.connect(sur_annonce)
 	_check(client.id_reseau > 1 and gs.joueur_local() == client,
 		"sur un client, le joueur local est celui qui porte l'identifiant du poste (%d), pas le premier" % client.id_reseau)
-	gs.nouvelle_partie()
+	gs.configurer_bataille(3)  # M3 : le salon le rappelle avant la manche (phase 13) ; l'annonce vient d'ici
 	_check(annonces == [client] and client.couleur_debloquee.is_connected(son_pastille) and not solo.couleur_debloquee.is_connected(son_pastille),
-		"une nouvelle partie annonce le nouveau joueur local : Audio le suit et lâche l'ancien")
+		"configurer_bataille annonce le nouveau joueur local : Audio le suit et lâche l'ancien")
 	gs.nouvelle_partie()
-	_check(annonces.size() == 1, "le joueur local n'est annoncé qu'à son changement")
+	_check(annonces.size() == 1, "le joueur local n'est annoncé qu'à son changement (configurer_bataille l'a déjà fait)")
 
 	# Hôte perdu : le pair se ferme et le poste revient hors réseau AVANT le retour au titre
 	pair.close()
-	_check(gs.joueur_local() == solo, "pair fermé : plus d'identifiant de client, le joueur local redevient celui de l'hôte (1)")
+	_check(gs.joueur_local() == client,
+		"pair fermé (M1, revue phase 11 bis) : plus d'identifiant de client, le joueur local reste le dernier annoncé, pas celui de l'hôte")
 	set_multiplayer(null, gs.get_path())
 	gs.partie_en_cours = false
 	gs.pret = false
@@ -995,6 +1008,23 @@ func _tester_palette() -> void:
 	_check(min_normale >= 0.2, "deux couleurs se distinguent nettement (écart OKLab minimal %.3f, au moins 0,2)" % min_normale)
 	_check(min_deuteranope >= 0.18,
 		"en deutéranopie simulée aussi (écart OKLab minimal %.3f, au moins 0,18 ; 0,115 pour la planche de la phase 7)" % min_deuteranope)
+
+	# M2 (revue finale phase 11 bis) : la ville se peint dans les trois nuances de chaque joueur
+	# (foncée, pure, claire), pas seulement la couleur pure — c'est là que des joueurs différents se
+	# rapprochent le plus en deutéranopie (magenta pur ≈ cyan foncé, rouge ≈ vert foncé, etc.).
+	var moyennes_nuances: Array[Vector3] = []
+	for c in palette:
+		var somme := Vector3.ZERO
+		for nuance in [c.darkened(Joueur.ECART_NUANCES), c, c.lightened(Joueur.ECART_NUANCES)]:
+			var lineaire_n: Color = nuance.srgb_to_linear()
+			somme += _oklab(_deuteranopie(Vector3(lineaire_n.r, lineaire_n.g, lineaire_n.b)))
+		moyennes_nuances.append(somme / 3.0)
+	var min_nuances := INF
+	for i in range(palette.size()):
+		for k in range(i + 1, palette.size()):
+			min_nuances = minf(min_nuances, moyennes_nuances[i].distance_to(moyennes_nuances[k]))
+	_check(min_nuances >= 0.14,
+		"les nuances moyennes de deux joueurs se distinguent aussi en deutéranopie (écart OKLab minimal %.3f, au moins 0,14 ; 0,098 pour la planche de la phase 7)" % min_nuances)
 
 
 ## Deutéranopie simulée (Machado 2009, sévérité 1), en RVB linéaire.
