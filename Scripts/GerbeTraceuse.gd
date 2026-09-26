@@ -1,6 +1,6 @@
 extends Area2D
 ## Zone qui suit la gerbe et peint la ville quand elle la recouvre.
-## Le rayon de peinture est celui de sa forme de collision (réglé par le lion).
+## Le rayon de peinture est celui de sa forme de collision (réglé par la gerbe du lion, `GerbeLion`).
 
 @onready var forme: CollisionShape2D = $CollisionShape2D
 ## Le lion qui porte cette zone : on peint pour son joueur (ses couleurs ; en bataille, son

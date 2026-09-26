@@ -365,7 +365,7 @@ func _recevoir_etourdi(index: Variant, duree: Variant, immunite: Variant, origin
 	var j := _joueur_recu(index)
 	# M4 (revue finale) : bornées (l'hôte est de confiance sur un LAN, mais une valeur non finie
 	# rendrait `est_etourdi()` faux) ; `origine` vaut légitimement `Vector2.INF` (origine inconnue,
-	# `Lion._reculer` la gère), jamais bornée à `is_finite()`.
+	# `DeplacementLion.repousser` la gère), jamais bornée à `is_finite()`.
 	if j != null and _duree_valide(duree) and _duree_valide(immunite) and origine is Vector2 and barbouillage is Color:
 		j.etourdir(duree, immunite, origine, barbouillage)
 

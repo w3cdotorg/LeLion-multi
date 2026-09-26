@@ -444,7 +444,7 @@ func _mesurer_passe(niveau: int, crans: int) -> Vector2:
 	await _passe(lions[1], haut)
 	var part_volee := float(GS.joueurs[1].cellules_volees) / maxi(cellules_a, 1)
 	print("  MESURE niveau %d, rayon %d : territoire %d / couverture %d = %.2f ; volées par une passe : %d (%.0f %%)"
-		% [niveau, int(lions[0].traceuse_shape.shape.radius), cellules_a, ville.cellules_peintes, rapport,
+		% [niveau, int(lions[0].gerbe.traceuse_shape.shape.radius), cellules_a, ville.cellules_peintes, rapport,
 			GS.joueurs[1].cellules_volees, 100.0 * part_volee])
 	for l in lions:
 		l.free()
@@ -503,8 +503,8 @@ func _tester_pseudos_et_chocs() -> void:
 	var j2: Joueur = GS.joueurs[2]
 	for essai in range(2):
 		for l: CharacterBody2D in [l1, l2]:
-			l._recul = Vector2.ZERO
-			l._vitesse = Vector2.ZERO
+			l.deplacement.recul = Vector2.ZERO
+			l.deplacement.vitesse = Vector2.ZERO
 		l1.global_position = Vector2(600, 400)
 		l2.global_position = Vector2(800, 400)
 		await _frames(2)

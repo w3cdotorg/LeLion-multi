@@ -74,6 +74,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 14 | **Manche synchronisée** (après la 14 bis) : lions, ennemis et pastilles apparus chez l'hôte et répliqués (`MultiplayerSpawner`, `MultiplayerSynchronizer` : position, vitesse, orientation, vomi ; côté du peintre, couleur d'une pastille), commandes des clients par RPC (numérotées, silence de 500 ms), tampons diffusés et dessinés à l'identique (`Peinture` : jeux tirés de leur clé, graine u16), territoire et scores diffusés toutes les 0,2 s, réactions des joueurs par RPC, barrière de chargement (exclusion d'un absent), départs et hôte perdu, menu local sans pause, fenêtre en 16:9 hors solo, relais du serveur coupé, départ propre et silences d'ENet, version 0.14. Plafond de 5 fichiers levé. | ➕ `Scripts/Peinture.gd` ➕ `Scripts/Manche.gd` ✏️ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/Titre.gd` ✏️ `Scripts/Salon.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scripts/Spawner.gd` ✏️ six scènes d'ennemis et de pastilles ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Main.gd` ✏️ `Scenes/Main.tscn` ✏️ `Scripts/Intro.gd` ✏️ `Scripts/PauseMenu.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ partie à 2 fenêtres, test réseau vert 5 fois (bash 3.2 et 5) |
 | 14 bis | **Pastilles vers `body is Lion`** (exécutée avant la 14) : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi, une réplique ne se libère pas d'elle-même : `_expirer`), sons de ramassage par `Audio` et les signaux du joueur local (un par frame, le cran de bataille compris), recul du peintre horizontal (il pointait vers la ville), durcissements du smoke test de la revue 8 ter. | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert, suites vertes 5 fois |
 | 15 | **Test réseau de bout en bout** : scénario 11 (les scénarios 9 et 10 restent) : 1 hôte + 3 clients jouent une manche entière de 45 s sur le Village au clavier, chacun selon un programme de commandes au hasard (graine) ; l'hôte orchestre les rencontres (pastilles ramassées au vol par chaque client, étoile, soucoupe, sa gerbe sur un client, la gerbe d'un client sur lui, un choc) ; un client arraché (KILL) est vu parti au bout du silence de session d'ENet (3,2 à 6,3 s mesurées, 10 s au plus), son lion disparaît chez tous, ses cellules restent ; même empreinte chez l'hôte et les deux clients restés (territoire, scores, suite des tampons, lions, apparitions, niveau, réactions de chaque joueur comptées sur chaque poste) ; jeux de tampons remesurés à 4 postes. `DUREE11=45` (décision de l'utilisateur : marge CI sous le `timeout 300`, pas 90) : test réseau ~110 s (~52 s pour le scénario 11), `ci.yml` inchangé. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert 5 fois (bash 3.2 et 5), puis en CI |
+| 15 bis | **Découpage de `Lion.gd`** (avant la 16, à comportement identique) : `DeplacementLion` (logique pure : vitesse commandée, recul) et le pas `Lion.avancer`, seul chemin du déplacement sur l'hôte ; `PareChocs` (script du nœud `PareChocs` : chocs, délai anti-rafale, blocage) ; `GerbeLion` (nœud `Gerbe` : émetteurs, traceuse, zones de contact) ; `Lion` garde joueur, commandes, réplication, vomi et présentation (542 → 320 lignes). Outil de trace des lions (`tests/trace_lions.gd`, hors CI) : empreinte identique avant et après chaque étape. | ➕ `Scripts/DeplacementLion.gd` ➕ `Scripts/PareChocs.gd` ➕ `Scripts/GerbeLion.gd` ➕ `tests/trace_lions.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Manche.gd` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/bataille_test.gd` | trace inchangée, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5) |
 | 16 | **Prédiction du lion local** (4 bis), après le découpage de `Lion.gd` (étape à part, voir les points de vigilance) : correction douce, commandes redondantes (la phase 14 les numérote déjà), numéro de la dernière commande traitée répliqué, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
@@ -283,24 +284,58 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - (phase 14) sur un client, aucun lion ne se déplace de lui-même (`Lion._suivre_l_hote`) : position,
   vitesse, orientation et vomi viennent du `Synchro` du lion (`velocity` comprise, que lit le calcul
   d'approche des chocs) ; chaque réplique garde ses réactions visuelles (secousse du pare-chocs,
-  étoiles, barbouillage, clignotement). **Phase 16** : seul le lion local reprend `move_and_slide`,
-  `_recul` et `_bloquer_contre_les_lions`, par sa prédiction ; les lions distants sont interpolés
+  étoiles, barbouillage, clignotement). **Phase 16** : seul le lion local reprend son pas de
+  déplacement (`Lion.avancer` : `DeplacementLion`, `PareChocs.bloquer`, `move_and_slide`, bords de
+  l'écran, phase 15 bis), par sa prédiction ; les lions distants sont interpolés
   (le `Synchro` réplique à 83 Hz au plus, `replication_interval` 0,012 s, sans interpolation en
   phase 14) ;
-- **avant la phase 16, après la 15** : `Lion.gd` a grossi phase après phase (pare-chocs,
-  présentation de l'étourdissement, zones de contact de la gerbe, réplique de la phase 14 : 530
-  lignes) ; le découper en composants avant d'y ajouter la prédiction, en une étape à part
-  (`Lion.gd`, `Scenes/Lion.tscn`, 2 à 3 nouveaux scripts). Pas en phase 14 : ses ajouts au lion y
-  sont petits et isolés (la réplique, deux propriétés répliquées), alors que le découpage réécrit
-  les fonctions que le smoke test et `tests/bataille_test.gd` lisent par dizaines de champs privés ;
-  le faire après la phase 15 lui donne le filet du test réseau de bout en bout ;
+- (résolu en phase 15 bis) `Lion.gd` est découpé : `DeplacementLion` (logique pure, que les tests
+  unitaires nomment ; son état tient en deux vecteurs, `vitesse` et `recul`, que la prédiction pourra
+  copier et restaurer pour rejouer ses commandes), `PareChocs`, `GerbeLion` ; le lion garde la
+  présentation et la réplication. **Phase 16** : garder `Lion.avancer` comme seul pas du déplacement
+  (l'hôte et la prédiction) ; `recul` et `vitesse` sont aussi modifiés par les réactions
+  (`_on_etourdi`, `_on_lion_touche`) et par le pare-chocs (`PareChocs._on_area_entered`), pas
+  seulement par `avancer`. Sur un client, `deplacement` n'est pas un état fiable : `vitesse` y reçoit
+  la vitesse totale de l'hôte (commandée, recul et blocage confondus, après le bornage), pas la
+  vitesse commandée, et `recul` ne s'amortit jamais (`vitesse_du_pas` ne tourne que sur l'hôte). À
+  chaque (re)prise de la prédiction, remettre `deplacement.recul` à zéro et repartir d'une `vitesse`
+  cohérente (commandée, pas la `velocity` reçue de l'hôte), sous peine d'appliquer un recul ou une
+  vitesse fantôme déjà joués par l'hôte. Repasser `tests/trace_lions.gd` avant et après chaque
+  modification du lion (deux passages consécutifs identiques ; les deux premiers après un import
+  peuvent différer, phase 15 bis, Écart 6 — cause non établie, voir plus bas) ;
+- **phase 16** (vu en phase 15 bis) : `avancer(direction, delta)` n'utilise son `delta` que pour la
+  vitesse commandée ; `move_and_slide()` intègre, lui, avec le delta du moteur (le delta physique
+  dans une image physique, le delta de traitement en dehors). Un rejeu de prédiction hors d'une
+  image physique (le signal `synchronized` du `MultiplayerSynchronizer` et les RPC arrivent pendant
+  le `poll` multijoueur, donc en image de traitement) déplace le lion d'un facteur
+  `delta traitement / delta physique` à chaque pas rejoué — une dérive silencieuse, sans erreur, que
+  la correction douce masquera en partie et qu'on attribuera à tort à la latence. Poser en phase 16
+  un garde-fou peu coûteux en tête de `avancer` : `if not Engine.is_in_physics_frame(): push_error(...)`.
+  Noter aussi que `pare_chocs.bloquer()` ne rejoue pas des contacts passés (il ne lit que l'état
+  physique et les positions actuelles au moment de l'appel), donc plusieurs pas rejoués dans une même
+  image voient tous les mêmes contacts, ceux du présent ;
+- **phase 16** (vu en phase 15 bis) : `direction_du_lion` est une propriété répliquée (mode « au
+  changement ») dont l'hôte fait foi. Un client qui prédit son lion et retourne son sprite à l'appui
+  de la touche le verra remis dans l'autre sens par chaque état en retard de l'hôte : sprite, bouche
+  et gerbe clignotent à chaque demi-tour, le temps d'un aller-retour réseau. À traiter en phase 16 :
+  soit ne plus répliquer l'orientation vers le lion local, soit ignorer l'orientation reçue tant que
+  la prédiction est active ;
+- **phase 16** (vu en phase 15 bis) : la simulation n'est pas reproductible bit à bit d'un
+  processus à l'autre dans tous les cas : l'ordre dans lequel la physique rapporte des contacts
+  simultanés semble dépendre d'identifiants d'objets (rejouer la même bataille dans le même processus
+  donne une autre empreinte) — cause non établie (Écart 6 de `global-constraints.md`), non reproduite
+  en phase 15 bis (revue finale : 3 passages sur 3 identiques dès le premier, sur des copies neuves de
+  `main` comme de HEAD). La conclusion pratique reste, elle, acquise : la prédiction d'un client ne
+  peut pas compter sur une identité exacte avec l'hôte, même aux mêmes commandes : la correction douce
+  (spec §4.1) doit absorber ces écarts, et les tests de prédiction mesurer des écarts de position, pas
+  des égalités ;
 - **phase 16** : seul le lion local simule son choc, par sa propre prédiction
-  (`Lion._on_pare_chocs_area_entered` : recul, secousse) ; un lion distant ne simule jamais de
+  (`PareChocs._on_area_entered` : recul, secousse ; phase 15 bis) ; un lion distant ne simule jamais de
   choc localement (voir le point de la phase 14 ci-dessus), il ne fait que rejouer la réaction
   visuelle reçue. Seul l'hôte signale le choc aux règles ; l'étourdissement, lui, ne vient que
   des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
   `joueur.est_etourdi()` (spec §4.1) ;
-- **phase 17 bis** : jouer le « boing » dans `Lion._on_pare_chocs_area_entered`, sur chaque machine
+- **phase 17 bis** : jouer le « boing » dans `PareChocs._on_area_entered` (à côté de `Lion.secouer`), sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
 - **prochaine phase qui touche `Scripts/Regles.gd`** : `Titre._ready` applique aussi
   `taille_ecran()` (retour au titre en solo 2000×648) : étendre le docstring de

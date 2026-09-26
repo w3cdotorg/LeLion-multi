@@ -38,6 +38,7 @@ func _run() -> void:
 	_tester_territoire_reseau()
 	_tester_joueur_replique()
 	_tester_reseau_manche()
+	_tester_deplacement_lion()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1718,6 +1719,40 @@ func _tester_reseau_manche() -> void:
 	autre.close()
 	reseau.pseudo = ""
 
+
+
+## Phase 15 bis : le déplacement d'un lion, en logique pure (`DeplacementLion`), que `Lion.avancer`
+## fait avancer d'un pas par tick et que la prédiction du lion local rejouera (phase 16).
+func _tester_deplacement_lion() -> void:
+	print("-- Déplacement d'un lion (logique pure)")
+	var d := DeplacementLion.new()
+	var dt := 1.0 / 60.0
+	var v := d.vitesse_du_pas(Vector2.RIGHT, dt)
+	_check(is_equal_approx(v.x, d.acceleration * dt) and v.y == 0.0 and d.recul == Vector2.ZERO,
+		"un pas vers la droite : la vitesse commandée gagne une accélération d'un tick (%.1f px/s)" % v.x)
+	for i in range(30):
+		v = d.vitesse_du_pas(Vector2.RIGHT, dt)
+	_check(v == Vector2(d.speed, 0.0), "elle plafonne à la vitesse du lion (%s)" % v)
+	d.arreter()
+	_check(d.vitesse == Vector2.ZERO, "arrêter annule la vitesse commandée (début d'un étourdissement)")
+	d.repousser(Vector2(100, 100), Vector2(40, 100), 1)
+	_check(d.recul == Vector2(d.force_recul, 0.0), "un coup venu de la gauche repousse vers la droite, de toute la force du recul")
+	d.repousser(Vector2(100, 100), Vector2.INF, 1)
+	_check(d.recul == Vector2(-d.force_recul, 0.0), "origine inconnue : recul vers l'arrière du lion (tourné à droite)")
+	d.repousser(Vector2(100, 100), Vector2(100, 100), -1)
+	_check(d.recul == Vector2(d.force_recul, 0.0), "origine confondue avec le centre : recul vers l'arrière du lion (tourné à gauche)")
+	var pas := 0
+	while d.recul != Vector2.ZERO and pas < 60:
+		v = d.vitesse_du_pas(Vector2.ZERO, dt)
+		pas += 1
+	_check(pas == ceili(d.force_recul / (d.acceleration * 1.5 * dt)) and v == Vector2.ZERO,
+		"sans commande, le recul s'amortit jusqu'à zéro en %d ticks, et le lion s'arrête" % pas)
+	var a := DeplacementLion.new()
+	var b := DeplacementLion.new()
+	for i in range(20):
+		a.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
+		b.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
+	_check(a.vitesse == b.vitesse and a.recul == b.recul, "les mêmes commandes donnent les mêmes pas (ce que rejouera la prédiction)")
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
