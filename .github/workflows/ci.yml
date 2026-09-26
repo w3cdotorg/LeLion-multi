@@ -10,7 +10,7 @@ env:
 
 jobs:
   test-et-export:
-    name: Tests + export Web
+    name: Tests + exports Web et Windows
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -67,3 +67,18 @@ jobs:
           timeout 600 godot --headless --export-release Web export/web/index.html
           test -f export/web/index.html
 
+      - name: Exporter pour Windows
+        shell: bash
+        run: |
+          mkdir -p export/windows
+          timeout 600 godot --headless --export-release "Windows Desktop" export/windows/LeLion-multi.exe
+          test -s export/windows/LeLion-multi.exe
+          ls -l export/windows
+
+      - name: Publier l'exécutable Windows (artefact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeLion-multi-windows
+          path: export/windows/LeLion-multi.exe
+          if-no-files-found: error
+          retention-days: 30
