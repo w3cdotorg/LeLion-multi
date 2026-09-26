@@ -379,3 +379,18 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phases 14 et 19** (M4 de la revue finale 12 bis) : la fenêtre par défaut (1400×454, phase 10 ter)
   affiche l'écran Réseau (16:9) à 40 % le temps que la fenêtre se règle (phase 14 : passer en 16:9
   hors solo ; phase 19 : captures du fichier jetable dans `tests/screenshots.gd`).
+- **phase 14** (revue finale 13, M6) : barrière « scène de jeu chargée ». L'hôte change de scène
+  dans l'image où il émet `manche_lancee` ; les clients chargent `Main.tscn` plus tard (aller-retour
+  réseau, chargement, compilation des shaders sous Windows). Chaque client envoie un RPC fiable
+  `scene_chargee` depuis `Main._ready` ; l'hôte attend tous les arrivés de la manche (avec un délai
+  et l'exclusion d'un absent) avant l'intro, les apparitions et la synchronisation ;
+- **phase 14** (revue finale 13, M5) : `server_relay` reste actif alors que le jeu n'en a pas besoin
+  (tout passe par l'hôte) : le couper (`SceneMultiplayer.server_relay = false`) ;
+- **phase 14** (revue finale 13, N9) : commentaire périmé dans `Lion.gd` sur l'origine du joueur
+  des lions non locaux, à reprendre avec la `spawn_function` ;
+- **phase 14 ou prochaine phase qui touche `Reseau.gd`** (revue finale 13, M1) : `lancer_manche`
+  s'engage sans revérifier ses propres fiches (`fiches_de_manche` non vide et cohérent) :
+  défense en profondeur, refuser et regriser le bouton sinon ;
+- **phase 18** (retour au salon, revue finale 13, M2, M3, M4) : les clients ne voient pas les places
+  réservées (pas encore arrivées) ; un stick déjà penché à l'entrée du salon agit une fois ;
+  `IP.get_local_interfaces()` est relu à chaque `salon_change` (le mettre en cache à l'ouverture).
