@@ -6,6 +6,9 @@ extends SceneTree
 var _echecs := 0
 var GS: Node
 var JL: Joueur  # le joueur local (unique en solo)
+## Les sons joués par `Audio` (un lecteur par son, ajouté comme enfant), par nom de fichier :
+## `_sons.count("pickup")` compte les sons de ramassage.
+var _sons: Array[String] = []
 
 
 func _init() -> void:
@@ -38,6 +41,12 @@ func _couleurs_peintes(image: Image) -> Dictionary:
 	return couleurs
 
 
+## Chaque lecteur ajouté à `Audio` : le nom du son qu'il joue (voir `_sons`).
+func _noter_son(noeud: Node) -> void:
+	if noeud is AudioStreamPlayer and noeud.stream != null:
+		_sons.append(noeud.stream.resource_path.get_file().get_basename())
+
+
 ## La couleur telle qu'une image RGBA8 la stocke, en `to_rgba32()`.
 func _rgba8(c: Color) -> int:
 	var pixel := Image.create(1, 1, false, Image.FORMAT_RGBA8)
@@ -54,6 +63,7 @@ func _run() -> void:
 	scores.chemin = "user://scores_test.cfg"
 	scores.effacer()
 	params.definir_langue("fr")
+	root.get_node("Audio").child_entered_tree.connect(_noter_son)
 
 	# Traductions et réglages
 	_check(tr("CONTINUER") == "Continuer", "les traductions françaises sont chargées")
@@ -225,9 +235,12 @@ func _run() -> void:
 		"cellules peignables = zones opaques de la skyline (%d / %d)" % [ville.cellules_peignables, nb_cellules])
 
 	# Pickup : le lion marche dessus
+	var sons_avant := _sons.count("pickup")
 	var pickup: Node = spawner.spawn_pickup(0, lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(pickup), "le pickup disparaît au contact")
+	_check(_sons.count("pickup") == sons_avant + 1 and JL.crans == 2,
+		"une pastille du solo débloque une couleur et donne un cran : un seul son de ramassage (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(JL.couleurs_debloquees.size() == 1, "une couleur débloquée via pickup")
 	_check(lion.vomi_container.get_child_count() == 1, "un émetteur de particules par couleur")
 	_check(lion.traceuse_shape.shape.radius == 21.0, "avec une couleur, la gerbe peint sur 21 px (16 px + 5 px par couleur)")
@@ -242,9 +255,11 @@ func _run() -> void:
 	await _frames(30)
 	_check(lion.est_en_train_de_vomir, "le lion vomit tant que l'action est maintenue")
 	var rayon_normal: float = lion.traceuse_shape.shape.radius
+	sons_avant = _sons.count("pickup")
 	var bonus: Node = spawner.spawn_bonus(lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(bonus) and JL.bonus_actif(), "l'étoile ramassée active la gerbe XXL")
+	_check(_sons.count("pickup") == sons_avant + 1, "l'étoile joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(lion.traceuse_shape.shape.radius == rayon_normal * 2.0, "le rayon de peinture est doublé pendant le bonus")
 	_check(hud.etiquette_bonus.visible, "le HUD affiche le bonus")
 	JL.bonus_restant = 0.01
@@ -287,9 +302,11 @@ func _run() -> void:
 	JL.invulnerable_restant = 0.0
 
 	# Cœur : rend une vie, jamais au-delà du maximum
+	sons_avant = _sons.count("pickup")
 	var coeur: Node = spawner.spawn_coeur(lion.global_position + Vector2(68, 66))
 	await _frames(3)
 	_check(not is_instance_valid(coeur) and JL.vies == 3, "un cœur ramassé rend une vie (%d)" % JL.vies)
+	_check(_sons.count("pickup") == sons_avant + 1, "le cœur joue le son de ramassage, par Audio (%d)" % (_sons.count("pickup") - sons_avant))
 	_check(not GS.regles.coeur_ramasse(JL), "impossible de dépasser le maximum de vies")
 
 	# Défaite : trois coups, le doigt toujours sur le stick
@@ -340,6 +357,14 @@ func _run() -> void:
 		"une nouvelle partie repart sans couleur : ni émetteur, ni pastille allumée")
 	_check(JL.vies == 3 and JL.coups_recus == 0 and main.get_node("HUD")._coeurs[2].modulate == main.get_node("HUD").COULEUR_COEUR,
 		"après une défaite, le niveau suivant repart avec tous ses cœurs affichés")
+	# La défaite a laissé 0 vie ; `nouvelle_partie` en a remis 3 sans signal : un coup (3 → 2) n'est
+	# pas une vie regagnée.
+	sons_avant = _sons.count("pickup")
+	JL.encaisser_coup(Vector2.INF, 0.0)
+	_check(JL.vies == 2 and _sons.count("pickup") == sons_avant,
+		"un coup au départ d'une nouvelle partie (vies remises sans signal) ne joue pas le son de ramassage")
+	JL.vies = 3
+	JL.coups_recus = 0
 	ville = main.get_node("Ville")
 	_check(ville.tex_size == Vector2i(2000, 320), "la ville a chargé la skyline du niveau Métropole (%s)" % ville.tex_size)
 	GS.regles.pastille_ramassee(JL, 0)
@@ -636,6 +661,7 @@ func _run() -> void:
 	var pastille_autre: Node2D = load("res://Scenes/ColorPickup.tscn").instantiate()
 	pastille_autre.couleur_index = 4  # autre n'a que le rouge
 	pastille_autre.position = centre_autre
+	var sons_locaux := _sons.count("pickup")
 	root.add_child(pastille_autre)
 	await _frames(3)
 	_check(not is_instance_valid(pastille_autre) and autre.couleurs_debloquees.has(GS.couleur(4))
@@ -650,6 +676,7 @@ func _run() -> void:
 	_check(not is_instance_valid(etoile_autre) and autre.bonus_actif()
 		and is_equal_approx(autre.bonus_restant, Regles.DUREE_ETOILE) and local.bonus_actif() == bonus_local,
 		"une étoile ramassée par un lion active la gerbe XXL de son joueur, pas celle du joueur local")
+	_check(_sons.count("pickup") == sons_locaux, "ce que ramasse un autre lion ne joue pas le son de ramassage de ce poste")
 	var coeur_autre: Node2D = load("res://Scenes/CoeurPickup.tscn").instantiate()
 	coeur_autre.position = Vector2(-500, -500)  # hors d'atteinte : les contacts sont simulés à la main
 	root.add_child(coeur_autre)
@@ -869,8 +896,11 @@ func _run() -> void:
 		func(e: GPUParticles2D) -> Color: return (e.process_material as ParticleProcessMaterial).color_ramp.gradient.get_color(0))
 	_check(couleurs_gerbe == j_rouge.nuances(), "un lion de bataille a trois émetteurs, aux nuances de son joueur (%s)" % [couleurs_gerbe])
 	_check(lr.traceuse_shape.shape.radius == 16.0, "au premier cran, la gerbe peint sur 16 px")
+	var sons_bataille := _sons.count("pickup")
 	GS.regles.pastille_ramassee(j_rouge, 0)
 	_check(lr.traceuse_shape.shape.radius == 21.0 and lb.traceuse_shape.shape.radius == 16.0, "une pastille donne un cran : 5 px de plus, pour ce lion seulement")
+	_check(GS.joueur_local() == j_rouge and _sons.count("pickup") == sons_bataille + 1,
+		"en bataille, le cran d'une pastille (aucune couleur débloquée) joue le son de ramassage du joueur local")
 	for i in range(10):
 		GS.regles.pastille_ramassee(j_rouge, 0)
 	_check(lr.traceuse_shape.shape.radius == 46.0, "au septième cran, la gerbe peint sur 46 px")
