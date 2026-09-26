@@ -1,10 +1,12 @@
 extends Node
 ## Transport LAN (spec §4) : le pair ENet (port UDP 7777), la poignée de main (version, pseudo),
-## l'attribution des index et des couleurs par l'hôte, les arrivées et les départs. Ne sait rien
-## de la partie : le salon (phase 13) et la manche synchronisée (phase 14) s'appuient sur ses
-## signaux et sur `inscrits`. Hors réseau (solo, retour au titre), le pair est un
-## `OfflineMultiplayerPeer` : ce poste est son propre hôte (`multiplayer.is_server()` vrai), et
-## `quitter()` y revient toujours.
+## l'attribution des index et des couleurs par l'hôte, les arrivées et les départs, et la table du
+## salon (phase 13) : qui est là, sa couleur, s'il est prêt, le niveau et le lancement de la
+## manche, que l'hôte ne permet que si le salon est prêt (`raison_attente`). Le salon
+## (`Scripts/Salon.gd`) affiche la table et porte le bouton de l'hôte ; la manche synchronisée
+## (phase 14) s'appuiera sur ses signaux et sur
+## `inscrits`. Hors réseau (solo, retour au titre), le pair est un `OfflineMultiplayerPeer` : ce
+## poste est son propre hôte (`multiplayer.is_server()` vrai), et `quitter()` y revient toujours.
 ##
 ## La poignée de main passe par l'authentification de `SceneMultiplayer` : des octets bruts
 ## (`var_to_bytes` d'un dictionnaire), échangés avant tout RPC, si bien que deux versions
@@ -14,6 +16,13 @@ extends Node
 ## le délai de la poignée de main la ferme). Un joueur accepté est inscrit chez l'hôte dès la
 ## réponse (sa place est prise) : deux demandes simultanées ne peuvent ni obtenir la même place,
 ## ni dépasser le nombre de places.
+##
+## Salon : l'hôte tient la table dans `inscrits` et la diffuse, arrivés seulement, à chaque
+## changement (`_recevoir_salon`, fiable) ; chaque poste la lit dans `table_salon`. Les clients
+## demandent (couleur, Prêt) et l'hôte arbitre. Tous ces RPC passent par cet autoload, présent au
+## même chemin sur chaque poste dès la connexion : une table envoyée avant que la scène du salon
+## soit chargée chez un client l'y attend. Les RPC de l'hôte sont en mode "authority" (le moteur
+## rejette tout autre émetteur) ; ceux des clients vérifient l'émetteur et leurs arguments.
 ##
 ## Autoload : les tests `--script`, compilés avant l'enregistrement des autoloads, le récupèrent
 ## par `root.get_node("Reseau")` et ne le nomment pas.
@@ -37,6 +46,14 @@ signal connexion_echouee()
 ## l'écoute encore côté hôte à cette phase, mais un futur appelant ne doit pas supposer « jamais
 ## chez l'hôte ».
 signal hote_perdu()
+## Sur chaque poste en session : la table du salon (`table_salon`), son niveau ou ses places ont
+## changé ; chez l'hôte, aussi quand une place se réserve ou se libère (le bouton Démarrer en
+## dépend, `raison_attente`).
+signal salon_change()
+## Sur chaque poste en session : l'hôte lance la manche. `fiches` : une fiche
+## `{"id_reseau", "pseudo", "couleur"}` par joueur, dans l'ordre des index compactés (0..n-1), à
+## donner à `GameState.configurer_bataille_reseau` avant de charger la scène de jeu.
+signal manche_lancee(fiches: Array[Dictionary])
 
 const PORT := 7777
 ## Identifiant de la poignée de main : une demande qui ne le porte pas vient d'un autre programme.
@@ -60,6 +77,13 @@ const REFUS_VERSION := "RESEAU_REFUS_VERSION"
 const REFUS_PLEIN := "RESEAU_REFUS_PLEIN"
 const REFUS_MANCHE := "RESEAU_REFUS_MANCHE"
 const REFUS_DEMANDE := "RESEAU_REFUS_DEMANDE"
+## Pourquoi l'hôte ne peut pas encore démarrer la partie (`raison_attente`), en clés de traduction.
+const ATTENTE_JOUEURS := "SALON_ATTENTE_JOUEURS"
+const ATTENTE_ARRIVEE := "SALON_ATTENTE_ARRIVEE"
+const ATTENTE_PRETS := "SALON_ATTENTE_PRETS"
+## Pour `adresse_ipv4`, la validation de l'écran Réseau (fonction statique : l'autoload n'est pas
+## nommé). `Decouverte.gd` précharge aussi ce script : ce préchargement croisé passe en Godot 4.7.
+const _Decouverte := preload("res://Scripts/Decouverte.gd")
 
 ## Version présentée à la poignée de main (`application/config/version`) ; deux versions
 ## différentes ne jouent pas ensemble. Modifiable par les tests.
@@ -74,8 +98,20 @@ var places := EtatPartie.NB_JOUEURS_MAX
 ## qu'il est vrai, l'hôte refuse tout nouveau venu (pas d'arrivée en cours de manche, spec §1).
 var manche_en_cours := false
 ## Chez l'hôte : les joueurs inscrits, hôte compris, par identifiant réseau :
-## `{"index": int, "couleur": Color, "pseudo": String}`. Vide chez un client et hors réseau.
+## `{"index": int, "couleur": Color, "pseudo": String, "arrive": bool, "pret": bool}`. Un accepté y
+## entre dès la réponse de l'hôte (sa place est réservée), avec `arrive` faux jusqu'à la fin de sa
+## poignée de main : seuls les arrivés sont dans `table_salon` et reçoivent des RPC. Vide chez un
+## client et hors réseau.
 var inscrits: Dictionary[int, Dictionary] = {}
+## Sur chaque poste en session : la table du salon, la même partout, triée par index : une fiche
+## `{"id": int, "index": int, "couleur": Color, "pseudo": String, "pret": bool}` par joueur ARRIVÉ
+## (jamais une place seulement réservée). Construite par l'hôte depuis `inscrits`, reçue par les
+## clients ; vide hors réseau.
+var table_salon: Array[Dictionary] = []
+## Niveau choisi par l'hôte au salon (index de `EtatPartie.NIVEAUX`), diffusé avec la table.
+var niveau_salon := 0
+## Places de la partie (`places` de l'hôte), diffusées avec la table.
+var places_salon := EtatPartie.NB_JOUEURS_MAX
 ## Index et couleur de ce poste, attribués par l'hôte (-1 et transparente hors réseau).
 var index_local := -1
 var couleur_locale := Color.TRANSPARENT
@@ -114,7 +150,7 @@ func _ready() -> void:
 ## close, mais rien de neuf n'est créé.
 func heberger(port := PORT) -> Error:
 	quitter()
-	places = clampi(places, 2, EtatPartie.NB_JOUEURS_MAX)
+	places = clampi(places, EtatPartie.NB_JOUEURS_MIN, EtatPartie.NB_JOUEURS_MAX)
 	var pair := ENetMultiplayerPeer.new()
 	var erreur := pair.create_server(port, places + CONNEXIONS_EN_TROP)
 	if erreur != OK:
@@ -123,17 +159,26 @@ func heberger(port := PORT) -> Error:
 	multiplayer.multiplayer_peer = pair
 	index_local = premier_index_libre(inscrits, places)
 	couleur_locale = premiere_couleur_libre(inscrits)
-	inscrits[multiplayer.get_unique_id()] = {"index": index_local, "couleur": couleur_locale, "pseudo": pseudo_ou_defaut(pseudo, index_local)}
+	inscrits[multiplayer.get_unique_id()] = {"index": index_local, "couleur": couleur_locale,
+		"pseudo": pseudo_ou_defaut(pseudo, index_local), "arrive": true, "pret": false}
+	places_salon = places
+	_diffuser_salon()
 	return OK
 
 
-## Rejoint l'hôte à `adresse`. La réponse arrive par `inscrit`, `refuse` ou `connexion_echouee`
-## (au plus tard après DELAI_CONNEXION). Renvoie l'erreur d'ENet si le client ne peut même pas
-## être créé (adresse invalide).
+## Rejoint l'hôte à `adresse`, une IPv4 (M8 : un nom d'hôte serait résolu par `create_client` en
+## bloquant le jeu, plusieurs secondes sous Windows pour une faute de frappe) : toute adresse que
+## `Decouverte.adresse_ipv4` ne reconnaît pas est refusée (ERR_INVALID_PARAMETER) sans rien
+## changer, pas même la session en cours. La réponse arrive par `inscrit`, `refuse` ou
+## `connexion_echouee` (au plus tard après DELAI_CONNEXION). Renvoie l'erreur d'ENet si le client
+## ne peut même pas être créé.
 func rejoindre(adresse: String, port := PORT) -> Error:
+	var ipv4: String = _Decouverte.adresse_ipv4(adresse)
+	if ipv4.is_empty():
+		return ERR_INVALID_PARAMETER
 	quitter()
 	var pair := ENetMultiplayerPeer.new()
-	var erreur := pair.create_client(adresse, port)
+	var erreur := pair.create_client(ipv4, port)
 	if erreur != OK:
 		return erreur
 	_activer_poignee_de_main()
@@ -143,9 +188,9 @@ func rejoindre(adresse: String, port := PORT) -> Error:
 
 
 ## Quitte le réseau : ferme le pair (les autres postes voient partir ce joueur, ou l'hôte), remet
-## `OfflineMultiplayerPeer` et oublie inscrits, index, couleur et manche en cours (une session
-## hébergée finie n'a plus lieu d'être). Sans effet visible hors réseau : chaque chemin de retour
-## au titre peut l'appeler (point de vigilance des phases 12/13).
+## `OfflineMultiplayerPeer` et oublie inscrits, table du salon, index, couleur et manche en cours
+## (une session hébergée finie n'a plus lieu d'être). Sans effet visible hors réseau : chaque chemin
+## de retour au titre peut l'appeler (point de vigilance des phases 12/13).
 func quitter() -> void:
 	_generation += 1
 	_delai.stop()
@@ -155,6 +200,9 @@ func quitter() -> void:
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	_api().auth_callback = Callable()
 	inscrits.clear()
+	table_salon.clear()
+	niveau_salon = 0
+	places_salon = EtatPartie.NB_JOUEURS_MAX
 	index_local = -1
 	couleur_locale = Color.TRANSPARENT
 	manche_en_cours = false
@@ -237,6 +285,256 @@ static func pseudo_ou_defaut(texte: String, index: int) -> String:
 	return propre if not propre.is_empty() else "Joueur %d" % (index + 1)
 
 
+## Chez l'hôte, à l'ouverture du salon (et au retour d'une manche, phase 18) : plus de manche en
+## cours (les arrivées sont de nouveau acceptées, la balise l'annonce), personne n'est prêt, le
+## niveau est `niveau` (ramené dans la liste des niveaux).
+func ouvrir_salon(niveau: int) -> void:
+	if not multiplayer.is_server():
+		return
+	manche_en_cours = false
+	for fiche: Dictionary in inscrits.values():
+		fiche.pret = false
+	niveau_salon = posmod(niveau, EtatPartie.NIVEAUX.size())
+	_diffuser_salon()
+
+
+## Chez l'hôte : le niveau du salon, ramené dans la liste des niveaux (en boucle). Sans effet
+## pendant une manche.
+func definir_niveau(niveau: int) -> void:
+	if not multiplayer.is_server() or manche_en_cours:
+		return
+	niveau_salon = posmod(niveau, EtatPartie.NIVEAUX.size())
+	_diffuser_salon()
+
+
+## Demande de ce poste : la couleur libre suivante (`sens` 1) ou précédente (-1). L'hôte arbitre
+## (`changer_couleur`) ; un client lui envoie sa demande.
+func demander_couleur(sens: int) -> void:
+	if multiplayer.is_server():
+		changer_couleur(multiplayer.get_unique_id(), sens)
+	else:
+		_demande_couleur.rpc_id(MultiplayerPeer.TARGET_PEER_SERVER, sens)
+
+
+## Demande de ce poste : prêt ou non. L'hôte arbitre (`definir_pret`) ; un client lui envoie sa
+## demande.
+func demander_pret(pret: bool) -> void:
+	if multiplayer.is_server():
+		definir_pret(multiplayer.get_unique_id(), pret)
+	else:
+		_demande_pret.rpc_id(MultiplayerPeer.TARGET_PEER_SERVER, pret)
+
+
+## Chez l'hôte : le joueur `id` prend la couleur libre voisine de la sienne dans le sens `sens`
+## (`couleur_voisine_libre`). Refusé (faux, rien ne change) pour un inconnu, un joueur pas encore
+## arrivé ou déjà prêt (sa couleur est figée tant qu'il est prêt), un `sens` autre que 1 ou -1,
+## pendant une manche, ou s'il n'y a aucune couleur libre. Les demandes sont traitées une à une :
+## deux joueurs qui visent la même couleur ne peuvent pas l'obtenir tous les deux.
+func changer_couleur(id: int, sens: int) -> bool:
+	var fiche: Dictionary = inscrits.get(id, {})
+	if not multiplayer.is_server() or manche_en_cours or absi(sens) != 1 or fiche.is_empty() \
+			or not fiche.arrive or fiche.pret:
+		return false
+	var couleur := couleur_voisine_libre(inscrits, id, sens)
+	if couleur == fiche.couleur:
+		return false
+	fiche.couleur = couleur
+	if id == multiplayer.get_unique_id():
+		couleur_locale = couleur
+	_diffuser_salon()
+	return true
+
+
+## Chez l'hôte : le joueur `id` est prêt ou non. Refusé (faux) pour un inconnu, un joueur pas
+## encore arrivé, pendant une manche, ou si rien ne change.
+func definir_pret(id: int, pret: bool) -> bool:
+	var fiche: Dictionary = inscrits.get(id, {})
+	if not multiplayer.is_server() or manche_en_cours or fiche.is_empty() or not fiche.arrive or fiche.pret == pret:
+		return false
+	fiche.pret = pret
+	_diffuser_salon()
+	return true
+
+
+## Chez l'hôte, quand il appuie sur « Démarrer la partie » : la manche commence. Plus aucune arrivée
+## (`manche_en_cours`, que la balise annonce), index compactés sur 0..n-1 (des départs ont pu
+## laisser des trous), table compactée diffusée (chaque client y lit son nouvel `index_local`),
+## puis le lancement (`_recevoir_manche`, sur le même canal fiable que la table : il arrive
+## après elle) ; `manche_lancee` part aussi ici. La demande est revérifiée ici, au moment même :
+## faux, sans rien changer, si le salon n'est plus prêt (`salon_pret` : un joueur parti ou repassé
+## non prêt dans la même image que l'appui, alors que le bouton n'était pas encore regrisé).
+func lancer_manche() -> bool:
+	if not multiplayer.is_server() or manche_en_cours or not salon_pret(inscrits):
+		return false
+	manche_en_cours = true
+	compacter_index(inscrits)
+	index_local = inscrits[multiplayer.get_unique_id()].index
+	_diffuser_salon()
+	if en_ligne():
+		_recevoir_manche.rpc()
+	manche_lancee.emit(fiches_de_manche(table_salon, multiplayer.get_unique_id()))
+	return true
+
+
+## Vrai si l'hôte peut démarrer la partie (`raison_attente` vide).
+static func salon_pret(occupes: Dictionary[int, Dictionary]) -> bool:
+	return raison_attente(occupes.values()).is_empty()
+
+
+## Pourquoi la partie ne peut pas encore démarrer, dans cet ordre : moins de
+## `EtatPartie.NB_JOUEURS_MIN` joueurs arrivés (ATTENTE_JOUEURS), une place encore réservée par une
+## poignée de main en cours (ATTENTE_ARRIVEE : son joueur arrivera non prêt), quelqu'un qui n'est
+## pas prêt (ATTENTE_PRETS) ; vide si elle peut démarrer. `fiches` : les fiches d'`inscrits` chez
+## l'hôte, ou `table_salon` chez un client (arrivés seulement : une fiche sans `arrive` est une
+## fiche d'arrivé).
+static func raison_attente(fiches: Array) -> String:
+	var arrives := fiches.filter(func(fiche: Dictionary) -> bool: return fiche.get("arrive", true))
+	if arrives.size() < EtatPartie.NB_JOUEURS_MIN:
+		return ATTENTE_JOUEURS
+	if arrives.size() < fiches.size():
+		return ATTENTE_ARRIVEE
+	if not fiches.all(func(fiche: Dictionary) -> bool: return fiche.get("pret", false)):
+		return ATTENTE_PRETS
+	return ""
+
+
+## La couleur de la palette voisine de celle du joueur `id` dans le sens `sens` (1 : suivante,
+## -1 : précédente, la palette en boucle) qu'aucun autre inscrit ne porte, places réservées
+## comprises ; sa propre couleur s'il n'y en a aucune ; transparente si `id` est inconnu.
+static func couleur_voisine_libre(occupes: Dictionary[int, Dictionary], id: int, sens: int) -> Color:
+	var fiche: Dictionary = occupes.get(id, {})
+	if fiche.is_empty():
+		return Color.TRANSPARENT
+	var prises := occupes.keys().filter(func(autre: int) -> bool: return autre != id) \
+		.map(func(autre: int) -> Color: return occupes[autre].couleur)
+	var palette := EtatPartie.PALETTE_BATAILLE
+	var depart := palette.find(fiche.couleur)
+	for pas in range(1, palette.size() + 1):
+		var c: Color = palette[posmod(depart + pas * signi(sens), palette.size())]
+		if not prises.has(c):
+			return c
+	return fiche.couleur
+
+
+## Renumérote en place les index de `occupes` sur 0..n-1, dans leur ordre (des départs ont pu
+## laisser des trous que `premier_index_libre` ne comble qu'à une nouvelle arrivée).
+static func compacter_index(occupes: Dictionary[int, Dictionary]) -> void:
+	var ids := occupes.keys()
+	ids.sort_custom(func(a: int, b: int) -> bool: return occupes[a].index < occupes[b].index)
+	for i in range(ids.size()):
+		occupes[ids[i]].index = i
+
+
+## La table du salon tirée de `occupes` : les arrivés seulement, triés par index (voir
+## `table_salon`).
+static func table_de(occupes: Dictionary[int, Dictionary]) -> Array[Dictionary]:
+	var table: Array[Dictionary] = []
+	for id: int in occupes:
+		var fiche: Dictionary = occupes[id]
+		if fiche.get("arrive", false):
+			table.append({"id": id, "index": fiche.index, "couleur": fiche.couleur, "pseudo": fiche.pseudo, "pret": fiche.get("pret", false)})
+	table.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.index < b.index)
+	return table
+
+
+## La table du salon reçue de l'hôte, vérifiée : au plus NB_JOUEURS_MAX fiches
+## `{id, index, couleur, pseudo, pret}` aux identifiants (1 et plus), index (0 à NB_JOUEURS_MAX - 1)
+## et couleurs (de la palette) tous distincts, triée par index, pseudos nettoyés comme l'hôte les
+## nettoie ; un tableau vide pour toute autre chose.
+static func lire_table(table: Variant) -> Array[Dictionary]:
+	var lue: Array[Dictionary] = []
+	if not (table is Array) or table.size() > EtatPartie.NB_JOUEURS_MAX:
+		return lue
+	var ids := []
+	var index := []
+	var couleurs := []
+	for fiche: Variant in table:
+		if not (fiche is Dictionary) or not (fiche.get("id") is int) or not (fiche.get("index") is int) \
+				or not (fiche.get("couleur") is Color) or not (fiche.get("pseudo") is String) or not (fiche.get("pret") is bool) \
+				or fiche.id < 1 or fiche.index < 0 or fiche.index >= EtatPartie.NB_JOUEURS_MAX \
+				or not EtatPartie.PALETTE_BATAILLE.has(fiche.couleur) \
+				or ids.has(fiche.id) or index.has(fiche.index) or couleurs.has(fiche.couleur):
+			return [] as Array[Dictionary]
+		ids.append(fiche.id)
+		index.append(fiche.index)
+		couleurs.append(fiche.couleur)
+		lue.append({"id": fiche.id, "index": fiche.index, "couleur": fiche.couleur,
+			"pseudo": pseudo_ou_defaut(fiche.pseudo, fiche.index), "pret": fiche.pret})
+	lue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.index < b.index)
+	return lue
+
+
+## Les fiches de la manche tirées d'une table du salon (voir `manche_lancee`), ou un tableau vide si
+## elle ne peut pas lancer de manche : moins de NB_JOUEURS_MIN joueurs, index qui ne sont pas
+## exactement 0..n-1 (compactés par l'hôte), ou `id_local` absent (ce poste n'est pas dans la
+## partie).
+static func fiches_de_manche(table: Array[Dictionary], id_local: int) -> Array[Dictionary]:
+	var fiches: Array[Dictionary] = []
+	if table.size() < EtatPartie.NB_JOUEURS_MIN or not table.any(func(f: Dictionary) -> bool: return f.id == id_local):
+		return fiches
+	for i in range(table.size()):
+		if table[i].index != i:
+			return [] as Array[Dictionary]
+		fiches.append({"id_reseau": table[i].id, "pseudo": table[i].pseudo, "couleur": table[i].couleur})
+	return fiches
+
+
+## Chez l'hôte : reconstruit `table_salon` depuis `inscrits` (arrivés seulement), la diffuse aux
+## clients (`rpc()` ne vise que les pairs connectés, donc arrivés : jamais une place seulement
+## réservée, M4) et émet `salon_change` ici.
+func _diffuser_salon() -> void:
+	if not multiplayer.is_server():
+		return
+	table_salon = table_de(inscrits)
+	if en_ligne():
+		_recevoir_salon.rpc(table_salon, niveau_salon, places_salon)
+	salon_change.emit()
+
+
+## Chez l'hôte : un client demande une autre couleur.
+@rpc("any_peer", "call_remote", "reliable")
+func _demande_couleur(sens: Variant) -> void:
+	if sens is int:
+		changer_couleur(multiplayer.get_remote_sender_id(), sens)
+
+
+## Chez l'hôte : un client demande à être prêt, ou plus.
+@rpc("any_peer", "call_remote", "reliable")
+func _demande_pret(pret: Variant) -> void:
+	if pret is bool:
+		definir_pret(multiplayer.get_remote_sender_id(), pret)
+
+
+## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible). Ce
+## poste y lit son index et sa couleur.
+@rpc("authority", "call_remote", "reliable")
+func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
+	var lue := lire_table(table)
+	if lue.is_empty() or not (niveau is int) or niveau < 0 or niveau >= EtatPartie.NIVEAUX.size() \
+			or not (nb_places is int) or nb_places < EtatPartie.NB_JOUEURS_MIN or nb_places > EtatPartie.NB_JOUEURS_MAX:
+		push_warning("Reseau : table du salon illisible, ignorée")
+		return
+	table_salon = lue
+	niveau_salon = niveau
+	places_salon = nb_places
+	for fiche in lue:
+		if fiche.id == multiplayer.get_unique_id():
+			index_local = fiche.index
+			couleur_locale = fiche.couleur
+	salon_change.emit()
+
+
+## Chez un client : l'hôte lance la manche, sur la table compactée reçue juste avant.
+@rpc("authority", "call_remote", "reliable")
+func _recevoir_manche() -> void:
+	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id())
+	if fiches.is_empty():
+		push_warning("Reseau : lancement de manche sur une table illisible, ignoré")
+		return
+	manche_en_cours = true
+	manche_lancee.emit(fiches)
+
+
 func _api() -> SceneMultiplayer:
 	return multiplayer as SceneMultiplayer
 
@@ -284,7 +582,8 @@ func _repondre(id: int, demande: Variant) -> void:
 		return  # demande répétée : la première réponse fait foi
 	var reponse := examiner_demande(demande)
 	if reponse.accepte:
-		inscrits[id] = {"index": reponse.index, "couleur": reponse.couleur, "pseudo": reponse.pseudo}
+		inscrits[id] = {"index": reponse.index, "couleur": reponse.couleur, "pseudo": reponse.pseudo, "arrive": false, "pret": false}
+		salon_change.emit()  # une place réservée : le bouton Démarrer de l'hôte se grise
 	_api().send_auth(id, var_to_bytes(reponse))
 	# Un refusé n'est pas déconnecté ici : ENet viderait sa file d'envoi, réponse comprise, et le
 	# client ne saurait jamais pourquoi. Il part de lui-même en lisant le refus ; sinon le délai de
@@ -309,17 +608,23 @@ func _lire_reponse(reponse: Variant) -> void:
 ## Chez l'hôte, un pair qui ne finit pas sa poignée de main (délai, départ) libère la place qui
 ## lui avait été attribuée ; il n'était jamais « arrivé », il ne « part » donc pas.
 func _sur_echec_poignee_de_main(id: int) -> void:
-	if multiplayer.is_server():
-		inscrits.erase(id)
+	if multiplayer.is_server() and inscrits.erase(id):
+		salon_change.emit()  # la place réservée se libère : le bouton de l'hôte peut revenir
 
 
+## Chez l'hôte : un accepté a fini sa poignée de main. Il est désormais arrivé : sa carte apparaît
+## au salon et la table lui est envoyée avec celle des autres.
 func _sur_pair_connecte(id: int) -> void:
 	if multiplayer.is_server() and inscrits.has(id):
+		inscrits[id].arrive = true
+		_diffuser_salon()
 		joueur_arrive.emit(id)
 
 
+## Chez l'hôte : un arrivé est parti ; sa carte se libère chez tous (spec §4).
 func _sur_pair_deconnecte(id: int) -> void:
 	if multiplayer.is_server() and inscrits.erase(id):
+		_diffuser_salon()
 		joueur_parti.emit(id)
 
 

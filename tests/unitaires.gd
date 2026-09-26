@@ -32,6 +32,8 @@ func _run() -> void:
 	_tester_joueur_local()
 	_tester_palette()
 	_tester_decouverte()
+	_tester_bataille_reseau()
+	_tester_salon()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1280,3 +1282,198 @@ func _datagrammes_recus(recepteur: PacketPeerUDP) -> Array[PackedByteArray]:
 			recus.append(recepteur.get_packet())
 		OS.delay_msec(5)
 	return recus
+
+
+## Phase 13 : la bataille configurée par les fiches du salon (`configurer_bataille_reseau`), les
+## couleurs corrigées (M4) et le nombre de joueurs ramené dans ses bornes.
+func _tester_bataille_reseau() -> void:
+	print("-- Bataille en réseau (fiches du salon, couleurs, nombre de joueurs)")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	_check(EtatPartie.couleurs_de_bataille(3, []) == palette.slice(0, 3), "sans couleurs données : la palette dans l'ordre")
+	var donnees: Array[Color] = [palette[4], palette[0]]
+	_check(EtatPartie.couleurs_de_bataille(4, donnees) == [palette[4], palette[0], palette[1], palette[2]],
+		"trop peu de couleurs : les manquantes prennent les premières de la palette encore libres (plus de doublon)")
+	var fautives: Array[Color] = [palette[2], Color.TRANSPARENT, palette[2], palette[5], palette[1]]
+	_check(EtatPartie.couleurs_de_bataille(4, fautives) == [palette[2], palette[0], palette[1], palette[5]],
+		"une couleur transparente ou en double est remplacée, celles en trop ignorées")
+	var gs: Node = root.get_node("GameState")
+	var tableau: Array[Joueur] = gs.joueurs
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17794) == OK, "(pré-condition) un pair client, pour que ce poste ait son propre identifiant")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	var id_local := pair.get_unique_id()
+	var annonces: Array[Joueur] = []
+	var sur_annonce := func(j: Joueur) -> void: annonces.append(j)
+	gs.joueur_local_change.connect(sur_annonce)
+	var fiches_salon: Array[Dictionary] = [{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[4]},
+		{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[0]}, {"id_reseau": id_local, "pseudo": "Chloé", "couleur": palette[2]}]
+	gs.configurer_bataille_reseau(fiches_salon)
+	_check(gs.regles is ReglesBataille and is_same(tableau, gs.joueurs) and gs.joueurs.size() == 3
+		and gs.joueurs.map(func(j: Joueur) -> int: return j.index) == [0, 1, 2],
+		"configurer_bataille_reseau : règles de bataille, un joueur par fiche, dans le même tableau, index 0..2")
+	_check(gs.joueurs.map(func(j: Joueur) -> int: return j.id_reseau) == [1, 7, id_local]
+		and gs.joueurs.map(func(j: Joueur) -> String: return j.pseudo) == ["Hôte", "Bob", "Chloé"]
+		and gs.joueurs.map(func(j: Joueur) -> Color: return j.couleur) == [palette[4], palette[0], palette[2]],
+		"chaque index reçoit l'identifiant, le pseudo et la couleur de sa fiche, l'index 0 (l'hôte, 1) compris")
+	_check(gs.joueur_local() == gs.joueurs[2] and annonces == [gs.joueurs[2]],
+		"le joueur local est celui de ce poste (index 2), annoncé une seule fois, identifiants déjà posés")
+	gs.joueur_local_change.disconnect(sur_annonce)
+	pair.close()
+	set_multiplayer(null, gs.get_path())
+	gs.configurer_bataille(9)
+	_check(gs.joueurs.size() == EtatPartie.NB_JOUEURS_MAX and gs.regles is ReglesBataille,
+		"9 joueurs demandés : ramenés à %d avec une erreur signalée, sans planter (ligne ERROR attendue)" % EtatPartie.NB_JOUEURS_MAX)
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
+	gs.pret = false
+
+
+## Phase 13 : la logique du salon dans `Reseau` (adresse de `rejoindre`, démarrage permis ou non,
+## couleurs, index compactés, table diffusée et relue, lancement de la manche).
+func _tester_salon() -> void:
+	print("-- Salon (table, couleurs, démarrage de l'hôte, index compactés)")
+	var reseau: Node = root.get_node("Reseau")  # autoload : jamais nommé (compilé avant lui)
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+
+	# Adresse de rejoindre() : une IPv4 seulement, refusée sans rien changer sinon (M8)
+	_check(reseau.rejoindre("lelion.local", 17793) == ERR_INVALID_PARAMETER and not reseau.en_ligne()
+		and reseau.rejoindre("192.168.1", 17793) == ERR_INVALID_PARAMETER and reseau.rejoindre("::1", 17793) == ERR_INVALID_PARAMETER,
+		"rejoindre() refuse un nom d'hôte, une adresse incomplète ou IPv6, sans rien tenter (aucune résolution bloquante)")
+	_check(reseau.rejoindre(" 127.000.0.1 ", 17793) == OK and reseau.en_ligne() and not root.multiplayer.is_server(),
+		"une IPv4 saisie avec des zéros et des espaces est normalisée et rejointe")
+	_check(reseau.rejoindre("lelion.local", 17793) == ERR_INVALID_PARAMETER and reseau.en_ligne(),
+		"une adresse refusée ne ferme pas la session en cours")
+	reseau.quitter()
+
+	# Démarrage permis : au moins deux joueurs arrivés, aucune place seulement réservée, tous prêts ;
+	# sinon, la raison que voit l'hôte (et, sans les places réservées qu'ils ne voient pas, les clients)
+	var hote := {"index": 0, "couleur": palette[0], "pseudo": "Hôte", "arrive": true, "pret": true}
+	var occupes: Dictionary[int, Dictionary] = {1: hote.duplicate()}
+	_check(not reseau.salon_pret(occupes) and reseau.raison_attente(occupes.values()) == reseau.ATTENTE_JOUEURS,
+		"seul, l'hôte prêt ne peut pas démarrer : « il faut au moins 2 joueurs »")
+	occupes[7] = {"index": 2, "couleur": palette[2], "pseudo": "Rita", "arrive": false, "pret": false}
+	_check(reseau.raison_attente(occupes.values()) == reseau.ATTENTE_JOUEURS,
+		"une place seulement réservée ne compte pas comme un deuxième joueur")
+	occupes[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob", "arrive": true, "pret": true}
+	_check(not reseau.salon_pret(occupes) and reseau.raison_attente(occupes.values()) == reseau.ATTENTE_ARRIVEE,
+		"deux arrivés prêts, mais une place encore réservée (poignée de main en cours) : pas encore (son joueur arrivera non prêt)")
+	occupes.erase(7)
+	_check(reseau.salon_pret(occupes) and reseau.raison_attente(occupes.values()).is_empty(),
+		"deux joueurs arrivés et prêts, aucune place réservée : l'hôte peut démarrer")
+	occupes[5].pret = false
+	_check(not reseau.salon_pret(occupes) and reseau.raison_attente(occupes.values()) == reseau.ATTENTE_PRETS,
+		"l'un repasse non prêt : « tous les joueurs doivent être prêts »")
+	occupes[5].pret = true
+	var vue_client: Array[Dictionary] = reseau.table_de(occupes)
+	_check(reseau.raison_attente(vue_client).is_empty() and reseau.raison_attente(vue_client.slice(0, 1)) == reseau.ATTENTE_JOUEURS,
+		"la même règle sur la table d'un client (arrivés seulement) : l'hôte peut démarrer, ou pourquoi pas")
+
+	# Couleur voisine libre : dans les deux sens, en boucle, places réservées comprises
+	occupes[7] = {"index": 2, "couleur": palette[3], "pseudo": "Rita", "arrive": false, "pret": false}
+	_check(reseau.couleur_voisine_libre(occupes, 1, 1) == palette[2] and reseau.couleur_voisine_libre(occupes, 5, 1) == palette[2],
+		"suivante : la première libre après la sienne (%s)" % reseau.couleur_voisine_libre(occupes, 5, 1))
+	_check(reseau.couleur_voisine_libre(occupes, 1, -1) == palette[5] and reseau.couleur_voisine_libre(occupes, 5, -1) == palette[5],
+		"précédente : en boucle, en sautant les prises (celle d'une place réservée comprise)")
+	var pleins: Dictionary[int, Dictionary] = {}
+	for i in range(EtatPartie.NB_JOUEURS_MAX):
+		pleins[10 + i] = {"index": i, "couleur": palette[i], "pseudo": "", "arrive": true, "pret": false}
+	_check(reseau.couleur_voisine_libre(pleins, 12, 1) == palette[2] and reseau.couleur_voisine_libre(occupes, 99, 1) == Color.TRANSPARENT,
+		"aucune couleur libre : la sienne ; un inconnu : aucune")
+
+	# Index compactés : dans leur ordre, sur 0..n-1
+	var troues: Dictionary[int, Dictionary] = {1: {"index": 0}, 9: {"index": 5}, 7: {"index": 2}}
+	reseau.compacter_index(troues)
+	_check(troues[1].index == 0 and troues[7].index == 1 and troues[9].index == 2, "des index troués (0, 2, 5) deviennent 0, 1, 2 dans leur ordre")
+	reseau.compacter_index(troues)
+	_check(troues[1].index == 0 and troues[7].index == 1 and troues[9].index == 2, "des index déjà compacts ne changent pas")
+
+	# Table du salon : les arrivés seulement, triés par index
+	var table: Array[Dictionary] = reseau.table_de(occupes)
+	_check(table.map(func(f: Dictionary) -> int: return f.id) == [1, 5] and table[1] == {"id": 5, "index": 1, "couleur": palette[1], "pseudo": "Bob", "pret": true},
+		"la table ne montre que les joueurs arrivés, triés par index, avec leur identifiant (M4 : jamais une carte fantôme)")
+
+	# Lecture de la table reçue de l'hôte : tout ce qui n'est pas une table valide est refusé
+	var recue: Array = [{"id": 5, "index": 1, "couleur": palette[1], "pseudo": " Bob" + char(0x202E) + " ", "pret": false},
+		{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Hôte", "pret": true}]
+	var lue: Array[Dictionary] = reseau.lire_table(recue)
+	_check(lue.size() == 2 and lue[0].id == 1 and lue[1].pseudo == "Bob", "une table valide est relue triée, pseudos nettoyés (%s)" % [lue])
+	var invalides: Array = ["x", [recue[0], recue[0]], [recue[0].merged({"id": 0}, true)], [recue[0].merged({"index": 6}, true)],
+		[recue[0].merged({"couleur": Color(0.5, 0.5, 0.5)}, true)], [recue[0], recue[1].merged({"couleur": palette[1]}, true)],
+		[recue[0], recue[1].merged({"index": 1}, true)], [recue[0].merged({"pret": 1}, true)], [{"id": 5}], [recue[0], recue[1], 3]]
+	var trop: Array = []
+	for i in range(EtatPartie.NB_JOUEURS_MAX + 1):
+		trop.append({"id": i + 1, "index": i % 6, "couleur": palette[i % 6], "pseudo": "", "pret": false})
+	invalides.append(trop)
+	var passees := invalides.filter(func(t: Variant) -> bool: return not reseau.lire_table(t).is_empty())
+	_check(passees.is_empty(), "%d tables mal formées refusées (types, identifiant nul, index hors plage, couleur hors palette, doublons, trop de joueurs) (%s)" % [invalides.size(), passees])
+
+	# Fiches de la manche : une table compactée d'au moins deux joueurs, qui contient ce poste
+	var compacte: Array[Dictionary] = reseau.lire_table([{"id": 1, "index": 0, "couleur": palette[4], "pseudo": "Hôte", "pret": true},
+		{"id": 9, "index": 1, "couleur": palette[2], "pseudo": "Chloé", "pret": true}])
+	var fiches: Array[Dictionary] = reseau.fiches_de_manche(compacte, 9)
+	_check(fiches == [{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[4]}, {"id_reseau": 9, "pseudo": "Chloé", "couleur": palette[2]}],
+		"les fiches de la manche : identifiant, pseudo et couleur de chaque index, dans l'ordre (%s)" % [fiches])
+	var trouee: Array[Dictionary] = reseau.lire_table([compacte[0], compacte[1].merged({"index": 3}, true)])
+	_check(reseau.fiches_de_manche(compacte, 42).is_empty() and reseau.fiches_de_manche(trouee, 9).is_empty()
+		and reseau.fiches_de_manche(compacte.slice(0, 1), 1).is_empty(),
+		"pas de manche pour un poste absent de la table, des index troués ou un seul joueur")
+
+	# L'hôte : couleurs arbitrées une à une, Prêt, niveau, lancement (index compactés, manche en
+	# cours)
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(17793) == OK and reseau.inscrits[1].arrive and not reseau.inscrits[1].pret
+		and reseau.table_salon.size() == 1 and reseau.table_salon[0].id == 1, "l'hôte s'inscrit arrivé, pas prêt, seul dans la table")
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob", "arrive": false, "pret": false}
+	reseau.inscrits[9] = {"index": 3, "couleur": palette[2], "pseudo": "Chloé", "arrive": false, "pret": false}
+	_check(not reseau.changer_couleur(5, 1) and not reseau.definir_pret(5, true), "une place seulement réservée ne change ni de couleur ni d'état")
+	var changements := [0]
+	var compter_changements := func() -> void: changements[0] += 1
+	reseau.salon_change.connect(compter_changements)
+	reseau.inscrits[11] = {"index": 4, "couleur": palette[5], "pseudo": "Lent", "arrive": false, "pret": false}
+	reseau._sur_echec_poignee_de_main(11)
+	reseau._sur_echec_poignee_de_main(12)
+	_check(changements[0] == 1 and not reseau.inscrits.has(11),
+		"une place réservée qui se libère est signalée (le bouton Démarrer de l'hôte en dépend), un pair inconnu non")
+	reseau.salon_change.disconnect(compter_changements)
+	reseau._sur_pair_connecte(5)
+	reseau._sur_pair_connecte(9)
+	_check(reseau.table_salon.map(func(f: Dictionary) -> int: return f.index) == [0, 1, 3], "(pré-condition) un trou à l'index 2, laissé par un départ")
+	_check(reseau.changer_couleur(5, 1) and reseau.inscrits[5].couleur == palette[3] and reseau.changer_couleur(9, 1) and reseau.inscrits[9].couleur == palette[4],
+		"deux demandes pour la même couleur : la première l'obtient, la seconde passe à la suivante libre")
+	var niveaux: Array[int] = []
+	reseau.definir_niveau(2)
+	niveaux.append(reseau.niveau_salon)
+	reseau.definir_niveau(3)
+	niveaux.append(reseau.niveau_salon)
+	reseau.definir_niveau(-1)
+	niveaux.append(reseau.niveau_salon)
+	_check(niveaux == [2, 0, 2], "le niveau du salon reste dans la liste, en boucle (%s)" % [niveaux])
+	var lancees: Array = []
+	var sur_lancement := func(f: Array[Dictionary]) -> void: lancees.append(f)
+	reseau.manche_lancee.connect(sur_lancement)
+	for id in [1, 5]:
+		reseau.definir_pret(id, true)
+	_check(not reseau.lancer_manche() and lancees.is_empty() and not reseau.manche_en_cours, "pas de lancement tant que quelqu'un n'est pas prêt")
+	reseau.definir_pret(9, true)
+	reseau.inscrits[9].pret = false  # repassé non prêt dans la même image que l'appui, avant tout affichage
+	_check(not reseau.lancer_manche() and lancees.is_empty() and not reseau.manche_en_cours,
+		"l'hôte revérifie au moment de démarrer : un joueur repassé non prêt dans la même image fait refuser le lancement")
+	reseau.inscrits[9].pret = true
+	_check(reseau.lancer_manche() and reseau.manche_en_cours and reseau.examiner_demande({"jeu": reseau.JEU, "version": reseau.version, "pseudo": "Tard"}).raison == reseau.REFUS_MANCHE,
+		"tous prêts : la manche se lance, plus personne n'entre (refus « manche en cours »)")
+	_check(reseau.inscrits[9].index == 2 and reseau.table_salon.map(func(f: Dictionary) -> int: return f.index) == [0, 1, 2]
+		and lancees.size() == 1 and lancees[0].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 5, 9],
+		"au lancement, les index sont compactés (Chloé passe de 3 à 2) et les fiches suivent cet ordre")
+	_check(not reseau.lancer_manche() and not reseau.changer_couleur(1, 1) and not reseau.definir_pret(5, false) and lancees.size() == 1,
+		"pendant la manche : ni second lancement, ni couleur, ni Prêt")
+	reseau.ouvrir_salon(1)
+	_check(not reseau.manche_en_cours and reseau.inscrits.values().all(func(f: Dictionary) -> bool: return not f.pret) and reseau.niveau_salon == 1,
+		"rouvrir le salon (retour de manche, phase 18) : arrivées acceptées, personne n'est prêt")
+	reseau.manche_lancee.disconnect(sur_lancement)
+	reseau.quitter()
+	_check(reseau.table_salon.is_empty() and reseau.niveau_salon == 0 and reseau.places_salon == EtatPartie.NB_JOUEURS_MAX,
+		"quitter() oublie la table du salon")
+	reseau.pseudo = ""
