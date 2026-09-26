@@ -92,7 +92,11 @@ de jeu.
   (≈ 50 ms), pour lisser la gigue.
 - **Découverte** : l'hôte émet toutes les secondes une balise UDP broadcast sur le port **7778**
   (vers 255.255.255.255 et la diffusion dirigée a.b.c.255 de chaque réseau privé de l'hôte, en
-  supposant un /24 : sous Windows, la diffusion limitée ne sort que par une interface) :
+  supposant un /24 : sous Windows, la diffusion limitée ne sort que par une interface). Cette
+  supposition d'un /24 ne tient pas sur un réseau maillé en mode routeur (TP-Link Deco, eero : /22
+  typique), où `a.b.c.255` n'est alors qu'une adresse unicast du sous-réseau, pas une diffusion ;
+  Godot ne donnant pas le masque de sous-réseau, il reste la saisie par IP (revue finale de la
+  phase 12, constat 3 ; feuille de route, phase 19) :
   `LELION|<version>|<port de jeu>|<nb joueurs>|<places>|<manche 0/1>|<index du niveau>|<pseudo hôte>`.
   Le pseudo, seul texte libre, vient en dernier (il peut contenir `|`) ; le port de jeu dit au client
   où rejoindre ; places et manche en cours permettent de griser une partie pleine ou en cours. Une
@@ -331,6 +335,9 @@ Chaque phase touche 5 fichiers au plus, se termine par les tests verts, et atten
 - **Correction visible** si l'hôte et le client divergent souvent (chocs en chaîne) : la
   correction douce peut donner un léger effet élastique. Accepté ; seuils réglables.
 - **Broadcast filtré** (réseau classé Public, Wi-Fi invité) : repli par IP, documenté.
+- **Réseau maillé en mode routeur** (TP-Link Deco, eero : /22 typique) : la diffusion dirigée
+  a.b.c.255 suppose un /24 (4.1) et n'est plus une diffusion sur un /22 ou plus large ; repli par
+  IP, comme pour le broadcast filtré (revue finale de la phase 12, constat 3 ; phase 19).
 - **Coût du tamponnage** à 6 joueurs sur chaque machine (6 blits par frame + mise à jour de la
   texture) : à mesurer en phase 4. Parade : regrouper la mise à jour de texture par frame (déjà le
   cas avec `_dirty`).

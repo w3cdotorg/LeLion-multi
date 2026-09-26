@@ -384,7 +384,17 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   réseau » (sous Linux, une diffusion revient d'ordinaire aux sockets locales) ; le garder s'il est
   vert 5 fois, sinon le noter ici. Sur Windows, la découverte n'est vérifiée qu'à la main (`.exe` de
   la CI) : deux PC de la LAN, dont un avec une carte réseau virtuelle ou un VPN (la balise part aussi
-  en diffusion dirigée a.b.c.255, en supposant des réseaux en /24) ;
+  en diffusion dirigée a.b.c.255, en supposant des réseaux en /24), **et un PC derrière un routeur
+  maillé** (TP-Link Deco, eero : /22 typique, par exemple 192.168.68.0/22 ou 192.168.4.0/22), où
+  cette même supposition est fausse (revue finale de la phase 12, constat 3) : `a.b.c.255` n'y est
+  pas la diffusion, seulement une adresse unicast du sous-réseau ou une adresse hors lien envoyée à
+  la passerelle (RFC 2644). Godot ne donnant pas le masque de sous-réseau
+  (`IP.get_local_interfaces()` n'a que les adresses), aucune diffusion dirigée calculée depuis une
+  adresse seule n'est fiable au-delà d'un /24 ; sur un tel réseau, seule la saisie par IP fonctionne.
+  Si le test manuel confirme le problème, envisager d'envoyer aussi vers les candidats /23 et /22
+  de chaque adresse privée (a.b.(c|1).255, a.b.(c|3).255) en plus du /24 et du /16, dédoublonnés (un
+  datagramme de plus par seconde vers un hôte muet sur 7778, ou jeté par la passerelle, ne coûte
+  rien) ; sinon, documenter la limite dans le README (« Jouer en LAN ») ;
 - **phase 13** (salon, phase 12) : la balise de découverte (`Decouverte`) suit l'état de `Reseau` sans
   qu'on la relance : `inscrits.size()` (réservations comprises, voir M4 plus bas), `places`,
   `manche_en_cours` et le niveau `GameState.niveau_courant`. Le salon doit donc poser
