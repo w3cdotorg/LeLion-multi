@@ -132,6 +132,8 @@ func _run() -> void:
 	scores.effacer()
 	GS.niveau_courant = 0
 
+	await _tester_ecran_reseau(scores, params)
+
 	# Scores
 	_check(scores.enregistrer("skyline/facile", 50.0) == 0 and scores.meilleur_temps("metropole/facile") < 0.0
 		and scores.meilleur_temps("skyline/moyen") < 0.0, "un record ne compte que pour son niveau et sa difficulté")
@@ -1151,3 +1153,174 @@ func _run() -> void:
 
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
+
+
+## Phase 12 bis : l'écran Réseau (liste, IP, refus, échecs, hébergement, port occupé, clavier). Les
+## signaux de `Reseau` sont émis comme il le fait (après être revenu hors réseau pour les échecs) :
+## le transport lui-même est couvert par tests/reseau/lancer.sh.
+func _tester_ecran_reseau(scores: Node, params: Node) -> void:
+	print("-- Écran Réseau")
+	var reseau: Node = root.get_node("Reseau")
+	var decouverte: Node = root.get_node("Decouverte")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var port_balise := 17895  # jamais le 7778 d'une vraie partie
+	decouverte.port_balise = port_balise
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+	scores.definir_preference("pseudo", "Léa")
+	var ecran: Control = load("res://Scenes/EcranReseau.tscn").instantiate()
+	ecran.port_jeu = 17797
+	root.add_child(ecran)
+	await _frames(1)
+
+	# Accueil : 16:9, focus, pseudo mémorisé et borné, écoute des balises, liste vide avec l'indice
+	_check(root.content_scale_size == Vector2i(2000, 1125), "l'écran Réseau passe en 16:9, comme le salon")
+	_check(ecran.etat == ecran.Etat.ACCUEIL and ecran.bouton_heberger.has_focus(), "à l'accueil, Héberger a le focus")
+	_check(ecran.champ_pseudo.text == "Léa" and ecran.champ_pseudo.max_length == reseau.PSEUDO_MAX,
+		"le pseudo mémorisé est repris, la saisie bornée à %d caractères" % reseau.PSEUDO_MAX)
+	_check(decouverte.ecoute_active() and decouverte.port_balise == port_balise, "l'écran écoute les balises")
+	_check(ecran.boutons_parties.is_empty() and ecran.indice.visible and ecran.indice.text == tr("RESEAU_AUCUNE_PARTIE")
+		and "Pare-feu" in ecran.indice.text, "aucune partie : l'indice « Pare-feu ? Réseau Privé ? Essaie par IP »")
+	_check(ecran.bouton_heberger.get_node(ecran.bouton_heberger.focus_neighbor_bottom) == ecran.champ_ip,
+		"liste vide : bas depuis Héberger mène à l'adresse IP")
+
+	# Parties entendues : une joignable, trois refusées d'avance (pleine, autre version, manche)
+	var futur := Time.get_ticks_msec() + 600000  # « vues dans le futur » : elles n'expirent pas pendant le test
+	var zoe := {"version": reseau.version, "port": 17797, "nb_joueurs": 2, "places": 6, "manche_en_cours": false, "niveau": 1, "pseudo": "Zoé"}
+	decouverte.enregistrer_partie(decouverte.parties, "127.0.0.1", zoe, futur)
+	decouverte.enregistrer_partie(decouverte.parties, "10.0.0.2", zoe.merged({"pseudo": "Anna", "nb_joueurs": 6}, true), futur)
+	decouverte.enregistrer_partie(decouverte.parties, "10.0.0.3", zoe.merged({"pseudo": "Bob", "version": "0.1"}, true), futur)
+	decouverte.enregistrer_partie(decouverte.parties, "10.0.0.4", zoe.merged({"pseudo": "Chloé", "manche_en_cours": true}, true), futur)
+	decouverte.parties_changees.emit()
+	await _frames(1)
+	var ordre: Array = ecran.liste.get_children().slice(1).map(func(b: Button) -> String: return b.text.get_slice(" ", 0))
+	_check(ecran.boutons_parties.size() == 4 and not ecran.indice.visible and ordre == ["Anna", "Bob", "Chloé", "Zoé"],
+		"une ligne par partie entendue, triées par pseudo, sans l'indice (%s)" % [ordre])
+	var b_zoe: Button = ecran.boutons_parties["127.0.0.1:17797"]
+	_check(not b_zoe.disabled and b_zoe.text == tr("RESEAU_PARTIE") % ["Zoé", 2, 6, tr("NIVEAU_METROPOLE")],
+		"une partie joignable : pseudo, joueurs sur places, niveau (%s)" % b_zoe.text)
+	var b_anna: Button = ecran.boutons_parties["10.0.0.2:17797"]
+	var b_bob: Button = ecran.boutons_parties["10.0.0.3:17797"]
+	var b_chloe: Button = ecran.boutons_parties["10.0.0.4:17797"]
+	_check(b_anna.disabled and b_anna.text.ends_with(tr("RESEAU_PARTIE_PLEINE")) and b_bob.disabled
+		and b_bob.text.ends_with(tr("RESEAU_PARTIE_VERSION") % "0.1") and b_chloe.disabled and b_chloe.text.ends_with(tr("RESEAU_PARTIE_MANCHE")),
+		"pleine, autre version, manche en cours : grisées, avec la raison (%s | %s | %s)" % [b_anna.text, b_bob.text, b_chloe.text])
+	_check(ecran.bouton_heberger.get_node(ecran.bouton_heberger.focus_neighbor_bottom) == b_anna
+		and b_zoe.get_node(b_zoe.focus_neighbor_bottom) == ecran.champ_ip and ecran.champ_ip.get_node(ecran.champ_ip.focus_neighbor_top) == b_zoe,
+		"haut et bas : Héberger, les parties dans l'ordre, puis l'adresse IP")
+	ecran.rejoindre_partie("10.0.0.2:17797")
+	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne(), "une partie grisée ne se rejoint pas")
+	b_zoe.grab_focus()
+	decouverte.enregistrer_partie(decouverte.parties, "127.0.0.1", zoe.merged({"nb_joueurs": 3}, true), futur)
+	decouverte.parties_changees.emit()
+	await _frames(1)
+	_check(ecran.boutons_parties["127.0.0.1:17797"] == b_zoe and b_zoe.has_focus() and "3/6" in b_zoe.text,
+		"une partie qui change garde sa ligne et le focus (%s)" % b_zoe.text)
+	decouverte.parties.erase("127.0.0.1:17797")
+	decouverte.parties_changees.emit()
+	await _frames(1)
+	_check(ecran.boutons_parties.size() == 3 and not ecran.boutons_parties.has("127.0.0.1:17797") and ecran.bouton_heberger.has_focus(),
+		"la partie qui avait le focus disparaît : le focus revient à Héberger")
+
+	# Adresse IP saisie : refusée si ce n'est pas une IPv4, sinon connexion avec le pseudo nettoyé
+	ecran.champ_ip.text = "lelion.local"
+	ecran.rejoindre_par_ip()
+	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne() and ecran.message.text == tr("RESEAU_IP_INVALIDE")
+		and ecran.champ_ip.has_focus(), "un nom d'hôte est refusé sans rien tenter (%s)" % ecran.message.text)
+	ecran.champ_pseudo.text = " Zoé la grande dompteuse"
+	_check(ecran.champ_pseudo.text == " Zoé la gran", "la saisie du pseudo s'arrête à %d caractères (%s)" % [reseau.PSEUDO_MAX, ecran.champ_pseudo.text])
+	ecran.port_jeu = 17796  # personne n'y écoute
+	ecran.champ_ip.text = " 127.000.0.1 "
+	ecran.rejoindre_par_ip()
+	_check(ecran.etat == ecran.Etat.CONNEXION and reseau.en_ligne() and not root.multiplayer.is_server()
+		and ecran.champ_ip.text == "127.0.0.1" and ecran.message.text == tr("RESEAU_CONNEXION") % "127.0.0.1",
+		"une IPv4 saisie lance la connexion, adresse normalisée (%s)" % ecran.message.text)
+	_check(reseau.pseudo == "Zoé la gran" and ecran.champ_pseudo.text == "Zoé la gran" and scores.preference("pseudo", "") == "Zoé la gran",
+		"le pseudo nettoyé (sans l'espace de tête) est donné à Reseau et mémorisé (%s)" % reseau.pseudo)
+	_check(not decouverte.ecoute_active() and ecran.boutons_parties.is_empty() and not ecran.cadre_parties.visible
+		and ecran.bouton_heberger.disabled and not ecran.champ_ip.editable and ecran.bouton_retour.has_focus(),
+		"pendant la connexion : plus d'écoute ni de liste, tout est grisé sauf Retour, qui a le focus")
+	reseau.inscrit.emit(2, palette[2])
+	_check(ecran.etat == ecran.Etat.INSCRIT and ecran.message.text == tr("RESEAU_INSCRIT") % 3, "inscrit par l'hôte : « tu es le joueur 3 »")
+	reseau.quitter()
+	reseau.hote_perdu.emit()
+	_check(ecran.etat == ecran.Etat.ACCUEIL and ecran.message.text == tr("RESEAU_HOTE_PERDU") and decouverte.ecoute_active()
+		and ecran.bouton_heberger.has_focus(), "hôte perdu : « L'hôte a quitté la partie », retour à l'accueil qui écoute de nouveau")
+	ecran.rejoindre_par_ip()
+	reseau.quitter()
+	reseau.connexion_echouee.emit()
+	_check(ecran.etat == ecran.Etat.ACCUEIL and ecran.message.text == tr("RESEAU_ECHEC_CONNEXION") and "Pare-feu" in ecran.message.text,
+		"pas de réponse : le message indique le pare-feu de l'hôte et le réseau Privé (%s)" % ecran.message.text)
+	var attendus := {reseau.REFUS_VERSION: tr("RESEAU_REFUS_VERSION") % "0.9", reseau.REFUS_PLEIN: tr("RESEAU_REFUS_PLEIN"),
+		reseau.REFUS_MANCHE: tr("RESEAU_REFUS_MANCHE"), reseau.REFUS_DEMANDE: tr("RESEAU_REFUS_DEMANDE"), "RAISON_INCONNUE": tr("RESEAU_REFUS_DEMANDE")}
+	var faux: Array[String] = []
+	for raison: String in attendus:
+		ecran.rejoindre_par_ip()
+		reseau.quitter()
+		reseau.refuse.emit(raison, "0.9")
+		if ecran.etat != ecran.Etat.ACCUEIL or ecran.message.text != attendus[raison] or ecran.message.text.begins_with("RESEAU_"):
+			faux.append("%s → %s" % [raison, ecran.message.text])
+	_check(faux.is_empty() and tr("RESEAU_REFUS_VERSION") % "0.9" == "Version différente de l'hôte (0.9)",
+		"chaque refus a son texte traduit, la version de l'hôte dans le refus de version, une raison inconnue lue comme demande incomprise (%s)" % [faux])
+
+	# Héberger : en ligne, hôte, plus d'écoute ; les arrivées s'affichent ; Échap arrête
+	ecran.port_jeu = 17797
+	ecran.heberger()
+	_check(ecran.etat == ecran.Etat.HEBERGE and reseau.en_ligne() and root.multiplayer.is_server()
+		and reseau.inscrits[1].pseudo == "Zoé la gran" and not decouverte.ecoute_active() and ecran.bouton_retour.has_focus(),
+		"Héberger : ce poste héberge avec son pseudo, n'écoute plus les balises (il ne se verrait pas lui-même)")
+	_check(ecran.message.text.begins_with(tr("RESEAU_HEBERGE").get_slice("%", 0)) and "1/6" in ecran.message.text,
+		"l'hôte voit ses joueurs et ses adresses (%s)" % ecran.message.text)
+	reseau.inscrits[5] = {"index": 1, "couleur": palette[1], "pseudo": "Bob"}
+	reseau.joueur_arrive.emit(5)
+	_check("2/6" in ecran.message.text, "un joueur arrive : l'hôte le voit (%s)" % ecran.message.text)
+	var echap := InputEventAction.new()
+	echap.action = "ui_cancel"
+	echap.pressed = true
+	root.push_input(echap)
+	await process_frame
+	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne() and decouverte.ecoute_active() and ecran.message.text.is_empty(),
+		"Échap (ou B) arrête d'héberger et revient à l'accueil, qui écoute de nouveau")
+
+	# Port de jeu occupé, autre erreur d'hébergement ; changer de langue retraduit le message
+	var occupant := ENetMultiplayerPeer.new()
+	_check(occupant.create_server(17798) == OK, "(pré-condition) un autre programme occupe le port 17798")
+	ecran.port_jeu = 17798
+	ecran.heberger()
+	_check(ecran.etat == ecran.Etat.ACCUEIL and not reseau.en_ligne() and ecran.message.text == "Impossible d'héberger : port 17798 occupé",
+		"port occupé : « Impossible d'héberger : port 17798 occupé », sans quitter l'accueil (%s)" % ecran.message.text)
+	params.definir_langue("en")
+	await _frames(1)
+	_check(ecran.message.text == "Can't host: port 17798 in use" and ecran.indice.text.begins_with("No game found"),
+		"changer de langue retraduit le message et l'indice (%s | %s)" % [ecran.message.text, ecran.indice.text])
+	params.definir_langue("fr")
+	occupant.close()
+	var erreur_attendue := ENetMultiplayerPeer.new().create_server(70000)
+	ecran.port_jeu = 70000
+	ecran.heberger()
+	_check(not reseau.en_ligne() and ecran.message.text == tr("RESEAU_HEBERGER_IMPOSSIBLE") % erreur_attendue,
+		"une autre erreur d'hébergement donne son code (%s)" % ecran.message.text)
+
+	# Retour à l'accueil (sans changer de scène : la navigation vers le titre est vérifiée avec le
+	# bouton Multijoueur) ; l'écran fermé ne laisse ni écoute ni connexion aux autoloads
+	ecran.retour(false)
+	_check(not reseau.en_ligne() and scores.preference("pseudo", "") == "Zoé la gran", "Retour quitte le réseau et garde le pseudo mémorisé")
+	ecran.free()
+	_check(not decouverte.ecoute_active() and decouverte.parties_changees.get_connections().is_empty()
+		and reseau.refuse.get_connections().is_empty() and reseau.joueur_arrive.get_connections().is_empty(),
+		"l'écran fermé ne laisse ni écoute ni connexion aux autoloads")
+
+	# Port des balises déjà pris (deux LeLion sur un PC) : la liste le dit, sans planter
+	var intrus := PacketPeerUDP.new()
+	_check(intrus.bind(port_balise, "0.0.0.0") == OK, "(pré-condition) un autre programme occupe le port des balises")
+	var ecran2: Control = load("res://Scenes/EcranReseau.tscn").instantiate()
+	root.add_child(ecran2)
+	await _frames(1)
+	_check(not decouverte.ecoute_active() and ecran2.indice.visible and ecran2.indice.text == tr("RESEAU_ECOUTE_IMPOSSIBLE") % port_balise,
+		"port des balises occupé : « Recherche impossible … Rejoins par IP » (%s)" % ecran2.indice.text)
+	ecran2.free()
+	intrus.close()
+
+	decouverte.port_balise = decouverte.PORT_BALISE
+	decouverte.destinations_forcees = PackedStringArray()
+	reseau.pseudo = ""
+	scores.effacer()
