@@ -63,7 +63,9 @@ de jeu.
 | `Ville` (scène) | Masque de peinture (visuel), tampons en cache par rayon et jeu de couleurs, + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille : un `Territoire`, créé quand les règles se jouent au territoire, tamponné par l'hôte seul, qui tient aussi les scores). Chaque tampon est peint pour un `Joueur`, dans ses couleurs. | `Joueur`, `Territoire`, `Regles` |
 | `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon (la table : arrivés seulement, couleur, Prêt ; tenue par l'hôte, diffusée à chaque changement), attribution des index et couleurs, arbitrage des demandes des clients, relais du niveau et du lancement de la manche, revérifié par l'hôte au moment où il démarre (RPC fiables sur l'autoload, présent sur chaque poste dès la connexion), signaux de connexion / déconnexion et du salon. Le salon (scène) porte le bouton « Démarrer la partie » de l'hôte. | `MultiplayerAPI` |
 | `Decouverte` (autoload) | Balise UDP de l'hôte (émise tant que `Reseau` héberge, sans qu'on la relance), écoute et liste des parties entendues, validation d'une adresse IPv4 saisie. Ne nomme aucun autoload (phase 12). | `Reseau` (par son chemin) |
-| `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène), relaie tampons et scores. | tout le reste |
+| `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau, qui fait aussi apparaître ennemis et pastilles chez les clients), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène). | tout le reste |
+| `Manche` (nœud de la scène de jeu, phase 14) | En réseau : barrière de chargement (exclusion d'un absent), commandes des clients, tampons et territoire diffusés, réactions des joueurs, départs. Hors réseau, inerte. | `Reseau`, `Ville`, `Joueur` |
+| `Peinture` (logique pure, phase 14) | Jeux de tampons tirés de leur clé, tirage d'un tampon par sa graine, format réseau des tampons : chaque poste dessine les mêmes. | rien |
 
 ### 3.2 Flux d'une frame (bataille)
 
@@ -74,9 +76,12 @@ de jeu.
 3. Les traceuses de l'hôte détectent la ville et les autres lions. Les contacts remontent aux
    `Regles`.
 4. Les tampons de peinture sont appliqués sur l'hôte et **diffusés sous forme d'événements**.
-5. `MultiplayerSynchronizer` réplique position, vitesse, orientation, état de vomi, crans et
-   numéro de la dernière commande traitée de chaque lion. Les clients interpolent les lions
-   distants et recalent leur lion local (4.1). L'étourdissement, lui, ne se réplique pas comme un
+5. `MultiplayerSynchronizer` réplique position, vitesse, orientation et état de vomi de chaque lion
+   (phase 14, à 83 Hz au plus : environ 15 Ko/s par client à 6 lions, mesurés ; les crans passent en
+   événement avec les autres réactions du joueur) ; le numéro de la dernière commande traitée s'y
+   ajoute en phase 16, quand les clients interpolent les lions distants et recalent leur lion
+   local (4.1). Ennemis et pastilles sont répliqués de même (position ; côté du peintre, couleur
+   d'une pastille). L'étourdissement, lui, ne se réplique pas comme un
    champ brut : il voyage en événement (RPC hôte → clients qui appelle `Joueur.etourdir` avec la
    couleur du barbouillage), conformément au point de vigilance transverse de la phase 14 (feuille
    de route) sur les réactions du `Joueur`.
@@ -145,7 +150,11 @@ de jeu.
     (on peut aussitôt rejoindre une autre partie), au titre depuis une manche ;
   - client perdu en salon : sa carte se libère ;
   - client perdu en manche : son lion disparaît, ses cellules restent, il reste au classement en
-    grisé.
+    grisé ;
+  - client qui n'a pas chargé la scène de jeu 20 s après le lancement (barrière de chargement) :
+    exclu, l'hôte le déconnecte, la manche commence sans lui (phase 14) ;
+  - un départ volontaire est un DISCONNECT fiable d'ENet, renvoyé jusqu'à son accusé de réception ;
+    un poste muet est considéré parti après 3 à 8 s, 20 à 30 s pendant le chargement de la manche.
 
 ### 4.1 Prédiction du lion local
 
@@ -239,10 +248,14 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   centres négatifs (le tampon déborde du haut ou de la gauche de l'image) : encodés en u16, ils
   boucleraient vers ~65 500 et le client dessinerait au mauvais endroit ou pas du tout pendant que
   le territoire de l'hôte compte le tampon quand même ; i16 les transporte sans ambiguïté. Chaque
-  machine dessine avec la graine reçue : motifs et coulures identiques. Environ 3 Ko/s à 6 joueurs.
+  machine dessine avec la graine reçue : motifs et coulures identiques (phase 14 : jeux de tampons
+  tirés de leur clé, plafond des coulures compté en tampons). Seule une coulure qui descend encore
+  quand un tampon la recouvre peut passer dessus sur un poste et dessous sur un autre, selon leur
+  rythme d'affichage : l'image de la ville peut différer de ce détail, jamais le territoire.
+  Environ 3 Ko/s à 6 joueurs.
 - **Synchro du score** : toutes les 0,2 s, l'hôte envoie la liste des cellules dont le
   propriétaire compté a changé (index u16 + propriétaire u8, `Territoire.extraire_changements()`)
-  et les scores. Les clients n'effectuent aucun calcul de propriété : leur ville dessine les
+  et les scores, que le client vérifie après avoir appliqué la liste (désynchronisation signalée). Les clients n'effectuent aucun calcul de propriété : leur ville dessine les
   tampons reçus sans toucher à son territoire, auquel elle applique la liste reçue, d'où les
   mêmes scores que l'hôte.
 - **Solo** : mesure de couverture actuelle (alpha moyen ≥ 0,4 par cellule) inchangée.
@@ -317,8 +330,13 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   (sa carte se libère), deux demandes de couleur au même feu arbitrées par l'hôte, bouton Démarrer
   regrisé par un client repassé non prêt et démarrage alors refusé, puis démarrage par l'hôte, tous
   prêts, manche chargée chez tous avec la même
-  table (index compactés), retardataire refusé « manche en cours ». De bout en bout (phase
-  15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
+  table (index compactés), retardataire refusé « manche en cours ». Depuis la phase 14, la manche
+  (scénario 9) : 1 hôte + 2 clients + un muet qui ne charge jamais sa scène, l'hôte figé 6,5 s
+  pendant le chargement (personne ne le croit parti), le muet exclu par la barrière, une passe de
+  peinture au clavier de chaque poste, un client qui part par le menu local (son lion disparaît,
+  ses cellules restent), des réactions données par l'hôte ; la même empreinte chez l'hôte et chez
+  le client resté (territoire, scores, suite des tampons, lions, apparitions), puis l'hôte perdu.
+  De bout en bout (phase 15) : 1 hôte + 3 clients, commandes scriptées ; vérifie à la fin l'empreinte identique des
   propriétaires de cellules chez tous, les scores identiques, le même nombre de tampons reçus, la
   déconnexion d'un client en cours de manche.
 - **Visuel** : `tests/screenshots.gd` étendu (salon, manche à 6 couleurs, résultats), deux vraies

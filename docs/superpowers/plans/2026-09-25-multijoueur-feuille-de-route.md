@@ -71,10 +71,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 12 | **Découverte** : autoload `Decouverte` (balise UDP 7778 de l'hôte, qui suit `Reseau` ; écoute ; liste des parties qui expirent ; adresse IPv4 saisie validée), test à plusieurs processus (balises vers 127.0.0.1 ; vraie diffusion avec `DIFFUSION=1`, hors CI). Découpage (8 fichiers avec les tests et l'autoload) : plans des phases 12 et 12 bis. | ➕ `Scripts/Decouverte.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | tests verts, test réseau vert 5 fois (bash 3.2 et 5) |
 | 12 bis | **Écran Réseau** : pseudo mémorisé, Héberger, liste des parties, Rejoindre par IP, textes des refus et des échecs, bouton Multijoueur du titre, `Titre._ready` hors réseau. | ➕ `Scenes/EcranReseau.tscn` ➕ `Scripts/EcranReseau.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/smoke_test.gd` | ◉ écran Réseau |
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, bouton Démarrer de l'hôte (pas de compte à rebours, décision de l'utilisateur), lancement de la manche chez tous (index compactés, `configurer_bataille_reseau`), table et protocole du salon dans `Reseau`, l'écran Réseau qui passe la main, `rejoindre()` limité aux IPv4, version 0.13. Plafond de 5 fichiers levé. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ salon à 3, test réseau vert 5 fois (bash 3.2 et 5) |
-| 14 | **Manche synchronisée** : `MultiplayerSpawner`, `MultiplayerSynchronizer`, commandes par RPC, événements de tampon, scores diffusés. | ✏️ `Scripts/Main.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/ReglesBataille.gd` | ◉ partie à 2 fenêtres |
+| 14 | **Manche synchronisée** (après la 14 bis) : lions, ennemis et pastilles apparus chez l'hôte et répliqués (`MultiplayerSpawner`, `MultiplayerSynchronizer` : position, vitesse, orientation, vomi ; côté du peintre, couleur d'une pastille), commandes des clients par RPC (numérotées, silence de 500 ms), tampons diffusés et dessinés à l'identique (`Peinture` : jeux tirés de leur clé, graine u16), territoire et scores diffusés toutes les 0,2 s, réactions des joueurs par RPC, barrière de chargement (exclusion d'un absent), départs et hôte perdu, menu local sans pause, fenêtre en 16:9 hors solo, relais du serveur coupé, départ propre et silences d'ENet, version 0.14. Plafond de 5 fichiers levé. | ➕ `Scripts/Peinture.gd` ➕ `Scripts/Manche.gd` ✏️ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/Titre.gd` ✏️ `Scripts/Salon.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scripts/Spawner.gd` ✏️ six scènes d'ennemis et de pastilles ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Main.gd` ✏️ `Scenes/Main.tscn` ✏️ `Scripts/Intro.gd` ✏️ `Scripts/PauseMenu.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ partie à 2 fenêtres, test réseau vert 5 fois (bash 3.2 et 5) |
 | 14 bis | **Pastilles vers `body is Lion`** (exécutée avant la 14) : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi, une réplique ne se libère pas d'elle-même : `_expirer`), sons de ramassage par `Audio` et les signaux du joueur local (un par frame, le cran de bataille compris), recul du peintre horizontal (il pointait vers la ville), durcissements du smoke test de la revue 8 ter. | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert, suites vertes 5 fois |
-| 15 | **Test réseau de bout en bout** : 1 hôte + 3 clients headless, empreintes identiques, déconnexion d'un client. Le test réseau tourne en CI depuis la phase 11 ter (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
-| 16 | **Prédiction du lion local** (4 bis) : correction douce, commandes numérotées et redondantes, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
+| 15 | **Test réseau de bout en bout** : le scénario 9 de la phase 14 (1 hôte + 2 clients + un muet exclu, empreintes identiques, départ d'un client, hôte perdu) passe à 1 hôte + 3 clients, une manche plus longue avec pastilles ramassées au vol et chocs ; jeux de tampons remesurés chez un client (point de vigilance ci-dessous). Le test réseau tourne en CI depuis la phase 11 ter (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
+| 16 | **Prédiction du lion local** (4 bis), après le découpage de `Lion.gd` (étape à part, voir les points de vigilance) : correction douce, commandes redondantes (la phase 14 les numérote déjà), numéro de la dernière commande traitée répliqué, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
 
@@ -101,26 +101,27 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Phase 3 (Règles) : `Joueur.encaisser_coup` n'a pas de plancher sur `vies` ; les règles doivent
   conserver le garde-fou `partie_en_cours` de GameState (ou un clamp) pour qu'un lion à 0 vie ne
   soit jamais retouché.
-- Phase 14 : tout lion qui n'est pas celui du joueur local doit recevoir `joueur` et `commandes`
-  avant `add_child`, via la `spawn_function` du `MultiplayerSpawner` (en local, c'est
-  `Main._ajouter_lions` depuis la phase 10 bis, vérifié par `tests/bataille_test.gd`) ; sinon il
-  prend en silence le joueur local et le clavier de ce poste. La fenêtre garde sa taille du solo
-  (1400×454) : en 16:9, la bataille s'y affiche avec des bandes ; régler la fenêtre pour la partie
-  à 2 fenêtres de la phase 14, puis dans `project.godot` en phase 19. En bataille, Échap ouvre
-  encore la pause du solo (`PauseMenu` met l'arbre en pause) : en réseau, un menu local sans pause
-  (spec §4). Le `$Lion` de `Scenes/Main.tscn` n'est `lions[0]`, `joueurs[0]` et `joueur_local()` à
-  la fois que sur l'hôte et en solo : sur un client (`joueur_local()` = `joueurs[k]`, k ≠ 0),
-  `_ajouter_lions` ferait deux lions pour `joueurs[k]` et aucun pour l'hôte. En bataille réseau,
-  créer tous les lions par le spawner, par index (`joueur = joueurs[i]`, commandes `LOCALES` pour
-  `joueur_local()` seulement) ; `Main.lion` devient le lion de `joueur_local()` et `$Lion` ne sert
-  plus qu'au solo.
+- (résolu en phase 14) en bataille réseau, `$Lion` (le lion du solo) est retiré dès le `_ready` de
+  la scène de jeu ; tous les lions apparaissent par le `MultiplayerSpawner` de la scène
+  (`Main.apparitions`), par l'index de leur joueur, dont la `spawn_function` (`Main._creer_lion`)
+  donne joueur, commandes (`LOCALES` pour `joueur_local()` seulement) et place de départ avant
+  l'ajout ; `Main.lion` est le lion de `joueur_local()`. Échap y ouvre un menu local sans pause
+  (« La partie continue », « Quitter la partie »), qui suspend les commandes de ce poste
+  (`Commandes.suspendues`). Hors du solo, la fenêtre prend le format 16:9
+  (`Regles.appliquer_ecran`, 1400×788) ; **phase 19** : la taille de la fenêtre par défaut dans
+  `project.godot` reste à régler ;
 - Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
   commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
   vomir échantillonnés au même tick). La prédiction locale doit appliquer la même borne
   `Lion._marge_haute()` que l'hôte (phase 10 ter) ; cela ne tient que si la visibilité de
-  l'étiquette (couleur et pseudo du joueur) est identique sur chaque machine.
-- Phases 14 et 16 : sans paquet d'un client depuis N ms, l'hôte remet à zéro les commandes
-  manuelles de son lion.
+  l'étiquette (couleur et pseudo du joueur) est identique sur chaque machine. Depuis la phase 14,
+  c'est `Manche._envoyer_commandes` qui envoie, à chaque tick physique (priorité 100, après les
+  lions), les commandes du lion de ce poste (`LOCALES`) : `PredictionLocale` doit écrire avant
+  (priorité plus basse) et `Manche` envoyer ce qu'elle a écrit, avec les 3 précédentes (le numéro
+  existe déjà, `Manche._numero`, et l'hôte ignore un numéro déjà vu) ;
+- (résolu en phase 14) sans commande d'un client depuis `Manche.SILENCE_COMMANDES` (500 ms), l'hôte
+  remet son lion au repos (`Manche.verifier_silences`). **Phase 16** : garder ce délai au-dessus de
+  la latence simulée (80 ms + 40 ms de gigue) ;
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
@@ -161,65 +162,56 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - (résolu en phase 14 bis) `body is Lion` dans le gestionnaire commun des pastilles ; les tests
   `--script` ne nomment ni `Lion`, ni `Ennemi`, ni `Pastille` et vérifient l'héritage par
   `load(...).get_base_script().resource_path` ; le groupe « lion » ne sert plus qu'au Spawner ;
-- phase 14 : le Spawner ne tourne que sur l'hôte ; ennemis et pastilles sont répliqués par l'hôte
-  (`MultiplayerSpawner`), jamais simulés côté client (`Coccinelle._ready` tire des valeurs
-  aléatoires) ; les gestionnaires de contact sont déjà inertes côté client
-  (`multiplayer.is_server()`, phase 4 ; pour les ennemis, dans la base `Ennemi` depuis la phase
-  8 ter, vérifié par le smoke test sur un sous-arbre dont le pair est un client ENet jamais
-  connecté : `SceneTree.set_multiplayer(api, chemin)`, technique réutilisable pour les pastilles
-  et la ville) ;
-- **phase 14** : les ennemis ne doivent pas tourner côté client (`Coccinelle` tire des valeurs
-  aléatoires dans `_ready`, la soucoupe et la coccinelle bougent et se libèrent localement, le
-  peintre lance ses tweens et `Audio.jouer("boss")`) : `Ennemi` est l'endroit naturel pour cette
-  garde, mais en Godot 4 le `_ready` / `_physics_process` d'une sous-classe n'appelle pas celui du
-  parent — utiliser `_notification(NOTIFICATION_READY)` (appelé pour chaque script de la chaîne)
-  ou des appels `super()` explicites ;
+- (résolu en phase 14) le Spawner ne tourne que sur l'hôte (`Spawner.demarrer()`, appelé par la
+  scène de jeu : hors réseau dans son `_ready`, en réseau après la barrière de chargement) ;
+  ennemis et pastilles apparaissent chez chaque client par le `MultiplayerSpawner` de la scène de
+  jeu (noms lisibles, `add_child(..., true)`), leur `MultiplayerSynchronizer` (`Synchro`) en recopie
+  la position (et le côté du peintre, l'inclinaison de la coccinelle, la couleur d'une pastille) ;
+  un client ne les simule jamais ;
+- (résolu en phase 14) les ennemis ne tournent pas côté client : chacun commence son `_ready` et
+  son `_physics_process` par `Ennemi.est_replique()` (ni hasard, ni déplacement, ni tween, ni
+  libération) ; le peintre applique le côté reçu (`Boss.cote`, setter). **Phase 17 bis** :
+  l'annonce du peintre (`Audio.jouer("boss")`, dans `Boss._changer_etat` de l'hôte) ne s'entend
+  que chez l'hôte : la faire entendre aux clients (réplique de `Boss.etat`, ou RPC de la manche) ;
 - (résolu en phase 14 bis) durcissements de la revue 8 ter : `create_client` vérifié `OK`, intrus
   du groupe « lion » avec un champ `joueur` (ennemis et pastilles), recul du peintre vérifié
   horizontal après le contact continu, peintre remis au repos. Le recul vérifié a révélé un défaut :
   `Boss.origine_du_coup` prenait la hauteur du coin du lion (66 px au-dessus de son centre) et
   poussait le lion vers la ville ; corrigé (`lion.global_position.y + Lion.CENTRE.y`) ;
-- **phase 14** : sur un client, la ville a aussi un territoire (les règles de bataille y sont
-  branchées) mais `Ville.peindre` n'y touche pas (`multiplayer.is_server()`, phase 9 bis) : lui
-  appliquer la liste des cellules reçue de l'hôte (`Territoire.extraire_changements()` chez
-  l'hôte, index u16 + propriétaire u8) par une méthode d'affichage à ajouter à `Territoire`
-  (propriétaire compté posé tel quel, sans charge), d'où les mêmes scores chez tous ; ne jamais y
-  rejouer `tamponner`. La traceuse ne peint que sur l'hôte (`multiplayer.is_server()` dans
-  `GerbeTraceuse._physics_process`, ou appel depuis le relais de `Main`) : sinon le
-  `MultiplayerSynchronizer` qui réplique le vomi met `monitoring = true` sur chaque réplique et
-  chaque client peindrait localement un premier tampon avec ses propres tirages, en double de
-  celui diffusé par l'hôte. Les clients peignent seulement les tampons reçus
-  (`Ville.peindre(position, rayon, GameState.joueurs[index])`). Le tampon diffusé porte l'index du
-  joueur : `Ville.peindre(position, rayon, peintre)` prend déjà un `Joueur`. Le motif et les
-  coulures d'un tampon viennent encore du hasard global (`randi`, `randf`), ce qui ne suffit pas
-  avec le cache (chaque machine génère ses `NB_TAMPONS` variantes séparément au premier usage) :
-  amorcer `_generer_tampons` avec un `RandomNumberGenerator` dont la graine est dérivée de
-  `_cle_tampons(...).hash()`, puis choisir la variante et tirer les coulures avec la graine u16 du
-  tampon (spec §6) ;
-- **prochaine phase qui touche `Scripts/Territoire.gd`** (phase 14, méthode d'affichage, ou scinder
-  la phase 14 si son plafond de fichiers est dépassé — sa ligne (# 14 ci-dessus) compte déjà 5
-  fichiers sans `Territoire.gd`) : le commentaire de `CHARGE_MAX` annonce encore « La phase 10
-  rerègle ces constantes sur une vraie manche » ; la phase 10 ter les a gardées (4, 12, 12) et réglé
-  l'empreinte du tampon dans la ville (`Ville.EMPREINTE_TERRITOIRE`, spec §6, cibles vérifiées par
-  `tests/bataille_test.gd`) : le corriger ; même remarque de plafond pour la méthode d'affichage du
-  point ci-dessus (« sur un client, la ville a aussi un territoire ») ;
-- **phase 14** : jeux de tampons (`Ville._generer_tampons`), mesurés en phase 10 : 0,5 ms (16 px)
-  à 3,7 ms (46 px), 14,6 ms pour l'étoile XXL (92 px), 65 ms pour les 14 jeux d'un joueur ; sur la
-  manche à 4 pilotée de `tests/bataille_test.gd` (ligne `MESURE jeux de tampons`, 5 passages), 16 à
-  18 jeux générés, au plus 2 dans une même frame (2 sur trois passages, 1 sur les deux autres).
-  Décision de la phase 10 bis : pas de pré-génération en local. En phase 14, chaque client génère
-  aussi ses jeux (graine dérivée de la clé) : les pré-générer pendant l'intro (nuances de joueur, 7
-  rayons, ×2) si la mesure sur un client montre des à-coups. Mémoire du cache plein : environ
-  14,5 Mo pour 6 joueurs ;
-- **phase 14** : un client qui part en cours de manche arrive chez l'hôte par
-  `Reseau.joueur_parti(id)` (id réseau, à retrouver par `Joueur.id_reseau`) ; un hôte perdu, chez
-  chaque client, par `Reseau.hote_perdu` (le poste est alors déjà hors réseau) ;
-- **phase 14** : les réactions du `Joueur` sont des appels de méthode qui émettent des signaux
-  (`debloquer_couleur`, `activer_bonus`, `encaisser_coup`, `gagner_cran`, `etourdir`, et `avancer`
-  pour `etourdissement_fini`). Un `MultiplayerSynchronizer` qui écrit les champs bruts n'émettrait
-  rien chez les clients (HUD, Audio, Lion muets) : choisir des RPC d'événement qui appellent les
-  mêmes méthodes du `Joueur`, ou des setters qui émettent. De même, `GameState._process` ferait
-  avancer les copies des clients (`Joueur.avancer`) : l'hôte seul décompte ;
+- (résolu en phase 14) sur un client, la ville ne tamponne jamais son territoire : elle applique
+  les cellules changées reçues de l'hôte (`Territoire.appliquer_changements`, index u16 +
+  propriétaire compté u8) et vérifie les scores reçus avec elles ; la traceuse ne peint que sur
+  l'hôte (`GerbeTraceuse._physics_process`), dont chaque tampon part en événement
+  (`Ville.tampon_peint`, `{index, x, y, rayon, graine}`) ; un client dessine les tampons reçus
+  (`Ville.peindre_tampon_recu`). Jeux de tampons tirés de leur clé
+  (`Peinture.generer_tampons`, graine `cle_tampons(...).hash()`), variante et coulure tirées de la
+  graine u16 du tampon (`Peinture.tirage`), plafond des coulures compté en tampons (40 sur les
+  120 derniers) : chaque poste dessine les mêmes tampons et lance les mêmes coulures ; seule une
+  coulure qui descend encore quand un tampon la recouvre peut passer dessus ou dessous selon le
+  rythme d'affichage de chaque poste (détail visuel accepté, spec §6) ;
+- (résolu en phase 14) le commentaire de `Territoire.CHARGE_MAX` dit ce que la phase 10 ter a
+  gardé ; la méthode d'affichage d'un client est `Territoire.appliquer_changements` ;
+- **phase 15** (jeux de tampons, mesurés en phase 10, remesurés en phase 14) : chaque client génère
+  ses jeux au premier usage (`Peinture.generer_tampons`, graine tirée de la clé : le même jeu
+  quel que soit le moment). Scénario 9 de la phase 14 (3 postes au premier cran) : 3 jeux en cache
+  chez chaque poste, frame la plus longue 10 à 16 ms pendant la passe, chez l'hôte comme chez un
+  client (ligne `MESURE` de chaque poste) ; pas de pré-génération. À remesurer en phase 15 (1 hôte
+  + 3 clients, crans et gerbes XXL) : pré-générer pendant l'intro (nuances des joueurs, 7 rayons,
+  ×2, un jeu par frame) si un client montre des à-coups. Mémoire du cache plein : environ 14,5 Mo
+  pour 6 joueurs ;
+- (résolu en phase 14) un client qui part en cours de manche arrive chez l'hôte par
+  `Reseau.joueur_parti(id)` : la manche retrouve son joueur par `Joueur.id_reseau`, oublie ses
+  commandes et son lion disparaît chez tous (disparition répliquée) ; un hôte perdu arrive chez
+  chaque client par `Reseau.hote_perdu` : « L'hôte a quitté la partie » sur la partie figée, puis
+  le titre. **Phase 17** : le joueur parti reste au classement en grisé (le `Joueur` n'a pas encore
+  d'état « parti » ; son lion disparu le dit) ;
+- (résolu en phase 14) les réactions d'un joueur (étourdissement et sa fin, crans, gerbe XXL et sa
+  fin) partent de l'hôte en RPC fiables de la manche, qui appellent chez chaque client les méthodes
+  du `Joueur` qui émettent les mêmes signaux (`etourdir`, `activer_bonus`, `recevoir_crans`,
+  `recevoir_fin_etourdissement`, `recevoir_fin_bonus`) ; `GameState._process` ne décompte les
+  minuteries des joueurs que sur l'hôte. **Phase 17** : sur un client, `Joueur.bonus_restant`
+  reste celui reçu au début de la gerbe XXL (seule sa fin arrive) : le HUD de bataille décompte
+  lui-même, ou ne montre pas les secondes ;
 - **phase 19** (qui touche `tests/screenshots.gd`) : le coup de `tests/screenshots.gd` (vers la
   ligne 96) tombe pendant l'intro et n'a aucun effet ; le déplacer après `GS.demarrer()` et relancer
   le script à la main (la CI ne le lance pas). Les minuteries `null` du Spawner quand la partie se
@@ -251,38 +243,40 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   couverture) et le HUD (encore celui du solo en bataille : cœurs, arc-en-ciel, chrono qui monte)
   sont à la phase 17. `int(regles.avancement() × 3)` donne les couches de la spec §8 (arpèges à
   30 s écoulées, mélodie à 60 s), mais au rythme du chrono, pas des mesures de couverture ;
-- **phase 14** : quand un joueur quitte la manche, ses cellules restent au classement (spec §4)
-  mais `Territoire` n'a pas encore d'opération pour les libérer ou les geler : à décider avec la
-  gestion des déconnexions ;
+- (résolu en phase 14) un joueur parti garde ses cellules telles quelles (spec §4) : aucune
+  opération de `Territoire` n'est nécessaire, les autres peuvent les lui voler ;
 - **phase 18** : le territoire de la ville ne se remet à zéro que dans `charger_skyline` ; si
   « Revanche » ou « Niveau suivant » relance une manche sur la même ville sans y repasser, les
   scores et les tampons dessinés de la manche précédente restent. Chaque nouvelle manche doit donc
   soit repasser par `charger_skyline`, soit appeler `ville.territoire.reinitialiser()` après avoir
-  vidé `extraire_changements()` (contrainte déjà notée dans `Territoire.gd:64-66`). Coordonner
-  l'ordre de ce message avec la diffusion des scores de la phase 14. Même chose pour le Spawner :
-  en fin de manche ses minuteries s'arrêtent et la chaîne des pastilles s'interrompt, et son
-  `_ready` (première pastille, création des minuteries) ne repasse pas ; une nouvelle manche
-  recharge la scène, ou le Spawner reçoit un `relancer()` explicite ;
+  diffusé les derniers changements (`Manche._diffuser_territoire`, toutes les 0,2 s depuis la
+  phase 14, y compris l'arbre en pause) et prévenu les clients par leur propre message. Même chose
+  pour le Spawner : en fin de manche ses minuteries s'arrêtent et la chaîne des pastilles
+  s'interrompt ; `Spawner.demarrer()` (phase 14) ne repart pas une seconde fois : une nouvelle
+  manche recharge la scène, ou le Spawner reçoit un `relancer()` explicite ; la barrière de
+  chargement (`Reseau.scenes_chargees`, vidée par `lancer_manche`) suppose aussi une scène
+  rechargée ;
 - (résolu en phase 14 bis) le commentaire de `Boss.acceleration_max` suit l'avancement des règles ;
-- **phase 14** (réaffecté par la phase 13) : `Lion.appliquer_apparence()` se rappelle à la main
-  quand la couleur ou le pseudo d'un joueur change. Le salon ne change jamais un `Joueur` sous un
-  lion existant (son aperçu est un `TextureRect` teinté par le shader du lion, et
-  `configurer_bataille_reseau` écrit la table avant le chargement de la scène de jeu) : si la
-  synchronisation de la phase 14 réécrit couleur ou pseudo d'un joueur dont le lion existe déjà,
-  donner à `Joueur.couleur` et `Joueur.pseudo` des setters qui émettent `apparence_changee`, auquel
-  le lion s'abonne ; sinon, retirer ce point ;
+- (sans objet depuis la phase 14) aucune couleur ni aucun pseudo de `Joueur` ne change sous un lion
+  existant : la table des joueurs est posée avant la scène de jeu et la `spawn_function` la lit ;
+  pas de setters `apparence_changee` ;
 - activer `rendering/viewport/hdr_2d` changerait les valeurs lues par `Shaders/Lion.gdshader` et
   décalerait ses seuils de masque (valeur, saturation) : refaire alors la planche de contrôle de la
   phase 7 et régler les seuils ;
-- **phase 14** : sur un client, seul le lion local se déplace (`move_and_slide`, `_recul`,
-  blocage entre lions par `_bloquer_contre_les_lions`) ; les lions distants ne reçoivent que les
-  réactions visuelles (secousse, étoiles, barbouillage, clignotement) et leur position répliquée.
-  `velocity` doit donc être répliquée : le calcul d'approche des chocs
-  (`Lion._on_pare_chocs_area_entered`) la lit ;
-- **avant la phase 16** : `Lion.gd` a grossi phase après phase (pare-chocs, présentation de
-  l'étourdissement, zones de contact de la gerbe) ; le découper en composants avant d'y ajouter la
-  prédiction, en une étape à part (≤ 5 fichiers : `Lion.gd`, `Scenes/Lion.tscn`, 2 à 3 nouveaux
-  scripts) ;
+- (phase 14) sur un client, aucun lion ne se déplace de lui-même (`Lion._suivre_l_hote`) : position,
+  vitesse, orientation et vomi viennent du `Synchro` du lion (`velocity` comprise, que lit le calcul
+  d'approche des chocs) ; chaque réplique garde ses réactions visuelles (secousse du pare-chocs,
+  étoiles, barbouillage, clignotement). **Phase 16** : seul le lion local reprend `move_and_slide`,
+  `_recul` et `_bloquer_contre_les_lions`, par sa prédiction ; les lions distants sont interpolés
+  (le `Synchro` réplique à 83 Hz au plus, `replication_interval` 0,012 s, sans interpolation en
+  phase 14) ;
+- **avant la phase 16, après la 15** : `Lion.gd` a grossi phase après phase (pare-chocs,
+  présentation de l'étourdissement, zones de contact de la gerbe, réplique de la phase 14 : 530
+  lignes) ; le découper en composants avant d'y ajouter la prédiction, en une étape à part
+  (`Lion.gd`, `Scenes/Lion.tscn`, 2 à 3 nouveaux scripts). Pas en phase 14 : ses ajouts au lion y
+  sont petits et isolés (la réplique, deux propriétés répliquées), alors que le découpage réécrit
+  les fonctions que le smoke test et `tests/bataille_test.gd` lisent par dizaines de champs privés ;
+  le faire après la phase 15 lui donne le filet du test réseau de bout en bout ;
 - **phase 16** : seul le lion local simule son choc, par sa propre prédiction
   (`Lion._on_pare_chocs_area_entered` : recul, secousse) ; un lion distant ne simule jamais de
   choc localement (voir le point de la phase 14 ci-dessus), il ne fait que rejouer la réaction
@@ -340,22 +334,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   Pare-feu ? Réseau Privé ? Essaie par IP. »). Le README explique comment autoriser LeLion en réseau
   Privé et retirer une règle de blocage, et que deux LeLion sur un même PC ne peuvent pas lister les
   parties tous les deux (« Recherche impossible : port 7778 déjà utilisé… Rejoins par IP. ») ;
-- **phase 14** (intérim depuis la phase 13) : quand l'hôte démarre la partie, chaque poste branche la
-  même table (`GameState.configurer_bataille_reseau`, index compactés) et charge `Main.tscn`, qui
-  se joue alors localement : l'hôte simule tous les lions (les autres immobiles, commandes
-  manuelles), un client a son lion local en double et aucun lion d'hôte (point « Phase 14 » sur
-  `$Lion` plus haut), peinture et ennemis y sont inertes (`multiplayer.is_server()` faux). Échap
-  ouvre encore la pause du solo ; « Revenir au menu » ramène au titre, qui quitte le réseau (les
-  autres voient partir ce joueur, ou l'hôte). Un `Reseau.hote_perdu` reçu en manche n'est écouté
-  par personne : la phase 14 affiche « L'hôte a quitté la partie » et ramène au titre (spec §9) ;
+- (résolu en phase 14) l'intérim de la phase 13 est fini : la manche est synchronisée ;
 - **phase 18** (retour au salon, depuis la phase 13) : `Reseau.ouvrir_salon(niveau)` remet déjà,
   chez l'hôte, `manche_en_cours` à faux (arrivées de nouveau acceptées, la balise l'annonce) et
   personne prêt, et le salon de l'hôte l'appelle en s'ouvrant ; il reste à ramener chaque poste au
   salon (un RPC de l'hôte qui change leur scène) : la table (`Reseau.table_salon`) y est toujours,
   index compactés compris ;
-- **phase 14** (hôte perdu en manche, phase 12 bis) : sur l'écran Réseau, « L'hôte a quitté la
-  partie » ramène à son accueil (Écart 3 du plan 12 bis) ; en manche, spec §9 : message
-  (`RESEAU_HOTE_PERDU`) puis retour au titre ;
+- (résolu en phase 14) hôte perdu en manche : message (`RESEAU_HOTE_PERDU`) sur la partie figée,
+  2,5 s, puis retour au titre ;
 - (I1 de la revue finale 12 bis, résolu par la phase 13) : `Decouverte.adresses_hote(interfaces)`
   (rang d'interface, physique d'abord, virtuelle en dernier recours), en place depuis la phase
   12 bis dans `Decouverte.gd`, est bien réutilisée par le salon pour afficher l'adresse de l'hôte
@@ -369,21 +355,34 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   du meilleur rang d'interface (I1), à côté du point du /22 ci-dessus ;
 - (M9 de la revue finale 12 bis, devenu sans objet en phase 13) : l'écran Réseau n'affiche plus les
   états d'attente ni de nombre de joueurs (remplacés par le salon, qui ne compte que les arrivés) ;
-- **phases 14 et 19** (M4 de la revue finale 12 bis) : la fenêtre par défaut (1400×454, phase 10 ter)
-  affiche l'écran Réseau (16:9) à 40 % le temps que la fenêtre se règle (phase 14 : passer en 16:9
-  hors solo ; phase 19 : captures du fichier jetable dans `tests/screenshots.gd`).
-- **phase 14** (revue finale 13, M6) : barrière « scène de jeu chargée ». L'hôte change de scène
-  dans l'image où il émet `manche_lancee` ; les clients chargent `Main.tscn` plus tard (aller-retour
-  réseau, chargement, compilation des shaders sous Windows). Chaque client envoie un RPC fiable
-  `scene_chargee` depuis `Main._ready` ; l'hôte attend tous les arrivés de la manche (avec un délai
-  et l'exclusion d'un absent) avant l'intro, les apparitions et la synchronisation ;
-- **phase 14** (revue finale 13, M5) : `server_relay` reste actif alors que le jeu n'en a pas besoin
-  (tout passe par l'hôte) : le couper (`SceneMultiplayer.server_relay = false`) ;
-- **phase 14** (revue finale 13, N9) : commentaire périmé dans `Lion.gd` sur l'origine du joueur
-  des lions non locaux, à reprendre avec la `spawn_function` ;
-- **phase 14 ou prochaine phase qui touche `Reseau.gd`** (revue finale 13, M1) : `lancer_manche`
-  s'engage sans revérifier ses propres fiches (`fiches_de_manche` non vide et cohérent) :
-  défense en profondeur, refuser et regriser le bouton sinon ;
+- **phase 19** (M4 de la revue finale 12 bis ; la phase 14 règle la fenêtre au format de l'écran,
+  `Regles.appliquer_ecran`) : captures du fichier jetable dans `tests/screenshots.gd`, taille de la
+  fenêtre par défaut dans `project.godot`.
+- (résolu en phase 14, M6 de la revue finale 13) barrière « scène de jeu chargée » :
+  `Reseau.signaler_scene_chargee` depuis la manche de chaque poste ; l'hôte attend tous les joueurs
+  encore là (`Manche._verifier_barriere`), 20 s de jeu au plus (`Manche.delai_chargement`), puis
+  exclut les absents (déconnectés) ; lions, Spawner et intro attendent la barrière. **Phase 18** :
+  l'exclu voit « L'hôte a quitté la partie » ; lui envoyer sa raison (RPC avant la déconnexion) ;
+- (résolu en phase 14, M5) `server_relay` coupé (`Reseau._ready`) ; un client ne voit que l'hôte
+  parmi ses pairs (le test réseau lit les autres joueurs dans la table du salon) ;
+- (résolu en phase 14, N9) le commentaire de `Lion.joueur` dit d'où viennent joueur et commandes ;
+- (résolu en phase 14, M1) `Reseau.lancer_manche` revérifie ses propres fiches (index compactés,
+  `fiches_de_manche` non vide) avant de s'engager ;
 - **phase 18** (retour au salon, revue finale 13, M2, M3, M4) : les clients ne voient pas les places
   réservées (pas encore arrivées) ; un stick déjà penché à l'entrée du salon agit une fois ;
   `IP.get_local_interfaces()` est relu à chaque `salon_change` (le mettre en cache à l'ouverture).
+- **phase 17 bis** (sons de bataille, depuis la phase 8 bis) : chaque lion, local ou non, appelle
+  `Audio.demarrer_vomi` / `arreter_vomi` : un lion qui arrête de vomir coupe la boucle du joueur
+  local ; ne la jouer que pour le lion de `joueur_local()` (et un son spatialisé ou plus discret
+  pour les autres) ;
+- **phase 16** (revue de la phase 14) : chez un client qui perd l'hôte, le moteur fait disparaître
+  les nœuds apparus par le `MultiplayerSpawner` (lions, ennemis, pastilles) : le message s'affiche
+  sur une ville sans lions (vu sur la capture ◉) ; sans conséquence, la scène revient au titre ;
+- **phase 19** (captures, phase 14) : le script jetable de la partie à 2 fenêtres (plan de la phase
+  14, Task 9) est à verser avec les autres captures ; il force une fenêtre
+  (`DisplayServer.window_set_mode`) : `Regles.appliquer_ecran` ne règle pas une fenêtre en plein
+  écran (réglage « plein écran » de `Parametres`) ;
+- **phase 17** : la fin de manche n'existe pas encore en réseau : le test réseau fige la manche de
+  l'hôte par `GameState.terminer_partie` ; les clients ne le savent pas (le chrono de la phase 17
+  devra l'annoncer, et `Manche` diffuse déjà ses derniers tampons et son territoire l'arbre en
+  pause) ;
