@@ -386,3 +386,23 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   l'hôte par `GameState.terminer_partie` ; les clients ne le savent pas (le chrono de la phase 17
   devra l'annoncer, et `Manche` diffuse déjà ses derniers tampons et son territoire l'arbre en
   pause) ;
+- **phase 19** (M7 de la revue finale 14) : en fenêtré, la largeur du 16:9 est gardée et la hauteur
+  recalculée (`Regles.appliquer_ecran`) ; sur un écran 1080p, une largeur élargie à 1920 px donne une
+  zone client de 1920×1080 plus la barre de titre, qui dépasse la zone utile de Windows (barre des
+  tâches, bas de la ville et HUD invisibles) — `SetWindowPos` ne recadre pas. Borner par
+  `DisplayServer.screen_get_usable_rect(window_current_screen)` (réduire la largeur pour garder le
+  format), puis recentrer si la fenêtre sort de l'écran ;
+- **phase 19** (M8 de la revue finale 14, avec les captures) : en réseau, aucun lion n'est dessiné
+  pendant le chargement (`Main._preparer_manche_en_reseau` libère celui de la scène avant la
+  première image) ; le matériau de teinte, les particules de vomi et les étoiles ne compilent leurs
+  shaders qu'à la première image après la barrière, un à-coup sous Windows juste au moment de
+  l'intro. Tolérance large (ENet coupe vers ~8 s de silence en session ; mesuré ~35 s pour un
+  chargement au maximum de 30 s), d'où la sévérité mineure. Préchauffer pendant le chargement : une
+  image avec un lion (et sa gerbe active) hors champ, libéré avant `signaler_scene_chargee` ;
+- **phase 17** (chrono de bataille en réseau, précision de la revue finale 14, complète le point
+  ci-dessus sur la fin de manche) : à 90 s, le mode intérimaire reste sûr sans le chrono
+  (`ReglesBataille.avancement()` dépasse 1, mais le Spawner et le peintre le bornent par `clamp` ;
+  aucune fin n'est émise d'un seul côté, aucun écran solo ne s'ouvre) — à dire aux testeurs d'un
+  essai LAN avant la phase 17. La fin devra être décidée par l'hôte et envoyée par RPC ; le chrono de
+  chaque client démarre à la fin de **sa propre** intro, décalé de la latence : il ne doit rien
+  terminer lui-même.
