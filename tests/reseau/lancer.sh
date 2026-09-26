@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Test réseau du transport (phase 11) : des postes headless sur localhost, un processus Godot par
-# poste (tests/reseau/joueur.gd), scénario après scénario.
+# Test réseau du transport (phase 11) et de la découverte (phase 12) : des postes headless sur
+# localhost, un processus Godot par poste (tests/reseau/joueur.gd), scénario après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
-# Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie).
-# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40).
+# Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
+# et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778).
+# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40),
+# DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion : hors CI, où la diffusion n'a pas
+# été mesurée ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
 # Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
 # 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici) ; seules restent, côté client
 # (joueur.gd), de courtes fenêtres de vérification d'absence (1 s après un refus, 0,5 s avant un
@@ -214,6 +217,40 @@ if attendre_hote hote5; then
 	fi
 fi
 terminer "poignée de main jamais finie : réservation à la réponse, puis libération par le vrai délai"
+
+# 6. Découverte (balises vers 127.0.0.1) : l'hôte émet sa balise ; un écouteur voit sa partie,
+#    la rejoint à l'adresse et au port de la balise, voit la balise suivante compter 2 joueurs.
+#    Un second écouteur sur le même port de balises (deux LeLion sur un PC) reçoit une erreur,
+#    sans planter. Puis l'hôte quitte le réseau mais son processus vit encore 6 s : la partie doit
+#    quitter la liste 3 s après sa dernière balise, pas à la fin du processus.
+P=$((PORT_BASE + 6))
+B=$((PORT_BASE + 1006))
+lancer hote6 --role=hote --port=$P --port-balise=$B --pseudo=Hote6 --places=4 --clients=1 --rester="$JOURNAUX/rester6" --apres-depart=6
+if attendre_hote hote6; then
+	lancer ecouteur6 --role=ecouteur --port=$P --port-balise=$B --hote=Hote6 --places=4 --rejoindre
+	if attendre_ligne ecouteur6 "ECOUTE PRETE"; then
+		lancer occupe6 --role=ecouteur --port-balise=$B --occupe
+		attendre_ligne ecouteur6 "PARTIE A 2" && touch "$JOURNAUX/rester6"
+	fi
+fi
+terminer "découverte : partie vue et rejointe par sa balise, comptée à 2, expirée après le départ de l'hôte ; port des balises occupé sans plantage"
+[ "$(compter "PARTIE EXPIREE" ecouteur6)" -eq 1 ] || echec "découverte : la partie n'a pas expiré dans la liste"
+
+# 7. (DIFFUSION=1) La même découverte en vraie diffusion (255.255.255.255 et réseaux privés), sans
+#    rejoindre : l'adresse vue est l'une de celles de ce PC.
+if [ "${DIFFUSION:-0}" = "1" ]; then
+	P=$((PORT_BASE + 7))
+	B=$((PORT_BASE + 1007))
+	lancer hote7 --role=hote --port=$P --pseudo=Hote7 --diffusion --rester="$JOURNAUX/rester7"
+	if attendre_hote hote7; then
+		lancer ecouteur7 --role=ecouteur --port=$P --port-balise=$B --hote=Hote7 --diffusion
+		attendre_ligne ecouteur7 "PARTIE VUE" && touch "$JOURNAUX/rester7"
+	fi
+	terminer "découverte en vraie diffusion"
+	[ "$(compter "PARTIE EXPIREE" ecouteur7)" -eq 1 ] || echec "diffusion : la partie n'a pas expiré dans la liste"
+else
+	echo "  (scénario 7, découverte en vraie diffusion : DIFFUSION=1 pour le lancer)"
+fi
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then

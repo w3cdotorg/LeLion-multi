@@ -1,16 +1,21 @@
 extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
-##   godot --headless --script tests/reseau/joueur.gd -- --role=hote|client|lent [options]
-## Communes : --port=N (défaut 17777), --pseudo=texte.
+##   godot --headless --script tests/reseau/joueur.gd -- --role=hote|client|lent|ecouteur [options]
+## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
+##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
+##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
 ## Hôte : --places=N (joueurs, hôte compris ; défaut 6), --clients=N (clients qui doivent arriver),
 ##   --partants=N (clients qui repartiront d'eux-mêmes), --manche (manche en cours : tout nouveau
 ##   venu est refusé), --refus=N (poignées de main qui doivent échouer : demandes refusées, dont le
 ##   client ferme la connexion en lisant le refus, ou jamais finies, coupées par le délai ; l'hôte
 ##   les compte par `peer_authentication_failed` et reste ouvert jusqu'à la N-ième, DELAI_ETAPE au
 ##   plus), --delai-poignee=S (délai de poignée de main de cette session, en secondes, au lieu de
-##   `Reseau.DELAI_POIGNEE_DE_MAIN`). Écrit « HOTE PRET » quand il écoute et « POIGNEE ECHOUEE n »
-##   à chaque poignée de main échouée (n = leur compte, après que `Reseau` a libéré la place), puis
-##   quitte le réseau (ses clients doivent voir l'hôte partir).
+##   `Reseau.DELAI_POIGNEE_DE_MAIN`), --rester=chemin (une fois ses vérifications faites, écrit
+##   « HOTE RESTE » et ne quitte le réseau qu'une fois ce fichier créé par lancer.sh, DELAI_ETAPE au
+##   plus), --apres-depart=S (le processus vit encore S secondes après avoir quitté le réseau : sa
+##   balise doit s'arrêter d'elle-même, pas avec le processus). Écrit « HOTE PRET » quand il écoute
+##   et « POIGNEE ECHOUEE n » à chaque poignée de main échouée (n = leur compte, après que `Reseau` a
+##   libéré la place), puis quitte le réseau (ses clients doivent voir l'hôte partir).
 ## Client : --attendu=inscrit|inscrit_ou_plein|refus_plein|refus_version|refus_manche|echec,
 ##   --version=x.y (se présente avec cette version au lieu de la sienne), --partir (une fois inscrit
 ##   et un autre client en vue, quitte de lui-même ; sinon, attend que l'hôte parte), --feu=chemin
@@ -26,15 +31,25 @@ extends SceneTree
 ##   le coupe et vérifie que c'est au bout de --delai-poignee=S secondes (le délai de l'hôte ;
 ##   défaut `Reseau.DELAI_POIGNEE_DE_MAIN`). Preuve de bout en bout (Focus 2, Focus 5) que la place
 ##   d'un accepté est réservée dès la réponse et libérée par le vrai `auth_timeout` de l'hôte.
+## Écouteur (phase 12) : écoute les balises (`Decouverte`), vérifie que des datagrammes étrangers
+##   n'ajoutent aucune partie, écrit « ECOUTE PRETE », attend la partie de --hote=pseudo et vérifie
+##   sa balise (adresse, --port, version, 1 joueur sur --places=N, pas de manche) : « PARTIE VUE ».
+##   Avec --rejoindre, la rejoint à l'adresse et au port de sa balise, attend la balise qui compte
+##   2 joueurs (« PARTIE A 2 »), puis le départ de l'hôte. Enfin, la partie doit disparaître de la
+##   liste DELAI_EXPIRATION après sa dernière balise (« PARTIE EXPIREE ») et, avec --rejoindre, au
+##   plus PERIODE_BALISE + DELAI_EXPIRATION (plus une marge) après le départ de l'hôte. Avec
+##   --occupe : un second écouteur sur un port de balises déjà pris ; `ecouter()` doit renvoyer une
+##   erreur sans planter (deux LeLion sur un même PC).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
-## `Reseau` par `root.get_node`, ne nomme ni `Reseau` ni `GameState` (il peut nommer
-## `EtatPartie`, dont le script ne nomme aucun autoload).
+## `Reseau` et `Decouverte` par `root.get_node`, ne nomme ni `Reseau`, ni `Decouverte`, ni
+## `GameState` (il peut nommer `EtatPartie`, dont le script ne nomme aucun autoload).
 
 const DELAI_ETAPE := 15.0  # secondes au plus pour chaque attente
 
 var _echecs := 0
 var _options := {}
 var reseau: Node
+var decouverte: Node
 var _arrivees: Array[int] = []
 var _departs: Array[int] = []
 var _poignees_echouees: Array[int] = []  # hôte : pairs dont la poignée de main a échoué, dans l'ordre
@@ -78,7 +93,13 @@ func _pause(secondes: float) -> void:
 
 func _run() -> void:
 	reseau = root.get_node("Reseau")
+	decouverte = root.get_node("Decouverte")
 	reseau.pseudo = _option("pseudo", "Poste")
+	# Chaque hôte émet sa balise (elle suit l'état de Reseau) : vers un port de test propre au
+	# scénario, et vers localhost seulement, sauf --diffusion (jamais le 7778 d'une vraie partie).
+	decouverte.port_balise = int(_option("port-balise", str(int(_option("port", "17777")) + 1000)))
+	if not _options.has("diffusion"):
+		decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
 	var role := _option("role", "")
 	print("== poste réseau : %s (%s) ==" % [role, reseau.pseudo])
 	if role == "hote":
@@ -87,11 +108,14 @@ func _run() -> void:
 		await _jouer_client()
 	elif role == "lent":
 		await _jouer_lent()
+	elif role == "ecouteur":
+		await _jouer_ecouteur()
 	else:
-		_check(false, "rôle inconnu : --role=hote, --role=client ou --role=lent")
+		_check(false, "rôle inconnu : --role=hote, --role=client, --role=lent ou --role=ecouteur")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
-		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1,
-		"à la fin, le poste est revenu hors réseau (pair hors ligne, hôte de lui-même, plus d'inscrits)")
+		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
+		and not decouverte.ecoute_active(),
+		"à la fin, le poste est revenu hors réseau (pair hors ligne, hôte de lui-même, plus d'inscrits ni d'écoute)")
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -154,7 +178,14 @@ func _jouer_hote() -> void:
 
 	_check(_arrivees.size() == nb_clients and _poignees_echouees.size() == nb_refus,
 		"ni arrivée ni poignée de main échouée de trop : %d client(s), %d échec(s) de poignée de main" % [_arrivees.size(), _poignees_echouees.size()])
+	if _options.has("rester"):
+		var rester := _option("rester", "")
+		print("HOTE RESTE")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
 	reseau.quitter()  # close() envoie ses paquets de façon synchrone (N7) : pas de pause à ajouter ici
+	if _options.has("apres-depart"):
+		# Le processus vit encore : si la balise ne suivait pas l'état de Reseau, elle continuerait.
+		await _pause(float(_option("apres-depart", "0")))
 
 
 func _jouer_client() -> void:
@@ -267,6 +298,88 @@ func _jouer_lent() -> void:
 				"l'hôte coupe le client lent au bout de son délai de poignée de main (%.1f s, attendu %.0f s)" % [duree, delai])
 	pair.close()
 	noeud.queue_free()
+
+
+## Rôle de test « écouteur » (phase 12) : la liste des parties de l'écran Réseau, vue par les
+## balises d'un hôte de test (voir l'en-tête).
+func _jouer_ecouteur() -> void:
+	var erreur: int = decouverte.ecouter()
+	if _options.has("occupe"):
+		_check(erreur != OK and not decouverte.ecoute_active() and decouverte.erreur_ecoute == erreur,
+			"port des balises %d déjà pris par un autre poste : ecouter() renvoie l'erreur (%d), sans planter" % [decouverte.port_balise, erreur])
+		print("RESULTAT occupe erreur=%d" % erreur)
+		return
+	_check(erreur == OK, "l'écoute des balises s'ouvre sur le port %d (erreur %d)" % [decouverte.port_balise, erreur])
+	if erreur != OK:
+		return
+	# Des datagrammes étrangers sur le port des balises (autre programme, balise tronquée ou forgée)
+	var brouilleur := PacketPeerUDP.new()
+	brouilleur.set_dest_address("127.0.0.1", decouverte.port_balise)
+	var trop_long := PackedByteArray()
+	trop_long.resize(decouverte.TAILLE_BALISE_MAX + 1)
+	for donnees: PackedByteArray in [PackedByteArray([0xFF, 0x00, 0x7C]), "LELION|x".to_utf8_buffer(),
+			"AUTRE|0.11|7777|1|6|0|0|x".to_utf8_buffer(), trop_long]:
+		brouilleur.put_packet(donnees)
+	brouilleur.close()
+	await _pause(0.3)
+	_check(decouverte.ecoute_active() and decouverte.parties.is_empty(), "des datagrammes qui ne sont pas des balises n'ajoutent aucune partie")
+	print("ECOUTE PRETE")
+
+	var hote := _option("hote", "Hote")
+	_check(await _attendre(func() -> bool: return not _cle_partie(hote).is_empty()), "la partie de « %s » apparaît dans la liste" % hote)
+	var cle := _cle_partie(hote)
+	if cle.is_empty():
+		decouverte.arreter_ecoute()
+		return
+	var partie: Dictionary = decouverte.parties[cle]
+	print("PARTIE VUE %s" % cle)
+	var adresse_attendue: bool = IP.get_local_addresses().has(partie.ip) if _options.has("diffusion") else partie.ip == "127.0.0.1"
+	_check(adresse_attendue and partie.port == int(_option("port", "17777")) and partie.version == reseau.version
+		and partie.nb_joueurs == 1 and partie.places == int(_option("places", str(EtatPartie.NB_JOUEURS_MAX)))
+		and not partie.manche_en_cours and partie.niveau >= 0 and partie.niveau < EtatPartie.NIVEAUX.size(),
+		"sa balise donne l'adresse de l'hôte, son port de jeu, sa version, 1 joueur sur %s places, pas de manche (%s)" % [_option("places", "6"), partie])
+
+	var depart := -1
+	if _options.has("rejoindre"):
+		reseau.inscrit.connect(_sur_inscription)
+		reseau.refuse.connect(_sur_refus)
+		reseau.connexion_echouee.connect(_ajouter_issue.bind("echec"))
+		reseau.hote_perdu.connect(_ajouter_issue.bind("hote_perdu"))
+		_check(reseau.rejoindre(partie.ip, partie.port) == OK, "rejoindre la partie vue, à l'adresse et au port de sa balise")
+		_check(await _attendre(func() -> bool: return not _issue.is_empty()) and _issue == "inscrit",
+			"l'hôte trouvé dans la liste inscrit ce poste (%s)" % _issue)
+		_check(await _attendre(func() -> bool: return decouverte.parties.has(cle) and decouverte.parties[cle].nb_joueurs == 2),
+			"la balise suivante de l'hôte compte 2 joueurs")
+		print("PARTIE A 2")
+		_check(await _attendre(func() -> bool: return _issue != "inscrit"), "l'hôte finit par partir")
+		_check(_issue == "inscrit+hote_perdu", "le départ de l'hôte est signalé une fois, comme hôte perdu (%s)" % _issue)
+		depart = Time.get_ticks_msec()
+
+	# Un Array, pas un int local : une lambda GDScript capture les variables locales par valeur.
+	var derniere_vue := [int(partie.vue_a)]
+	var expiree := await _attendre(func() -> bool:
+		if decouverte.parties.has(cle):
+			derniere_vue[0] = int(decouverte.parties[cle].vue_a)
+		return not decouverte.parties.has(cle))
+	var apres: float = (Time.get_ticks_msec() - int(derniere_vue[0])) / 1000.0
+	print("PARTIE EXPIREE apres=%.2f s" % apres)
+	_check(expiree and apres >= decouverte.DELAI_EXPIRATION and apres <= decouverte.DELAI_EXPIRATION + 0.5,
+		"la partie disparaît de la liste %.0f s après sa dernière balise (%.2f s)" % [decouverte.DELAI_EXPIRATION, apres])
+	if depart >= 0:
+		var depuis_depart := (Time.get_ticks_msec() - depart) / 1000.0
+		var borne: float = decouverte.PERIODE_BALISE + decouverte.DELAI_EXPIRATION + 1.0
+		_check(depuis_depart <= borne,
+			"et au plus %.0f s après le départ de l'hôte, dont le processus vit encore : sa balise s'arrête avec la session (%.1f s)" % [borne, depuis_depart])
+	decouverte.arreter_ecoute()
+
+
+## La clé (« ip:port ») d'une partie de la liste dont l'hôte a ce pseudo, la première dans l'ordre de
+## la liste affichée ; une chaîne vide s'il n'y en a pas.
+func _cle_partie(pseudo_hote: String) -> String:
+	for partie: Dictionary in decouverte.parties_triees():
+		if partie.pseudo == pseudo_hote:
+			return "%s:%d" % [partie.ip, partie.port]
+	return ""
 
 
 func _sur_arrivee(id: int) -> void:
