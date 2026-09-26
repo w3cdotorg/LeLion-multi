@@ -216,6 +216,19 @@ func _tester_commandes() -> void:
 	m.direction_voulue = Vector2(3, 4)
 	_check(is_equal_approx(m.direction().length(), 1.0) and m.direction().is_equal_approx(Vector2(0.6, 0.8)),
 		"direction() borne les commandes manuelles à une longueur de 1")
+	# Phase 14 : le menu local d'une manche en réseau suspend les commandes de ce poste
+	Input.action_press("deplacer_gauche")
+	Input.action_press("vomir")
+	m.vomir_voulu = true
+	l.suspendues = true
+	m.suspendues = true
+	_check(l.direction() == Vector2.ZERO and not l.vomir() and m.direction() == Vector2.ZERO and not m.vomir(),
+		"des commandes suspendues (menu local ouvert) valent le repos, quelle que soit leur source")
+	l.suspendues = false
+	m.suspendues = false
+	_check(l.direction().x < -0.99 and l.vomir() and m.vomir(), "levée la suspension, elles lisent de nouveau leur source")
+	Input.action_release("deplacer_gauche")
+	Input.action_release("vomir")
 
 
 func _tester_regles_solo() -> void:

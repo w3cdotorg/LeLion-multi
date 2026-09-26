@@ -973,6 +973,7 @@ func _run() -> void:
 	for i in range(3):
 		await process_frame  # le vomi démarre dans _process
 	_check(lr.est_en_train_de_vomir, "un lion de bataille vomit dès le départ, sans pastille")
+	_check(lr.vomi_de_l_hote, "sur l'hôte, l'état de vomi à répliquer suit celui du lion")
 	lr.commandes.vomir_voulu = false
 	await _frames(2)
 
@@ -1158,6 +1159,71 @@ func _run() -> void:
 	_check(j_bleu.est_etourdi() and lb.global_position.x > x_bleu + 10.0 and j_rouge.chocs >= 2,
 		"un lion étourdi est poussé par celui qui le percute (%.0f px)" % (lb.global_position.x - x_bleu))
 	_check(distance_min > 2 * 45.0 - 15.0, "même en poussant sans relâche, un lion ne s'enfonce pas dans l'autre (distance min %.0f px)" % distance_min)
+
+	# Phase 14 : sur un client, un lion n'est qu'une réplique du lion de l'hôte (position, vitesse,
+	# orientation et vomi reçus par son Synchro ; réactions par les signaux de son joueur)
+	var synchro_lion := lr.get_node_or_null("Synchro") as MultiplayerSynchronizer
+	var config_lion: SceneReplicationConfig = null if synchro_lion == null else synchro_lion.replication_config
+	_check(config_lion != null and config_lion.get_properties() == [^".:position", ^".:velocity", ^".:direction_du_lion", ^".:vomi_de_l_hote"]
+		and config_lion.property_get_replication_mode(^".:position") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
+		and config_lion.property_get_replication_mode(^".:velocity") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
+		and config_lion.property_get_replication_mode(^".:direction_du_lion") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
+		and config_lion.property_get_replication_mode(^".:vomi_de_l_hote") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
+		and config_lion.get_properties().all(func(p: NodePath) -> bool: return config_lion.property_get_spawn(p)),
+		"le Synchro du lion réplique position et vitesse en continu, orientation et vomi à chaque changement, tous à l'apparition")
+	var poste_lion := Node2D.new()
+	poste_lion.name = "PosteClientLion"
+	root.add_child(poste_lion)
+	var api_lion := SceneMultiplayer.new()
+	var pair_lion := ENetMultiplayerPeer.new()
+	_check(pair_lion.create_client("127.0.0.1", 7779) == OK, "(pré-condition) un pair client pour la réplique d'un lion")
+	api_lion.multiplayer_peer = pair_lion
+	set_multiplayer(api_lion, poste_lion.get_path())
+	var j_repl := Joueur.new()
+	j_repl.couleur = EtatPartie.PALETTE_BATAILLE[3]
+	j_repl.reinitialiser(3, j_repl.nuances())
+	var repl: CharacterBody2D = load("res://Scenes/Lion.tscn").instantiate()
+	repl.joueur = j_repl
+	repl.commandes = Commandes.manuelles()
+	repl.direction_du_lion = -1  # comme l'état d'apparition reçu de l'hôte, posé avant `_ready`
+	repl.position = Vector2(600, 500)
+	poste_lion.add_child(repl)
+	await _frames(1)
+	_check(repl.sprite.scale.x == -1.0 and repl.bouche.position.x == repl.BOUCHE_X_GAUCHE,
+		"sur un client, l'orientation reçue à l'apparition est appliquée (sprite et bouche à gauche)")
+	repl.commandes.direction_voulue = Vector2.RIGHT
+	repl.commandes.vomir_voulu = true
+	await _frames(5)
+	_check(repl.position == Vector2(600, 500) and repl.velocity == Vector2.ZERO and not repl.est_en_train_de_vomir,
+		"sur un client, un lion ne suit pas ses commandes : il ne bouge ni ne vomit de lui-même")
+	repl.position = Vector2(700, 500)  # ce qu'écrit le Synchro
+	repl.velocity = Vector2(350, 0)
+	repl.direction_du_lion = 1
+	repl.vomi_de_l_hote = true
+	for i in range(3):
+		await process_frame  # le vomi démarre dans _process
+	await _frames(1)
+	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl._vitesse == Vector2(350, 0)
+		and repl.est_en_train_de_vomir and repl.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
+		"la réplique suit l'état reçu : position, vitesse (son animation), orientation, vomi (particules)")
+	repl.vomi_de_l_hote = false
+	for i in range(3):
+		await process_frame
+	_check(not repl.est_en_train_de_vomir, "la réplique arrête de vomir avec le lion de l'hôte")
+	j_repl.etourdir(ReglesBataille.DUREE_ETOURDI_VOMI, ReglesBataille.DUREE_IMMUNITE, repl.global_position + Vector2(-50, 66), j_rouge.couleur)
+	await _frames(2)
+	var mat_repl := repl.sprite.material as ShaderMaterial
+	_check(repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur and repl.position == Vector2(700, 500),
+		"un étourdissement reçu de l'hôte s'affiche sur la réplique (étoiles, barbouillage), sans la déplacer")
+	j_repl.recevoir_fin_etourdissement(ReglesBataille.DUREE_IMMUNITE)
+	await _frames(2)
+	_check(not repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_force") == 0.0
+		and repl._clignotement != null and repl._clignotement.is_running(),
+		"la fin d'étourdissement reçue efface étoiles et barbouillage, l'immunité clignote")
+	repl.free()
+	set_multiplayer(null, poste_lion.get_path())
+	pair_lion.close()
+	poste_lion.free()
 
 	for l in lions_bataille:
 		l.free()

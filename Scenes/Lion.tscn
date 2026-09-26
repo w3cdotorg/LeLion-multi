@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://dmayuumv4a1gh"]
+[gd_scene load_steps=14 format=3 uid="uid://dmayuumv4a1gh"]
 
 [ext_resource type="Script" uid="uid://dh0gkc6tf8etc" path="res://Scripts/Lion.gd" id="1_3r2l0"]
 [ext_resource type="Texture2D" uid="uid://cmjsa80060vyw" path="res://Assets/Sprites/LionHead.png" id="1_kx51r"]
@@ -66,6 +66,20 @@ radius = 62.0725
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_choc"]
 radius = 45.0
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_synchro"]
+properties/0/path = NodePath(".:position")
+properties/0/spawn = true
+properties/0/replication_mode = 1
+properties/1/path = NodePath(".:velocity")
+properties/1/spawn = true
+properties/1/replication_mode = 1
+properties/2/path = NodePath(".:direction_du_lion")
+properties/2/spawn = true
+properties/2/replication_mode = 2
+properties/3/path = NodePath(".:vomi_de_l_hote")
+properties/3/spawn = true
+properties/3/replication_mode = 2
 
 [node name="Lion" type="CharacterBody2D" groups=["lion"]]
 collision_mask = 0
@@ -143,3 +157,7 @@ collision_mask = 16
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="PareChocs"]
 shape = SubResource("CircleShape2D_choc")
+
+[node name="Synchro" type="MultiplayerSynchronizer" parent="."]
+replication_interval = 0.012
+replication_config = SubResource("SceneReplicationConfig_synchro")
