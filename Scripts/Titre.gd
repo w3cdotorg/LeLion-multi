@@ -1,6 +1,7 @@
 extends Control
 ## Écran titre : difficulté et niveau se choisissent (mémorisés), Jouer lance la partie.
-## Les niveaux affichent le record pour la difficulté choisie.
+## Les niveaux affichent le record pour la difficulté choisie. `_ready` remet aussi le solo
+## (`GameState.configurer_solo()` et l'écran 2000×648), même au retour d'une bataille.
 
 const SCENE_JEU := "res://Scenes/Main.tscn"
 const DELAI_DEMO := 15.0

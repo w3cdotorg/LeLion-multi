@@ -17,7 +17,9 @@ const INTERVALLE_MESURE := 0.2  # s
 const COUVERTURE_CELLULE := 0.4
 ## Marge ajoutée au rayon d'un tampon pour le territoire : `Territoire.tamponner` touche les
 ## cellules dont le centre est à moins du rayon reçu ; avec une demi-cellule de plus, il touche
-## toutes celles que le tampon recouvre, comme la couverture du solo les compte. Mesuré sur une
+## à peu près toutes celles que le tampon recouvre (les cellules en diagonale, dont le centre est
+## entre r+4 et r+4√2, restent hors d'atteinte), comme la couverture du solo les compte à
+## peu près (une cellule comptée à 40 % d'alpha, pas « recouverte »). Mesuré sur une
 ## passe pleine vitesse (`tests/bataille_test.gd`, phase 10 ter) : sans cette marge, le territoire
 ## comptait 0,44 à 0,92 fois les cellules de la couverture et une passe ne volait que 8 % des
 ## cellules d'un adversaire au premier cran ; avec elle, 0,82 à 1,21 fois et 49 % au moins.

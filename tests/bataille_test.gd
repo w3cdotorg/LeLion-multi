@@ -6,6 +6,9 @@ extends SceneTree
 ## s'affichent en lignes « MESURE ». Avec `--fixed-fps 60`, chaque frame avance d'un tick sans
 ## attendre l'horloge : la manche entière prend quelques secondes. Avec le rendu (sans
 ## `--headless`) et `-- --captures=<dossier>`, la manche est aussi capturée en PNG (contrôle ◉).
+## `--captures` est ignoré en `--headless` (pas de rendu). Sections : intro, scène, apparitions,
+## peintre, pseudos et chocs, réglage du territoire, la manche à 4, retour au titre, solo après
+## une bataille.
 ## Compilé avant les autoloads : ne nomme ni `GameState`, ni `Lion`, ni `Ennemi`, ni la ville.
 
 const NB_LIONS := 4
@@ -31,6 +34,11 @@ func _init() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--captures="):
 			_dossier_captures = arg.trim_prefix("--captures=")
+	if not _dossier_captures.is_empty() and DisplayServer.get_name() == "headless":
+		# En headless, `RenderingServer.frame_post_draw` n'est jamais émis (pas de rendu réel) :
+		# `_capturer` attendrait indéfiniment le premier signal. Prévenir et ne pas capturer.
+		printerr("  ⚠️ --captures ignoré : pas de rendu en --headless")
+		_dossier_captures = ""
 	call_deferred("_run")
 
 
@@ -139,6 +147,8 @@ func _tester_scene() -> void:
 func _tester_solo_apres_bataille() -> void:
 	print("-- Solo après une bataille")
 	# Le solo a été configuré par l'écran titre (section précédente), comme dans le jeu.
+	_check(GS.regles is ReglesSolo and GS.joueurs.size() == 1,
+		"(pré-condition) le solo est déjà branché avant cette section")
 	GS.niveau_courant = 2  # le Village : son peintre
 	GS.difficulte_courante = 0
 	var main: Node = load("res://Scenes/Main.tscn").instantiate()
@@ -349,6 +359,9 @@ func _tester_manche() -> void:
 		var jeux_avant: int = ville._tampons.size()
 		await physics_frame
 		jeux_max_par_frame = maxi(jeux_max_par_frame, ville._tampons.size() - jeux_avant)
+		# Avec --captures, ce await supplémentaire décale le pilote d'au moins une frame et gonfle
+		# pire_frame_ms : les lignes MESURE d'un passage avec captures ne se comparent pas à
+		# celles d'un passage headless.
 		for k in range(INSTANTS_CAPTURES.size()):
 			if f == int(INSTANTS_CAPTURES[k] * Engine.physics_ticks_per_second):
 				await _capturer("bataille_%d" % (k + 1))
@@ -389,8 +402,11 @@ func _passe(lion: CharacterBody2D, haut: float) -> void:
 	lion.commandes.direction_voulue = Vector2.RIGHT
 	await _frames(20)  # l'élan : pleine vitesse avant de vomir
 	lion.commandes.vomir_voulu = true
-	while lion.global_position.x < 1700.0:
+	var i := 0
+	while lion.global_position.x < 1700.0 and i < 600:  # borné : une régression du déplacement ne bloque pas la suite
 		await physics_frame
+		i += 1
+	_check(i < 600, "la passe atteint x = 1700 sans être bloquée (%d frames)" % i)
 	lion.commandes.vomir_voulu = false
 	lion.commandes.direction_voulue = Vector2.ZERO
 	await _frames(60)
@@ -471,6 +487,8 @@ func _tester_pseudos_et_chocs() -> void:
 	var etiquette: Label = lions[1].etiquette_pseudo
 	_check(etiquette.visible and etiquette.get_global_rect().position.y >= -0.5,
 		"un lion collé en haut de l'écran n'y cache pas son pseudo (haut de l'étiquette à %.1f px)" % etiquette.get_global_rect().position.y)
+	_check(absf(etiquette.get_global_rect().position.y) <= 0.5,
+		"le lion est bien pressé contre sa borne, pas bridé bien plus bas (haut de l'étiquette à %.1f px)" % etiquette.get_global_rect().position.y)
 	_check(not lions[3].etiquette_pseudo.visible and lions[3].global_position.y == 0.0,
 		"un lion sans pseudo monte jusqu'au bord de l'écran")
 	for i in [1, 3]:
