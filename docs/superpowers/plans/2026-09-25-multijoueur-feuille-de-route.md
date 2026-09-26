@@ -73,7 +73,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 13 | **Salon** : cartes, couleurs, Prêt, niveau, bouton Démarrer de l'hôte (pas de compte à rebours, décision de l'utilisateur), lancement de la manche chez tous (index compactés, `configurer_bataille_reseau`), table et protocole du salon dans `Reseau`, l'écran Réseau qui passe la main, `rejoindre()` limité aux IPv4, version 0.13. Plafond de 5 fichiers levé. | ➕ `Scenes/Salon.tscn` ➕ `Scripts/Salon.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ salon à 3, test réseau vert 5 fois (bash 3.2 et 5) |
 | 14 | **Manche synchronisée** (après la 14 bis) : lions, ennemis et pastilles apparus chez l'hôte et répliqués (`MultiplayerSpawner`, `MultiplayerSynchronizer` : position, vitesse, orientation, vomi ; côté du peintre, couleur d'une pastille), commandes des clients par RPC (numérotées, silence de 500 ms), tampons diffusés et dessinés à l'identique (`Peinture` : jeux tirés de leur clé, graine u16), territoire et scores diffusés toutes les 0,2 s, réactions des joueurs par RPC, barrière de chargement (exclusion d'un absent), départs et hôte perdu, menu local sans pause, fenêtre en 16:9 hors solo, relais du serveur coupé, départ propre et silences d'ENet, version 0.14. Plafond de 5 fichiers levé. | ➕ `Scripts/Peinture.gd` ➕ `Scripts/Manche.gd` ✏️ `Scripts/Territoire.gd` ✏️ `Scripts/Ville.gd` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Joueur.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/Titre.gd` ✏️ `Scripts/Salon.gd` ✏️ `Scripts/EcranReseau.gd` ✏️ `Scripts/Reseau.gd` ✏️ `project.godot` ✏️ `Scripts/Ennemi.gd` ✏️ `Scripts/Soucoupe.gd` ✏️ `Scripts/Coccinelle.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scripts/Spawner.gd` ✏️ six scènes d'ennemis et de pastilles ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Main.gd` ✏️ `Scenes/Main.tscn` ✏️ `Scripts/Intro.gd` ✏️ `Scripts/PauseMenu.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ partie à 2 fenêtres, test réseau vert 5 fois (bash 3.2 et 5) |
 | 14 bis | **Pastilles vers `body is Lion`** (exécutée avant la 14) : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi, une réplique ne se libère pas d'elle-même : `_expirer`), sons de ramassage par `Audio` et les signaux du joueur local (un par frame, le cran de bataille compris), recul du peintre horizontal (il pointait vers la ville), durcissements du smoke test de la revue 8 ter. | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert, suites vertes 5 fois |
-| 15 | **Test réseau de bout en bout** : le scénario 9 de la phase 14 (1 hôte + 2 clients + un muet exclu, empreintes identiques, départ d'un client, hôte perdu) passe à 1 hôte + 3 clients, une manche plus longue avec pastilles ramassées au vol et chocs ; jeux de tampons remesurés chez un client (point de vigilance ci-dessous). Le test réseau tourne en CI depuis la phase 11 ter (`ci.yml` n'est plus à toucher). | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert en CI |
+| 15 | **Test réseau de bout en bout** : scénario 11 (les scénarios 9 et 10 restent) : 1 hôte + 3 clients jouent une manche entière de 45 s sur le Village au clavier, chacun selon un programme de commandes au hasard (graine) ; l'hôte orchestre les rencontres (pastilles ramassées au vol par chaque client, étoile, soucoupe, sa gerbe sur un client, la gerbe d'un client sur lui, un choc) ; un client arraché (KILL) est vu parti au bout du silence de session d'ENet (3,1 à 5,9 s mesurées, 10 s au plus), son lion disparaît chez tous, ses cellules restent ; même empreinte chez l'hôte et les deux clients restés (territoire, scores, suite des tampons, lions, apparitions, niveau, réactions de chaque joueur comptées sur chaque poste) ; jeux de tampons remesurés à 4 postes. `DUREE11=45` (ruling du contrôleur : marge CI sous le `timeout 300`, pas 90) : test réseau ~110 s (~52 s pour le scénario 11), `ci.yml` inchangé. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert 5 fois (bash 3.2 et 5), puis en CI |
 | 16 | **Prédiction du lion local** (4 bis), après le découpage de `Lion.gd` (étape à part, voir les points de vigilance) : correction douce, commandes redondantes (la phase 14 les numérote déjà), numéro de la dernière commande traitée répliqué, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
 
 ### D. Fin de manche et livraison
@@ -191,14 +191,31 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   rythme d'affichage de chaque poste (détail visuel accepté, spec §6) ;
 - (résolu en phase 14) le commentaire de `Territoire.CHARGE_MAX` dit ce que la phase 10 ter a
   gardé ; la méthode d'affichage d'un client est `Territoire.appliquer_changements` ;
-- **phase 15** (jeux de tampons, mesurés en phase 10, remesurés en phase 14) : chaque client génère
-  ses jeux au premier usage (`Peinture.generer_tampons`, graine tirée de la clé : le même jeu
-  quel que soit le moment). Scénario 9 de la phase 14 (3 postes au premier cran) : 3 jeux en cache
-  chez chaque poste, frame la plus longue 10 à 16 ms pendant la passe, chez l'hôte comme chez un
-  client (ligne `MESURE` de chaque poste) ; pas de pré-génération. À remesurer en phase 15 (1 hôte
-  + 3 clients, crans et gerbes XXL) : pré-générer pendant l'intro (nuances des joueurs, 7 rayons,
-  ×2, un jeu par frame) si un client montre des à-coups. Mémoire du cache plein : environ 14,5 Mo
-  pour 6 joueurs ;
+- (résolu en phase 15) jeux de tampons : chaque poste génère ses jeux au premier usage
+  (`Peinture.generer_tampons`, graine tirée de la clé : le même jeu quel que soit le moment).
+  Remesurés par le scénario 11 (1 hôte + 3 clients, crans jusqu'à 4, gerbe XXL, manche entière de
+  45 s) : 11 jeux générés par poste (2 passages mesurés), frame la plus longue qui en génère 13 à
+  22 ms chez l'hôte comme chez un client, 70 ms observé une fois (lignes `MESURE`) ; la frame la
+  plus longue tout court (18 à 70 ms) ne génère pas toujours (quatre processus Godot sur un Mac).
+  Pas de pré-génération. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs ;
+- **phase 16** (temps de la CI, depuis la phase 15) : le test réseau prend ~110 s, dont ~52 s pour
+  le scénario 11 (la manche entière de 45 s, `DUREE11` dans `tests/reseau/lancer.sh` : ruling du
+  contrôleur, pas 90 s, pour garder la marge sous le `timeout 300` du pas « Test réseau » de
+  `ci.yml`) ; le test sous latence simulée de la phase 16 doit tenir dans ce qui reste (ou
+  raccourcir encore `DUREE11`, ou relever ce `timeout` dans `ci.yml`) ;
+- **phase 17** (le peintre en bataille, vu en phase 15) : sur le Village, le peintre (421 px de haut,
+  posé sur les toits) couvre toute la bande de peinture ; sans fuir, un joueur est étourdi sans
+  relâche (le programme du scénario 11 sans fuite, mesuré à 90 s : 21 % de la ville peinte en 90 s
+  à 4, contre 58 à 66 % en fuyant). À régler avec le rythme de la manche (délai propre à la
+  bataille, taille ou fréquence du peintre en bataille) ;
+- **phase 18** (résultats, vu en phase 15) : les statistiques de bataille (`Joueur.chocs`,
+  `etourdissements_infliges`, `cellules_volees`) ne sont tenues que par l'hôte (règles) et ne sont
+  pas répliquées : l'écran Résultats d'un client doit les recevoir de l'hôte (dans le message de fin
+  de manche, par exemple) ;
+- **prochaine phase qui touche `tests/reseau/lancer.sh`** (vu en phase 15) : le scénario 10 arrête
+  ses postes par `tuer`, l'hôte n'efface donc pas `user://scores_reseau_Hote10.cfg` (fichier vide de
+  test laissé dans les données utilisateur) ; l'effacer comme le fait l'hôte du scénario 11 pour le
+  poste arraché ;
 - (résolu en phase 14) un client qui part en cours de manche arrive chez l'hôte par
   `Reseau.joueur_parti(id)` : la manche retrouve son joueur par `Joueur.id_reseau`, oublie ses
   commandes et son lion disparaît chez tous (disparition répliquée) ; un hôte perdu arrive chez
