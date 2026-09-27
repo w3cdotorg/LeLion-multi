@@ -2,7 +2,7 @@ extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
 ##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
 ## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client,
-## manche-muet, bout-hote, bout-client.
+## manche-muet, bout-hote, bout-client, latence-hote, latence-client.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -100,6 +100,19 @@ extends SceneTree
 ##   « STATS … », « EMPREINTE … », « FIGE ».
 ##   Bout-client : --graine=N, --calme=chemin (joue son programme jusqu'à ce fichier, puis écrit
 ##   « CALME VU »), --fige=chemin (comme un client de la manche : sa propre « EMPREINTE »).
+## Prédiction sous latence simulée (phase 16), par les vraies scènes : 1 hôte + 2 clients, les clients
+##   passant par le relais de `tests/reseau/relais.gd` (leur --port est celui du relais), sur le niveau
+##   --niveau=L choisi par l'hôte au salon.
+##   Latence-hôte : --clients=N, --niveau=L, --duree=S, --rester=chemin. Reste immobile, écarte les
+##   ennemis (la prédiction se mesure sur les commandes des joueurs ; un étourdissement est couvert par
+##   `tests/prediction_test.gd`) ; à DUREE_CALME s de la fin, écrit « CALME » ; lions arrêtés, coulures
+##   finies, la manche à son terme, il écrit pour chaque client « COMMANDES <pseudo> … » (aucune
+##   commande appliquée deux fois, presque aucune sautée), fige la manche : « EMPREINTE … », « FIGE ».
+##   Latence-client : --graine=N, --moitie=0|1 (sa moitié de la bande de peinture : les deux clients
+##   ne se croisent pas), --calme=chemin (joue son programme jusqu'à ce fichier, puis lâche tout),
+##   --fige=chemin. Une fois ses commandes d'après l'arrêt accusées par l'hôte, écrit « PREDICTION … »
+##   (erreurs de prédiction, recalages, à-coups, plus long rejeu) et vérifie : aucun recalage, l'erreur
+##   rarement au-delà de 16 px, sous 4 px 150 ms après l'arrêt ; puis sa propre « EMPREINTE ».
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -109,6 +122,12 @@ const DELAI_ETAPE := 15.0  # secondes au plus pour chaque attente
 ## Manche de bout en bout : secondes de jeu avant les rencontres, puis avant la fin où tout se calme.
 const DEBUT_RENCONTRES := 20.0
 const DUREE_CALME := 4.0
+## Prédiction sous latence : l'erreur de prédiction doit converger sous ECART_PREDICTION px en
+## TICKS_CONVERGENCE ticks (150 ms) après l'arrêt des commandes (spec §10) ; au-delà d'A_COUP px d'une
+## image physique à l'autre (pleine vitesse et moitié en plus), l'affichage du lion local saute.
+const ECART_PREDICTION := 4.0
+const TICKS_CONVERGENCE := 9
+const A_COUP := 350.0 / 60.0 * 1.5
 ## Vitesse (px/s) au-delà de laquelle un lion ramasse une pastille « au vol », ou percute l'hôte.
 const VITESSE_AU_VOL := 150.0
 const VITESSE_CHOC := 250.0
@@ -208,8 +227,10 @@ func _run() -> void:
 		await _jouer_muet()
 	elif role == "bout-hote" or role == "bout-client":
 		await _jouer_bout(role == "bout-hote")
+	elif role == "latence-hote" or role == "latence-client":
+		await _jouer_latence(role == "latence-hote")
 	else:
-		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote ou bout-client")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote, bout-client, latence-hote ou latence-client")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -692,7 +713,10 @@ func _jouer_manche(hote: bool) -> void:
 		ticks_exclu = Time.get_ticks_msec()
 	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
 	if mesurer_exclusion and ticks_exclu >= 0:
-		print("ECART_EXCLUSION %d" % (Time.get_ticks_msec() - ticks_exclu))
+		var ecart_exclusion := Time.get_ticks_msec() - ticks_exclu
+		# lancer.sh arrête ce poste dès la mesure écrite (scénario 10) : ses scores de test s'effacent avant.
+		_effacer_scores()
+		print("ECART_EXCLUSION %d" % ecart_exclusion)
 	_check(_issue.is_empty(), "personne ne s'est cru abandonné pendant le chargement (%s)" % _issue)
 	if hote:
 		var exclus: Array = manche._exclus
@@ -825,8 +849,8 @@ func _empreinte(main: Node, manche: Node, hote: bool) -> String:
 	for i in range(proprietaires.size()):
 		proprietaires[i] = territoire.proprietaire_compte(i) + 1
 	var lions: Array = main.lions.map(func(l: Node) -> String:
-		return "%s:%.1f,%.1f,%d,%d,%s,%s" % [l.name, l.position.x, l.position.y, l.direction_du_lion, l.joueur.crans,
-			l.joueur.est_etourdi(), l.joueur.bonus_actif()])
+		return "%s:%.1f,%.1f,%d,%d,%s,%s,%s" % [l.name, l.position.x, l.position.y, l.direction_du_lion, l.joueur.crans,
+			l.joueur.est_etourdi(), l.joueur.bonus_actif(), l.etiquette_pseudo.visible])
 	var scenes: Array[String] = []
 	var spawner: MultiplayerSpawner = main.get_node("Apparitions")
 	for i in range(spawner.get_spawnable_scene_count()):
@@ -974,10 +998,14 @@ class Programme:
 	var fin_cible := 0
 	var fin_vomi := 0
 
-	func _init(graine: int, ville: Node2D) -> void:
+	## `moitie` : 0 ou 1 pour ne jouer que dans la moitié gauche ou droite de la bande (assez loin de
+	## l'autre pour que deux lions ne s'y touchent pas), -1 pour toute la bande.
+	func _init(graine: int, ville: Node2D, moitie := -1) -> void:
 		rng.seed = graine
 		var haut: float = ville.position.y - ville.tex_size.y / 2.0
 		bande = Rect2(100.0, haut - 300.0, 1650.0, 120.0)
+		if moitie >= 0:
+			bande = Rect2(100.0 + moitie * 970.0, haut - 300.0, 680.0, 120.0)
 
 	## Une image de jeu pour `lion` (le lion de ce poste, dont la position est celle de l'hôte).
 	func piloter(lion: Node2D) -> void:
@@ -1019,6 +1047,102 @@ class Programme:
 			Input.action_press(action)
 		else:
 			Input.action_release(action)
+
+
+## Rôles « latence-hote » et « latence-client » (phase 16, voir l'en-tête) : une manche à 1 hôte et 2
+## clients, les clients derrière le simulateur de latence ; chaque client mesure sa prédiction, l'hôte
+## les commandes reçues ; la même empreinte chez tous.
+func _jouer_latence(hote: bool) -> void:
+	var main := await _rejoindre_la_manche(hote)
+	if main == null:
+		return
+	var gs: Node = root.get_node("GameState")
+	var manche: Node = main.get_node("Manche")
+	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size()) and gs.joueurs.size() == 3,
+		"un lion par joueur, 1 hôte et 2 clients (%d)" % main.lions.size())
+	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	print("INTRO")
+	if hote:
+		await _animer_latence_hote(main, manche, gs)
+	else:
+		await _animer_latence_client(main, manche)
+	_effacer_scores()
+
+
+func _animer_latence_hote(main: Node, manche: Node, gs: Node) -> void:
+	var duree := float(_option("duree", "20"))
+	var ville: Node2D = main.get_node("Ville")
+	var spawner: Node = main.get_node("Spawner")
+	var ecarter_ennemis := func() -> bool:
+		for t: Timer in [spawner._timer_soucoupe, spawner._timer_coccinelle]:
+			if t != null:
+				t.stop()
+		for ennemi in get_nodes_in_group("ennemi") + get_nodes_in_group("boss"):
+			ennemi.queue_free()
+		return gs.temps_ecoule >= duree - DUREE_CALME
+	_check(await _attendre(ecarter_ennemis, duree + 10.0), "le jeu dure jusqu'à %.0f s de la fin, sans ennemis" % DUREE_CALME)
+	print("CALME")
+	var calme := func() -> bool:
+		return main.lions.all(func(l: Node) -> bool: return l.velocity == Vector2.ZERO) and ville.coulures.is_empty()
+	_check(await _attendre(calme), "les lions s'arrêtent, les coulures finissent")
+	_check(await _attendre(func() -> bool: return gs.temps_ecoule >= duree), "la manche va jusqu'au bout de ses %.0f s" % duree)
+	for l: Node in main.lions:
+		if l == main.lion:
+			continue
+		var c: Commandes = l.commandes
+		print("COMMANDES %s appliquees=%d sautees=%d numero=%d file_max=%d" % [l.joueur.pseudo, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
+		_check(c.numero_applique > 600 and c.appliquees + c.sautees == c.numero_applique and c.sautees * 100 <= c.numero_applique,
+			"les commandes de %s : aucune appliquée deux fois, %d sautées sur %d (redondance)" % [l.joueur.pseudo, c.sautees, c.numero_applique])
+	gs.terminer_partie(false)
+	await _pause(1.0)
+	print("EMPREINTE %s" % _empreinte(main, manche, true))
+	print("FIGE")
+	var rester := _option("rester", "")
+	print("HOTE RESTE")
+	_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+	paused = false
+	reseau.quitter()
+
+
+func _animer_latence_client(main: Node, manche: Node) -> void:
+	var calme := _option("calme", "")
+	var programme := Programme.new(int(_option("graine", "1")), main.get_node("Ville"), int(_option("moitie", "-1")))
+	var prediction: Node = main.lion.prediction
+	# Adaptation (Task 4 review, 48d9586) : le décalage de correction ne bouge plus le corps
+	# (`Lion.position`, toujours la position prédite), mais l'affichage (`Lion.visuel`, enfant du
+	# lion). Ce que le joueur voit, et ce qu'A_COUP doit mesurer, est donc la position affichée
+	# (`main.lion.visuel.global_position`, aucune rotation ni échelle sur `Lion` ni sur `Visuel`) :
+	# suivre `main.lion.position` compterait à tort chaque recalage absorbé par le décalage (jamais
+	# visible) comme un à-coup de l'affichage.
+	var a_coups := [0, main.lion.visuel.global_position]  # partagé avec la lambda : à-coups, position affichée d'avant
+	var mesurer := func() -> void:
+		if main.lion != null:
+			var affichee: Vector2 = main.lion.visuel.global_position
+			if affichee.distance_to(a_coups[1]) > A_COUP + main.lion.deplacement.recul.length() / 60.0:
+				a_coups[0] += 1
+			a_coups[1] = affichee
+	physics_frame.connect(mesurer)
+	_check(await _jouer_jusqu_a(main, programme, func() -> bool: return FileAccess.file_exists(calme), ReglesBataille.DUREE_MANCHE),
+		"le jeu dure jusqu'au calme annoncé par lancer.sh (%s)" % calme)
+	programme.relacher()
+	var arret: int = prediction.numero + 1
+	_check(await _attendre(func() -> bool: return prediction.numero_accuse >= arret + 60),
+		"l'hôte accuse les commandes d'après l'arrêt (%d, arrêt à la %d)" % [prediction.numero_accuse, arret])
+	physics_frame.disconnect(mesurer)
+	var etats: int = prediction.etats_depuis(1)
+	var apres: float = prediction.erreur_max(arret + TICKS_CONVERGENCE)
+	print("PREDICTION %s : erreur max %.2f px, %d états sur %d au-delà de 4 px, %d au-delà de 16 px ; %.2f px au plus 150 ms après l'arrêt ; recalages %d ; à-coups %d ; rejeu le plus long %d pas"
+		% [reseau.pseudo, prediction.erreur_max(), prediction.erreurs_au_dela(ECART_PREDICTION), etats, prediction.erreurs_au_dela(16.0), apres,
+			prediction.recalages, a_coups[0], prediction.rejeu_max])
+	_check(etats > 600 and prediction.recalages == 0, "le lion prédit n'est jamais recalé d'un coup (%d états de l'hôte)" % etats)
+	# Un à-coup de l'hôte (une image longue : il rattrape plusieurs ticks d'un coup, sa file se vide) lui
+	# fait répéter une commande, donc une erreur de quelques pas (mesuré sur 20 clients : jusqu'à 110 px,
+	# au plus 18 états sur 696 au-delà de 16 px), que la correction douce absorbe. Une prédiction cassée
+	# dépasse 16 px presque à chaque état : au plus 10 % des états au-delà de 16 px.
+	_check(prediction.erreurs_au_dela(16.0) * 10 <= etats, "l'erreur de prédiction dépasse rarement 16 px (%d fois sur %d)" % [prediction.erreurs_au_dela(16.0), etats])
+	_check(apres >= 0.0 and apres < ECART_PREDICTION, "150 ms après l'arrêt de ses commandes, l'erreur de prédiction reste sous %.0f px (%.2f px)" % [ECART_PREDICTION, apres])
+	await _finir_manche_client(main, manche)
 
 
 ## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).
@@ -1295,6 +1419,12 @@ func _animer_bout_client(main: Node, manche: Node, gs: Node, programme: Programm
 		"le jeu dure jusqu'au calme annoncé par lancer.sh (%s)" % calme)
 	programme.relacher()
 	_ecrire_mesure()
+	var prediction: Node = main.lion.prediction
+	# Mesure seule (phase 16) : sans latence, mais avec les rencontres, où l'hôte déplace les lions
+	# (recalages attendus) et les chocs.
+	print("PREDICTION %s (sans latence, rencontres comprises) : erreur max %.2f px, %d états sur %d au-delà de 4 px ; recalages %d ; rejeu le plus long %d pas"
+		% [reseau.pseudo, prediction.erreur_max(), prediction.erreurs_au_dela(ECART_PREDICTION), prediction.etats_depuis(1), prediction.recalages,
+			prediction.rejeu_max])
 	print("CALME VU")
 	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size() - 1),
 		"le lion du client arraché a disparu ici aussi (%d lions)" % main.lions.size())
