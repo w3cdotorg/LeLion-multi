@@ -1806,6 +1806,10 @@ func _tester_commandes_reseau() -> void:
 	_check(c.numero_applique == 10 and c.sautees == 2 and c.appliquees + c.sautees == c.numero_applique
 		and c.direction().is_equal_approx(Vector2(0.6, 0.8)),
 		"trois paquets perdus de suite (5 à 9) : 5 et 6 manquent, sautés et comptés ; aucune commande n'est appliquée deux fois ; la direction reçue reste bornée")
+	# I2 (revue finale phase 17, désync-report) : une vraie perte réseau (jamais reçue, pas de rattrapage
+	# ici, la dette venant d'être remise à zéro) ne compte que dans `perdues`, jamais dans `rattrapees`.
+	_check(c.perdues == 2 and c.rattrapees == 0,
+		"un numéro jamais reçu incrémente perdues (%d), pas rattrapees (%d) : ce n'est pas un rattrapage volontaire" % [c.perdues, c.rattrapees])
 	var neuves := 0
 	for dernier in range(14, 31, 4):
 		neuves += _recevoir_paquet(c, dernier, [[Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, true]])
@@ -1894,6 +1898,10 @@ func _tester_commandes_dette() -> void:
 	_check(c.rejouees == 0 and c.appliquees + c.sautees == c.numero_applique,
 		"(dette) aucune commande appliquée deux fois pendant le rattrapage (%d appliquées, %d sautées, jusqu'à la %d)"
 			% [c.appliquees, c.sautees, c.numero_applique])
+	# I2 (revue finale phase 17, désync-report) : ce rattrapage n'est pas une perte réseau (toutes les
+	# commandes 11 à 16 ont fini par arriver) ; il doit être compté à part de `perdues`.
+	_check(c.rattrapees > 0 and c.perdues == 0,
+		"(dette) un délestage volontaire du rattrapage incrémente rattrapees (%d), pas perdues (%d) : ce n'est pas une perte réseau" % [c.rattrapees, c.perdues])
 	_check(sans_accroc.numero_applique - c.numero_applique < 23 - 10,
 		"(dette) le chemin appliqué se rapproche de celui sans accroc (%d contre %d), pas le plein retard de l'accroc (resterait à %d sans la dette)"
 			% [c.numero_applique, sans_accroc.numero_applique, 10])
