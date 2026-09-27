@@ -176,9 +176,10 @@ func _preparer_bataille(nb_joueurs: int, couleurs: Array[Color]) -> int:
 
 
 ## Le chrono tourne sur chaque poste (l'affichage) ; les minuteries des joueurs (étourdissement,
-## immunité, gerbe XXL) ne sont décomptées que par l'hôte, qui décide de leurs fins : un client les
-## reçoit de la manche (`Joueur.recevoir_fin_etourdissement`, `recevoir_fin_bonus`, phase 14), sans
-## quoi chaque poste émettrait ses propres fins, un peu avant ou après celles de l'hôte.
+## immunité, gerbe XXL) et la fin de la manche au chrono (`Regles.temps_ecoule_change`) ne sont
+## décidées que par l'hôte : un client les reçoit de la manche (`Joueur.recevoir_fin_etourdissement`,
+## `recevoir_fin_bonus`, phase 14 ; la fin de manche, phase 17), sans quoi chaque poste émettrait ses
+## propres fins, un peu avant ou après celles de l'hôte.
 func _process(delta: float) -> void:
 	if not partie_en_cours or not pret:
 		return
@@ -187,6 +188,7 @@ func _process(delta: float) -> void:
 		return
 	for j in joueurs:
 		j.avancer(delta)
+	regles.temps_ecoule_change()
 
 
 func nouvelle_partie() -> void:

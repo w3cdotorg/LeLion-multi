@@ -5,17 +5,25 @@ extends Regles
 ## barbouillée de la couleur de l'agresseur), un ennemi 2,5 s, puis 1 s d'immunité ; chaque
 ## pastille donne un cran de gerbe ; l'étoile XXL est celle du solo. La manche se joue au
 ## territoire, que tient la ville (`Territoire`) : les règles en comptent les vols. L'écran est
-## en 16:9 ; une pastille est toujours offerte, l'étoile toujours possible, jamais de cœur. La
-## fin de manche au chrono (phase 17) s'y ajoutera.
+## en 16:9 ; une pastille est toujours offerte, l'étoile toujours possible, jamais de cœur. Le
+## chrono termine la manche chez l'hôte (phase 17) ; le plus de cellules gagne, ex æquo possibles
+## (`rangs`).
 
 const DUREE_ETOURDI_VOMI := 1.5
 const DUREE_ETOURDI_ENNEMI := 2.5
 const DUREE_IMMUNITE := 1.0
-## Durée d'une manche (spec §2), dont le temps écoulé fait l'avancement. Le chrono qui la termine
-## vient en phase 17.
+## Durée d'une manche (spec §2) : son temps écoulé fait l'avancement, et le chrono la termine chez
+## l'hôte.
 const DUREE_MANCHE := 90.0
+## Secondes restantes à partir desquelles le chrono du HUD passe au rouge et tique (spec §8).
+const SECONDES_TIC := 10
 ## Écran de la bataille (spec §7) : 16:9, la skyline posée en bas sous un grand ciel.
 const TAILLE_ECRAN := Vector2i(2000, 1125)
+
+## Durée des prochaines manches : DUREE_MANCHE, réglable par le test réseau (une manche courte ; le
+## script, `load("res://Scripts/ReglesBataille.gd")`, porte cette variable, comme
+## `Manche.delai_chargement`).
+static var duree_manche := DUREE_MANCHE
 
 
 func _init(partie_: EtatPartie) -> void:
@@ -37,7 +45,67 @@ func taille_ecran() -> Vector2i:
 
 ## Le temps de la manche : la ville peinte ne dit rien de la fin d'une bataille.
 func avancement() -> float:
-	return partie.temps_ecoule / DUREE_MANCHE
+	return partie.temps_ecoule / duree_manche
+
+
+## Secondes de manche qui restent, jamais négatives.
+func temps_restant() -> float:
+	return maxf(duree_manche - partie.temps_ecoule, 0.0)
+
+
+## Le chrono du HUD, en secondes entières : arrondi au-dessus (1:30 pendant la première seconde,
+## 0:01 jusqu'au bout, 0:00 une fois la manche finie).
+func secondes_restantes() -> int:
+	return ceili(temps_restant())
+
+
+## Le chrono arrivé à zéro termine la manche (spec §2 : personne n'est éliminé). Appelé chez l'hôte
+## seulement (`GameState._process`) : le chrono d'un client, parti à la fin de sa propre intro, est
+## décalé de la latence ; il attend la fin de l'hôte (`Manche`).
+func temps_ecoule_change() -> void:
+	if manche_en_cours() and partie.temps_ecoule >= duree_manche:
+		partie.terminer_partie(true)
+
+
+## Le rang de chaque joueur d'après ses cellules (`cellules[i]` : celles du joueur d'index i) : 1
+## pour le plus de cellules, les ex æquo au même rang, le suivant sautant d'autant (1, 1, 3) ; 0
+## pour un joueur sans cellule, pas classé (au départ, personne ne mène).
+static func rangs(cellules: Array[int]) -> Array[int]:
+	var resultat: Array[int] = []
+	for n in cellules:
+		var rang := 0
+		if n > 0:
+			rang = 1
+			for autre in cellules:
+				if autre > n:
+					rang += 1
+		resultat.append(rang)
+	return resultat
+
+
+## La part de chaque joueur dans les cellules possédées (`cellules[i]` : celles du joueur d'index i),
+## en pourcents entiers qui font 100 à eux tous : les centièmes perdus à l'arrondi vont aux plus grands
+## restes (à égalité, au plus petit index), jamais à un joueur sans cellule ; toutes nulles tant que
+## personne ne possède de cellule. Ce qu'affiche le HUD (spec §8) ; le classement vient des cellules
+## (`rangs`), pas de ces parts arrondies.
+static func parts(cellules: Array[int]) -> Array[int]:
+	var total := 0
+	for n in cellules:
+		total += n
+	var resultat: Array[int] = []
+	var restes: Array[Vector2i] = []  # (reste, index)
+	var distribue := 0
+	for i in range(cellules.size()):
+		var part := 0 if total <= 0 else cellules[i] * 100 / total
+		resultat.append(part)
+		distribue += part
+		restes.append(Vector2i(0 if total <= 0 else cellules[i] * 100 % total, i))
+	if total <= 0:
+		return resultat
+	restes.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.x > b.x or (a.x == b.x and a.y < b.y))
+	for k in range(100 - distribue):
+		resultat[restes[k].y] += 1
+	return resultat
 
 
 ## Une pastille donne un cran quelle que soit sa couleur : une couleur de l'arc-en-ciel au hasard,

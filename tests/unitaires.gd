@@ -43,6 +43,7 @@ func _run() -> void:
 	_tester_commandes_dette()
 	_tester_etat_lion()
 	_tester_interpolation_lion()
+	_tester_chrono_bataille()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1987,6 +1988,84 @@ func _tester_interpolation_lion() -> void:
 	desordre.ajouter(200, Vector2(200, 0), Vector2.ZERO, 1)
 	desordre.avancer(1.0)
 	_check(is_equal_approx(desordre.retard(), InterpolationLion.RETARD), "un saut de plus d'ECART_MAX ticks (un poste figé) recale l'horloge d'un coup")
+
+
+## Phase 17 : le chrono de la manche (affichage, fin chez l'hôte seulement), le classement et les
+## couches de musique.
+func _tester_chrono_bataille() -> void:
+	print("-- Chrono et classement de la bataille (phase 17)")
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	gs.pret = true
+	var r: ReglesBataille = gs.regles
+	var affiches: Array[int] = []
+	for t in [0.0, 0.5, 80.0, 80.2, 89.99, 90.0, 95.0]:
+		gs.temps_ecoule = t
+		affiches.append(r.secondes_restantes())
+	_check(affiches == [90, 90, 10, 10, 1, 0, 0] and r.temps_restant() == 0.0,
+		"le chrono affiche les secondes restantes arrondies au-dessus : 1:30 au départ, 0:01 jusqu'au bout, 0:00 à la fin (%s)" % [affiches])
+	var musique: Array[int] = []
+	for t in [0.0, 29.9, 30.0, 59.9, 60.0, 90.0]:
+		gs.temps_ecoule = t
+		musique.append(r.intensite_musique())
+	_check(musique == [0, 0, 1, 1, 2, 3], "en bataille, les arpèges entrent à 30 s de jeu, la mélodie à 60 s (%s)" % [musique])
+	gs.temps_ecoule = 0.0
+	var fins: Array[bool] = []
+	var sur_fin := func(v: bool) -> void: fins.append(v)
+	gs.partie_terminee.connect(sur_fin)
+	# Sur un client : son chrono tourne, jamais il ne termine la manche lui-même
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17796) == OK, "(pré-condition) GameState sur un pair client")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	gs._process(ReglesBataille.DUREE_MANCHE + 5.0)
+	_check(gs.partie_en_cours and fins.is_empty() and r.secondes_restantes() == 0,
+		"sur un client, le chrono passé à zéro ne termine pas la manche : elle attend la fin de l'hôte")
+	set_multiplayer(null, gs.get_path())
+	pair.close()
+	# Sur l'hôte (hors réseau compris) : la manche se termine quand le chrono arrive à zéro, pas avant
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(ReglesBataille.DUREE_MANCHE - 0.5)
+	_check(gs.partie_en_cours and fins.is_empty(), "sur l'hôte, la manche continue tant que le chrono n'est pas à zéro")
+	gs._process(0.5)
+	_check(not gs.partie_en_cours and fins == [true], "sur l'hôte, le chrono à zéro termine la manche, une fois (%s)" % [fins])
+	gs._process(1.0)
+	_check(fins.size() == 1 and is_equal_approx(gs.temps_ecoule, ReglesBataille.DUREE_MANCHE),
+		"une manche finie ne se retermine pas, son chrono reste arrêté")
+	# Une manche courte (le test réseau) : la durée se règle sur le script des règles
+	var script_regles: Script = load("res://Scripts/ReglesBataille.gd")
+	script_regles.duree_manche = 10.0
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(10.0)
+	_check(not gs.partie_en_cours and fins.size() == 2 and is_equal_approx(r.avancement(), 1.0),
+		"une manche réglée sur 10 s (test réseau) se termine à 10 s")
+	script_regles.duree_manche = ReglesBataille.DUREE_MANCHE
+	gs.partie_terminee.disconnect(sur_fin)
+	# En solo, le chrono compte sans jamais finir la partie ; la musique suit la ville peinte
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(500.0)
+	gs.progression = gs.seuil_victoire() * 0.7
+	_check(gs.partie_en_cours and gs.regles.intensite_musique() == 2,
+		"en solo, le chrono ne finit jamais la partie, et la musique suit la ville peinte (une couche par tiers du seuil)")
+	gs.progression = 0.0
+	gs.partie_en_cours = false
+	gs.pret = false
+
+	_check(ReglesBataille.rangs([0, 0, 0]) == [0, 0, 0], "au départ, personne n'est classé (aucune cellule)")
+	_check(ReglesBataille.rangs([5, 9, 5, 0]) == [2, 1, 2, 0] and ReglesBataille.rangs([7, 7, 3]) == [1, 1, 3],
+		"le plus de cellules est premier ; des ex æquo partagent leur rang, le suivant saute d'autant")
+	_check(ReglesBataille.parts([0, 0, 0]) == [0, 0, 0] and ReglesBataille.parts([3, 0]) == [100, 0],
+		"la part des cellules peintes : 0 % pour tous tant que personne ne possède rien (aucune division par zéro), 100 % pour le seul peintre")
+	var parts_a_4 := ReglesBataille.parts([349, 274, 326, 426])
+	_check(ReglesBataille.parts([1, 1, 1]) == [34, 33, 33] and ReglesBataille.parts([2, 1]) == [67, 33]
+		and ReglesBataille.parts([5, 9, 5, 0]) == [26, 48, 26, 0] and parts_a_4 == [25, 20, 24, 31],
+		"les parts font 100 à elles toutes, le reste de l'arrondi aux plus grands restes, jamais à un joueur sans cellule (%s)" % [parts_a_4])
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

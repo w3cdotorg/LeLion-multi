@@ -69,6 +69,19 @@ func avancement() -> float:
 	return 0.0
 
 
+## Couches de musique à entendre (0 : la base seule, 1 : + arpèges, 2 : + mélodie ; au-delà, `Audio`
+## borne) : une par tiers de l'avancement (en solo, la ville peinte rapportée au seuil ; en
+## bataille, les arpèges à 30 s de jeu et la mélodie à 60 s, spec §8).
+func intensite_musique() -> int:
+	return int(avancement() * 3.0)
+
+
+## Le temps de la partie vient d'avancer (`GameState._process`, chez l'hôte seulement) : sans effet
+## par défaut (le chrono du solo ne fait que compter) ; en bataille, le chrono termine la manche.
+func temps_ecoule_change() -> void:
+	pass
+
+
 ## Index de la couleur de l'arc-en-ciel de la prochaine pastille à faire apparaître, -1 pour
 ## aucune (lu par le Spawner quand une pastille est due). Aucune par défaut.
 func pastille_a_offrir() -> int:
