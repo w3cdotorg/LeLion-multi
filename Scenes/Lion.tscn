@@ -132,7 +132,7 @@ libraries = {
 position = Vector2(68, 66)
 shape = SubResource("CircleShape2D_3r2l0")
 
-[node name="VomiParticlesContainer" type="Node2D" parent="."]
+[node name="VomiParticlesContainer" type="Node2D" parent="Visuel"]
 z_index = 2
 position = Vector2(89, 103)
 
@@ -163,7 +163,7 @@ replication_config = SubResource("SceneReplicationConfig_synchro")
 
 [node name="Gerbe" type="Node2D" parent="." node_paths=PackedStringArray("vomi_container", "traceuse", "traceuse_shape", "bouche")]
 script = ExtResource("12_gerbe")
-vomi_container = NodePath("../VomiParticlesContainer")
+vomi_container = NodePath("../Visuel/VomiParticlesContainer")
 traceuse = NodePath("../GerbeTraceuse")
 traceuse_shape = NodePath("../GerbeTraceuse/CollisionShape2D")
 bouche = NodePath("../Bouche")

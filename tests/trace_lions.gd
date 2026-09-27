@@ -74,7 +74,7 @@ func _etat(l: Node) -> Array:
 	var sprite: Sprite2D = l.get_node("Visuel/Sprite2D")
 	var etoiles: Node2D = l.get_node("Visuel/Etoiles")
 	var traceuse: Area2D = l.get_node("GerbeTraceuse")
-	var conteneur: Node2D = l.get_node("VomiParticlesContainer")
+	var conteneur: Node2D = l.get_node("Visuel/VomiParticlesContainer")
 	var etiquette: Label = l.get_node("Visuel/Pseudo")
 	var j: Joueur = l.joueur
 	var etat: Array = [l.position, l.velocity, l.direction_du_lion, l.est_en_train_de_vomir, l.vomi_de_l_hote,
