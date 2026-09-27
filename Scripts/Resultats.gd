@@ -155,11 +155,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 ## Un appui sur `action` (jamais tenue depuis l'ouverture). Pendant la confirmation de départ de
-## l'hôte, seuls comptent : un second Échap, vomir ou valider (Oui), ou toute autre touche (Non,
+## l'hôte, seuls comptent : un second Échap, vomir ou la validation (Oui), ou toute autre touche (Non,
 ## annule sans rien faire d'autre).
 func _agir(action: StringName) -> void:
 	if confirmation_quitter:
-		if action == &"ui_cancel" or action == &"vomir" or action == &"ui_accept":
+		if action in [&"ui_cancel", &"vomir", &"demarrer", &"ui_accept"]:
 			choisir(&"quitter")
 		else:
 			annuler_confirmation_quitter()
@@ -190,6 +190,8 @@ func choisir(voulu: StringName) -> void:
 	if bilan == null or not choix.is_empty() or not possible(voulu):
 		return
 	if voulu == &"quitter" and hote and not confirmation_quitter:
+		if not animation_finie:
+			terminer_animation()  # la question ne s'ouvre pas sur des barres encore en train de monter
 		confirmation_quitter = true
 		rafraichir()
 		return

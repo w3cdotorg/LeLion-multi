@@ -930,12 +930,13 @@ func _tester_resultats() -> void:
 	await _appuyer(&"ui_cancel", true)
 	await _appuyer(&"ui_cancel", false)
 	_check(r2.confirmation_quitter, "(pré-condition) la confirmation redemandée")
-	var avant_titre := revanche.get_instance_id()  # capturé avant : le second Échap va libérer la scène
-	await _appuyer(&"ui_cancel", true)
+	# la touche de validation (Entrée, Start) confirme comme un second Échap (celui-ci : le scénario 13)
+	var avant_titre := revanche.get_instance_id()  # capturé avant : la confirmation va libérer la scène
+	await _appuyer(&"demarrer", true)
 	var apres_confirmation: Node = await _attendre_nouvelle_scene(avant_titre)
-	await _appuyer(&"ui_cancel", false)
+	await _appuyer(&"demarrer", false)
 	_check(apres_confirmation != null and apres_confirmation.scene_file_path == "res://Scenes/Titre.tscn",
-		"un second Échap valide la confirmation : retour au titre")
+		"la touche de validation (Entrée, Start) confirme : retour au titre")
 	apres_confirmation.free()
 	await _frames(1)
 	GS.niveau_courant = 0
