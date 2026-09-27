@@ -477,6 +477,7 @@ func _tester_pseudos_et_chocs() -> void:
 	GS.configurer_bataille(NB_LIONS)  # les joueurs existent avant la scène : leurs pseudos aussi
 	for i in range(NB_LIONS):
 		GS.joueurs[i].pseudo = "" if i == 3 else "Joueur %d" % (i + 1)
+	GS.joueurs[2].pseudo = "WWWWWWWWWWWW"  # 12 caractères larges (Reseau.PSEUDO_MAX), plus large que son lion
 	var main := await _charger_bataille(0)
 	var lions: Array = main.lions
 	await _attendre_depart()
@@ -516,6 +517,28 @@ func _tester_pseudos_et_chocs() -> void:
 		l1.commandes.direction_voulue = Vector2.ZERO
 		await _frames(30)
 	_check(j1.chocs == 2 and j2.chocs == 2, "deux chocs à une demi-seconde de jeu d'écart comptent tous les deux (%d, %d)" % [j1.chocs, j2.chocs])
+
+	# Phase 17 : deux lions côte à côte (sans se toucher) contre chaque bord, dont un pseudo large : leurs
+	# pseudos s'écartent sans se recouvrir, dans l'écran
+	for bord in ["gauche", "droit"]:
+		for l: CharacterBody2D in [l1, l2]:
+			l.deplacement.recul = Vector2.ZERO
+			l.deplacement.vitesse = Vector2.ZERO
+		var x1 := 0.0 if bord == "gauche" else TAILLE_BATAILLE.x - 236.0
+		l1.global_position = Vector2(x1, 400)
+		l2.global_position = Vector2(x1 + 100.0, 400)
+		await _frames(2)
+		var a := _texte_pseudo(l1)
+		var b := _texte_pseudo(l2)
+		_check(a.position.x >= -0.5 and b.end.x <= TAILLE_BATAILLE.x + 0.5 and a.end.x + 5.5 <= b.position.x,
+			"bord %s : deux pseudos voisins s'écartent sans se recouvrir, dans l'écran (%.0f à %.0f, puis %.0f à %.0f)"
+				% [bord, a.position.x, a.end.x, b.position.x, b.end.x])
+	# Le pseudo suit le lion affiché (le décalage de la prédiction d'un client), pas son seul corps
+	var avant: Rect2 = l1.rect_pseudo()
+	l1.visuel.position = Vector2(40, -10)
+	var decale: Rect2 = l1.rect_pseudo()
+	l1.visuel.position = Vector2.ZERO
+	_check(decale.position - avant.position == Vector2(40, -10), "le pseudo suit la position affichée du lion (corps et décalage d'affichage)")
 	await _liberer(main)
 	for j: Joueur in GS.joueurs:
 		j.pseudo = ""
@@ -539,6 +562,15 @@ func _tester_retour_au_titre() -> void:
 	_check(root.get_visible_rect().size == Vector2(2000, 648), "l'écran titre est en 2000×648")
 	titre.free()
 	scores.effacer()
+
+
+## Le texte du pseudo d'un lion tel qu'il s'affiche, en pixels de l'écran : l'étiquette est plus large
+## que son texte, centré.
+func _texte_pseudo(lion: Node2D) -> Rect2:
+	var etiquette: Label = lion.etiquette_pseudo
+	var boite := etiquette.get_global_rect()
+	var texte := etiquette.get_minimum_size().x
+	return Rect2(boite.position.x + (boite.size.x - texte) / 2.0, boite.position.y, texte, boite.size.y)
 
 
 ## Avec le rendu et `--captures=<dossier>` seulement : en headless, le viewport n'a pas d'image.

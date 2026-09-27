@@ -44,6 +44,7 @@ func _run() -> void:
 	_tester_etat_lion()
 	_tester_interpolation_lion()
 	_tester_chrono_bataille()
+	_tester_placement_pseudos()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -2066,6 +2067,34 @@ func _tester_chrono_bataille() -> void:
 	_check(ReglesBataille.parts([1, 1, 1]) == [34, 33, 33] and ReglesBataille.parts([2, 1]) == [67, 33]
 		and ReglesBataille.parts([5, 9, 5, 0]) == [26, 48, 26, 0] and parts_a_4 == [25, 20, 24, 31],
 		"les parts font 100 à elles toutes, le reste de l'arrondi aux plus grands restes, jamais à un joueur sans cellule (%s)" % [parts_a_4])
+
+
+## Phase 17 : les étiquettes de pseudo de lions qui se touchent s'écartent à l'horizontale, sans
+## sortir de l'écran (2000 px).
+func _tester_placement_pseudos() -> void:
+	print("-- Étiquettes de pseudo (phase 17)")
+	var voisins: Array[Rect2] = [Rect2(100, 50, 120, 30), Rect2(180, 50, 120, 30)]
+	var xs := PlacementPseudos.repartir(voisins, 2000.0)
+	_check(is_equal_approx(xs[0], 77.0) and is_equal_approx(xs[1], 203.0),
+		"deux pseudos à la même hauteur qui se recouvrent s'écartent chacun de la moitié de ce qui manque (%s)" % [xs])
+	var etages: Array[Rect2] = [Rect2(100, 50, 120, 30), Rect2(150, 90, 120, 30)]
+	_check(PlacementPseudos.repartir(etages, 2000.0) == [100.0, 150.0], "deux pseudos l'un au-dessus de l'autre restent où ils sont")
+	var bords: Array[Rect2] = [Rect2(-40, 50, 120, 30), Rect2(1950, 400, 120, 30)]
+	_check(PlacementPseudos.repartir(bords, 2000.0) == [0.0, 1880.0], "un pseudo qui déborde d'un bord y est ramené")
+	var au_bord: Array[Rect2] = [Rect2(-10, 50, 120, 30), Rect2(60, 50, 120, 30)]
+	xs = PlacementPseudos.repartir(au_bord, 2000.0)
+	_check(xs[0] == 0.0 and is_equal_approx(xs[1], 126.0), "contre le bord, l'autre pseudo prend tout l'écart (%s)" % [xs])
+	var tas: Array[Rect2] = []
+	for i in range(6):
+		tas.append(Rect2(1700 + 3 * i, 50, 260, 30))  # six pseudos de 12 caractères larges, sur le même lion
+	xs = PlacementPseudos.repartir(tas, 2000.0)
+	var separes := true
+	for i in range(6):
+		separes = separes and xs[i] >= 0.0 and xs[i] + 260.0 <= 2000.0
+		for j in range(6):
+			if i != j and xs[i] < xs[j]:
+				separes = separes and xs[i] + 260.0 + PlacementPseudos.ECART <= xs[j] + 0.01
+	_check(separes, "six pseudos larges en tas contre un bord s'étalent sans se recouvrir, dans l'écran (%s)" % [xs])
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

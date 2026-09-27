@@ -285,6 +285,8 @@ func _position_de_depart(i: int, nb: int) -> Vector2:
 
 
 func _process(delta: float) -> void:
+	if lions.size() > 1:
+		_placer_pseudos()
 	if GameState.demo and GameState.partie_en_cours:
 		_demo_restant -= delta
 		if _demo_restant <= 0.0:
@@ -297,6 +299,20 @@ func _process(delta: float) -> void:
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * intensite
 	if _tremblement_restant == 0.0:
 		camera.offset = Vector2.ZERO
+
+
+## Les pseudos des lions d'une bataille, écartés s'ils se recouvrent et gardés dans l'écran
+## (`PlacementPseudos`), là où chaque lion est affiché.
+func _placer_pseudos() -> void:
+	var visibles: Array[Lion] = []
+	var textes: Array[Rect2] = []
+	for l in lions:
+		if l.etiquette_pseudo.visible:
+			visibles.append(l)
+			textes.append(l.rect_pseudo())
+	var xs := PlacementPseudos.repartir(textes, get_viewport_rect().size.x)
+	for i in range(visibles.size()):
+		visibles[i].placer_pseudo(xs[i])
 
 
 ## La musique gagne une couche par tiers du chemin vers la victoire.
