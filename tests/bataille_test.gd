@@ -66,6 +66,7 @@ func _run() -> void:
 	await _tester_pseudos_et_chocs()
 	await _tester_reglage_territoire()
 	await _tester_manche()
+	await _tester_hud()
 	await _tester_retour_au_titre()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
@@ -368,7 +369,13 @@ func _tester_manche() -> void:
 		var maintenant := Time.get_ticks_usec()
 		pire_frame_ms = maxf(pire_frame_ms, (maintenant - instant) / 1000.0)
 		instant = maintenant
-	GS.terminer_partie(true)
+	for f in range(5):  # les 90 s de la boucle, comptées d'une image physique : le chrono finit à une image près
+		if not GS.partie_en_cours:
+			break
+		await physics_frame
+	_check(not GS.partie_en_cours and GS.temps_ecoule >= ReglesBataille.DUREE_MANCHE and GS.temps_ecoule < ReglesBataille.DUREE_MANCHE + 0.05,
+		"le chrono termine la manche à %d s (%.3f s de jeu)" % [int(ReglesBataille.DUREE_MANCHE), GS.temps_ecoule])
+	GS.terminer_partie(true)  # sans effet : la manche est déjà finie
 	var scores: Array = range(NB_LIONS).map(func(i: int) -> int: return t.cellules_de(i))
 	var comptees: int = scores.reduce(func(somme: int, n: int) -> int: return somme + n, 0)
 	var personne := t.cellules_de(Territoire.PERSONNE)
@@ -542,6 +549,121 @@ func _tester_pseudos_et_chocs() -> void:
 	await _liberer(main)
 	for j: Joueur in GS.joueurs:
 		j.pseudo = ""
+
+
+## Phase 17 : le HUD de la bataille, à la place de celui du solo (vignettes, scores lus sur le
+## territoire, crans, gerbe XXL, étourdissement, départ), le chrono qui rougit et tique, la fin au
+## chrono et sa sortie (Échap : le titre).
+func _tester_hud() -> void:
+	print("-- HUD de la bataille")
+	var main := await _charger_bataille(0)
+	var hud: CanvasLayer = main.hud_bataille
+	var ville: Node2D = main.get_node("Ville")
+	var t: Territoire = ville.territoire
+	_check(hud != null and main.get_node_or_null("HUD") == null and hud.vignettes.size() == NB_LIONS
+		and hud.gauche.get_child_count() == NB_LIONS / 2 and hud.droite.get_child_count() == NB_LIONS / 2,
+		"en bataille, le HUD de la bataille remplace celui du solo : une vignette par joueur, moitié de chaque côté du chrono")
+	_check(range(NB_LIONS).all(func(i: int) -> bool: return hud.vignettes[i].pseudo.text == "Joueur %d" % (i + 1)),
+		"sans pseudo (bataille locale), chaque vignette porte « Joueur n »")
+	var pseudo: Label = hud.vignettes[0].pseudo
+	var largeur_w: float = pseudo.get_theme_font("font").get_string_size("WWWWWWWWWWWW", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		pseudo.get_theme_font_size("font_size")).x + 2 * pseudo.get_theme_constant("outline_size")
+	var rangee_a_6: float = 6 * hud.vignettes[0].cadre.size.x + hud.chrono.size.x + 7 * hud.get_node("Haut").get_theme_constant("separation") + 24.0
+	_check(largeur_w <= pseudo.size.x and rangee_a_6 <= TAILLE_BATAILLE.x,
+		"12 caractères larges (« WWWWWWWWWWWW », %d px) tiennent dans une vignette (%d px) ; six vignettes et le chrono dans l'écran (%d px)"
+			% [largeur_w, pseudo.size.x, rangee_a_6])
+	_check(hud.vignettes[0].badge.text == "TOI" and hud.vignettes[0].style.border_width_top == 6
+		and range(1, NB_LIONS).all(func(i: int) -> bool: return hud.vignettes[i].badge.text == "" and hud.vignettes[i].style.border_width_top == 3),
+		"la vignette du joueur de ce poste est mise en évidence : « TOI », bordure épaisse")
+	_check(hud.chrono.text == "1:30" and not hud.vignettes.any(func(v: Dictionary) -> bool: return v.couronne.visible or v.rang.text != ""),
+		"au départ : 1:30, personne n'est classé ni couronné")
+	await _attendre_depart()
+	var bas: float = ville.position.y + ville.tex_size.y / 2.0 - 30.0
+	for k in range(3):
+		ville.peindre(Vector2(500, bas), 30, GS.joueurs[1])
+	await _frames(1)
+	var n1 := t.cellules_de(1)
+	_check(n1 > 0 and hud.vignettes[1].part.text == "100 %" and hud.vignettes[0].part.text == "0 %" and hud.vignettes[1].rang.text == "1er"
+		and hud.vignettes[1].couronne.visible and not hud.vignettes[0].couronne.visible and hud.vignettes[0].rang.text == "",
+		"le HUD lit les scores sur le territoire de la ville : le joueur 2, seul peintre, a 100 %% des cellules peintes (%d), il mène, couronné" % n1)
+	_check(hud.vignettes[1].couronne.get_parent() == hud.vignettes[1].lion and hud.vignettes[1].couronne.rotation > 0.2,
+		"la couronne est posée de travers sur la tête du lion de la vignette")
+	for k in range(3):
+		ville.peindre(Vector2(1500, bas), 20, GS.joueurs[3])  # moins de cellules : le joueur 2 mène encore
+	await _frames(1)
+	var affichees: Array = hud.vignettes.map(func(v: Dictionary) -> int: return int(v.part.text.trim_suffix(" %")))
+	var cellules: Array[int] = []
+	for i in range(NB_LIONS):
+		cellules.append(t.cellules_de(i))
+	_check(affichees == ReglesBataille.parts(cellules) and affichees.reduce(func(s: int, n: int) -> int: return s + n, 0) == 100,
+		"deux peintres : leurs parts des cellules peintes font 100 %% (%s pour %s cellules)" % [affichees, cellules])
+	_check(hud.vignettes[1].couronne.visible and not hud.vignettes[3].couronne.visible and hud.vignettes[3].rang.text == "2e",
+		"le rang et la couronne viennent des cellules : le joueur 2 mène, le joueur 4 est deuxième")
+	GS.regles.pastille_ramassee(GS.joueurs[1], 0)
+	GS.regles.pastille_ramassee(GS.joueurs[1], 0)
+	GS.regles.etoile_ramassee(GS.joueurs[2])
+	GS.regles.lion_touche_par_ennemi(GS.joueurs[3], Vector2.INF)
+	await _frames(1)
+	var pleins: Array = hud.vignettes[1].points.filter(func(p: Panel) -> bool: return p.modulate == Color.WHITE)
+	_check(pleins.size() == 3, "trois crans : trois points pleins sur sept")
+	_check(hud.vignettes[2].etat.text == "★ XXL 8 s" and hud.vignettes[3].etat.text == "★ ÉTOURDI",
+		"la gerbe XXL et ses secondes, l'étourdissement (%s, %s)" % [hud.vignettes[2].etat.text, hud.vignettes[3].etat.text])
+	# Comme sur un client : `bonus_restant` y reste la durée reçue (seule la fin arrive de l'hôte)
+	for f in range(61):
+		GS.joueurs[2].bonus_restant = 8.0
+		await physics_frame
+	_check(hud.vignettes[2].etat.text == "★ XXL 7 s", "le HUD décompte lui-même les secondes de la gerbe XXL (%s)" % hud.vignettes[2].etat.text)
+	GS.joueurs[2].recevoir_fin_bonus()
+	hud.marquer_parti(3)
+	await _frames(1)
+	_check(hud.vignettes[2].etat.text == "", "la fin de la gerbe XXL efface ses secondes")
+	_check(hud.vignettes[3].cadre.modulate.a < 0.5 and hud.vignettes[3].badge.text == "PARTI", "un joueur parti reste au classement, en grisé")
+	_check(hud.texte_gagnant(PackedStringArray()) == "Personne n'a peint la ville." and hud.texte_gagnant(PackedStringArray(["Zoé"])) == "Zoé gagne la manche !"
+		and hud.texte_gagnant(PackedStringArray(["Anna", "Bruno"])) == "Égalité : Anna, Bruno !",
+		"le panneau de fin nomme le gagnant, les ex æquo, ou personne")
+	# Les dix dernières secondes : le chrono rougit et tique, jusqu'à la fin au chrono
+	GS.temps_ecoule = ReglesBataille.DUREE_MANCHE - 10.5
+	await _frames(1)
+	var tics_avant: int = hud.tics_joues
+	_check(hud.chrono.text == "0:11" and hud.chrono.modulate == Color.WHITE and root.get_node("Audio").intensite == 2,
+		"à 11 s de la fin, le chrono est encore blanc ; la musique a toutes ses couches depuis 60 s")
+	for f in range(900):
+		if not GS.partie_en_cours:
+			break
+		await physics_frame
+	_check(not GS.partie_en_cours and paused and GS.temps_ecoule < ReglesBataille.DUREE_MANCHE + 0.05,
+		"le chrono à zéro termine la manche et fige tout (%.3f s)" % GS.temps_ecoule)
+	_check(hud.tics_joues - tics_avant == ReglesBataille.SECONDES_TIC and hud.chrono.text == "0:00" and hud.chrono.modulate != Color.WHITE,
+		"dix tics dans les dix dernières secondes (%d), le chrono rouge à 0:00" % (hud.tics_joues - tics_avant))
+	_check(hud.fin.visible and hud.gagnant.text == "Joueur 2 gagne la manche !" and not main.menu_pause.visible
+		and main.menu_pause.process_mode == Node.PROCESS_MODE_DISABLED,
+		"le panneau de fin nomme le gagnant (%s) ; le menu local se tait" % hud.gagnant.text)
+	# Espace (vomir, valider) encore tenu au gong ne quitte pas la partie : le bouton ne prend pas le focus
+	for action: StringName in [&"vomir", &"ui_accept"]:
+		var appui := InputEventAction.new()
+		appui.action = action
+		appui.pressed = true
+		root.push_input(appui)
+	await _frames(3)
+	_check(current_scene == main and hud.fin.visible and root.gui_get_focus_owner() == null,
+		"Espace tenu au gong (vomir, valider) ne quitte pas la partie : rien n'a le focus")
+	var scores: Node = root.get_node("Scores")
+	scores.chemin = "user://scores_test_bataille.cfg"  # l'écran titre enregistre ses préférences
+	var echap := InputEventAction.new()
+	echap.action = &"pause"
+	echap.pressed = true
+	root.push_input(echap)
+	for f in range(300):
+		if current_scene != null and current_scene.scene_file_path == "res://Scenes/Titre.tscn" and current_scene.is_node_ready():
+			break
+		await process_frame
+	_check(current_scene != null and current_scene.scene_file_path == "res://Scenes/Titre.tscn" and not paused and GS.regles is ReglesSolo,
+		"Échap, la manche finie : retour au titre (le solo), en attendant les résultats de la phase 18")
+	current_scene.free()
+	await _frames(1)
+	scores.effacer()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
+	GS.configurer_bataille(NB_LIONS)  # la section suivante part d'une bataille
 
 
 func _tester_retour_au_titre() -> void:

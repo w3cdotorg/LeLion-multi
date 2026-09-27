@@ -20,6 +20,7 @@ extends Node2D
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const SCRIPT_PILOTE := preload("res://Scripts/Pilote.gd")
 const SCENE_LION := preload("res://Scenes/Lion.tscn")
+const SCENE_HUD_BATAILLE := preload("res://Scenes/HUDBataille.tscn")
 ## Temps pendant lequel « L'hôte a quitté la partie » reste affiché avant le retour au titre.
 const DELAI_HOTE_PERDU := 2.5
 
@@ -38,6 +39,8 @@ var lion: Lion
 var lions: Array[Lion] = []
 ## Vrai pour une bataille en réseau (fixé en entrant dans l'arbre).
 var en_reseau := false
+## Le HUD d'une bataille (phase 17), à la place de celui du solo ; null en solo.
+var hud_bataille: CanvasLayer
 
 var _tremblement_restant := 0.0
 var _demo_restant := 0.0
@@ -67,6 +70,8 @@ func _ready() -> void:
 	ville.charger_skyline(load(GameState.niveau().texture))
 	_placer_ville()
 	_placer_ciel_et_camera()
+	if GameState.regles.compte_le_territoire():
+		_installer_hud_bataille()
 	if en_reseau:
 		_preparer_manche_en_reseau()
 		return
@@ -75,6 +80,17 @@ func _ready() -> void:
 	$Spawner.demarrer()
 	if GameState.demo:
 		_installer_demo()
+
+
+## Bataille (locale ou en réseau) : le HUD de la bataille remplace celui du solo (cœurs, arc-en-ciel,
+## chrono qui monte), une fois la ville chargée (son territoire tient les scores).
+func _installer_hud_bataille() -> void:
+	var hud_solo: Node = $HUD
+	remove_child(hud_solo)
+	hud_solo.free()
+	hud_bataille = SCENE_HUD_BATAILLE.instantiate()
+	hud_bataille.ville = ville
+	add_child(hud_bataille)
 
 
 ## En réseau : le lion de la scène (celui du solo) s'en va avant tout tick, les lions viendront
@@ -287,6 +303,8 @@ func _position_de_depart(i: int, nb: int) -> Vector2:
 func _process(delta: float) -> void:
 	if lions.size() > 1:
 		_placer_pseudos()
+	if hud_bataille != null:
+		Audio.definir_intensite(GameState.regles.intensite_musique())  # le temps de la manche
 	if GameState.demo and GameState.partie_en_cours:
 		_demo_restant -= delta
 		if _demo_restant <= 0.0:
@@ -315,9 +333,10 @@ func _placer_pseudos() -> void:
 		visibles[i].placer_pseudo(xs[i])
 
 
-## La musique gagne une couche par tiers du chemin vers la victoire.
-func _on_progression_changee(ratio: float) -> void:
-	Audio.definir_intensite(int(ratio / GameState.seuil_victoire() * 3.0))
+## La musique gagne une couche par tiers de l'avancement : en solo, du chemin vers la victoire ; en
+## bataille, du temps de la manche (aussi suivi à chaque image, `_process`).
+func _on_progression_changee(_ratio: float) -> void:
+	Audio.definir_intensite(GameState.regles.intensite_musique())
 
 
 func trembler() -> void:
@@ -337,8 +356,11 @@ func _on_partie_terminee(victoire: bool) -> void:
 		get_tree().create_timer(2.5, true).timeout.connect(quitter_demo)
 		return
 	if GameState.regles.compte_le_territoire():
-		# Bataille : tout se fige, scores compris. Le bilan du solo ne parle que du joueur local ;
-		# les résultats de la bataille, lus sur le territoire, viendront en phase 18.
+		# Bataille : tout se fige, scores compris ; le HUD de la bataille montre la fin et sa sortie
+		# (Échap : retour au titre) jusqu'à l'écran Résultats de la phase 18. Le menu local se ferme et
+		# se tait : Échap est à la sortie.
+		menu_pause.hide()
+		menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
 		get_tree().paused = true
 		return
 	if not victoire:
