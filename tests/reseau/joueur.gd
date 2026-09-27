@@ -225,6 +225,8 @@ func _pause(secondes: float) -> void:
 
 
 func _run() -> void:
+	# Textes attendus en français, quelle que soit la langue du système (la CI tourne en anglais).
+	TranslationServer.set_locale("fr")
 	reseau = root.get_node("Reseau")
 	decouverte = root.get_node("Decouverte")
 	reseau.pseudo = _option("pseudo", "Poste")
