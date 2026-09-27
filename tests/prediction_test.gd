@@ -6,8 +6,9 @@ extends SceneTree
 ## les commandes reçues) et le client (C0, réplique interpolée de H0 ; C1, son lion, prédit, joué au
 ## clavier comme un joueur). Entre eux, des lignes à retard semées (`Ligne`), au tick près et
 ## reproductibles : les états de chaque lion de l'hôte (non fiables), les paquets de commandes du
-## client (non fiables et ordonnés : un paquet plus ancien que le dernier livré est jeté, comme
-## `unreliable_ordered`), les réactions de l'hôte (fiables : retardées, renvoyées après une perte,
+## client (non fiables et non ordonnés, comme `unreliable` : un paquet plus ancien peut arriver après
+## un plus récent sans être jeté, l'hôte comble les trous par numéro, pas par ordre d'arrivée,
+## scénario 12), les réactions de l'hôte (fiables : retardées, renvoyées après une perte,
 ## jamais perdues ni mélangées). Latence (aller-retour), gigue (étendue de chaque aller) et pertes :
 ## celles du simulateur du test réseau (`tests/reseau/relais.gd`).
 ## Mesure l'erreur de prédiction (la position de l'hôte après chaque commande accusée, comparée à
@@ -170,7 +171,10 @@ func _preparer(depart0: Vector2, depart1: Vector2, latence: float, gigue: float,
 	c1 = _lion(_vue_client, _joueurs_client[1], depart1, true)
 	_check(c1 != null and c1.get_node_or_null("Prediction") != null, "(pré-condition) le lion du client est prédit (PredictionLocale)")
 	_etats = [Ligne.new(graine, latence, gigue, pertes, false, false), Ligne.new(graine + 1, latence, gigue, pertes, false, false)]
-	_commandes = Ligne.new(graine + 2, latence, gigue, pertes, false, true)
+	# Non ordonnée (M3, revue finale phase 16) : le vrai canal (`unreliable`) ne jette pas un paquet
+	# plus ancien arrivé après un plus récent, l'hôte comble les trous par numéro (`Commandes.recevoir`,
+	# c838e01) ; le banc doit donc lui aussi laisser passer les paquets réordonnés par la gigue.
+	_commandes = Ligne.new(graine + 2, latence, gigue, pertes, false, false)
 	_reactions = Ligne.new(graine + 3, latence, gigue, pertes, true, false)
 	for j: Joueur in GS.joueurs:
 		j.etourdi.connect(func(origine: Vector2, barbouillage: Color) -> void:
@@ -296,12 +300,15 @@ func _verifier_convergence(titre: String, arret: int, ticks: int) -> void:
 
 
 ## Aucune commande appliquée deux fois par l'hôte : chaque numéro jusqu'à la dernière appliquée l'est
-## une fois ou est sauté, et les sautées restent rares (redondance).
+## une fois ou est sauté, et les sautées restent rares (redondance). `rejouees` (M1, revue finale de la
+## phase 16) fait vraiment échouer ce test si une commande était rejouée : l'égalité seule peut rester
+## vraie même dans ce cas (`sautees` peut descendre au lieu de monter).
 func _verifier_commandes(titre: String, sautees_max: int) -> void:
 	var c: Commandes = h1.commandes
-	_check(c.appliquees + c.sautees == c.numero_applique and c.sautees <= sautees_max and c.numero_applique > 0,
-		"(%s) aucune commande appliquée deux fois : %d appliquées, %d sautées, jusqu'à la %d (file au plus %d)"
-		% [titre, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
+	_check(c.rejouees == 0 and c.sautees >= 0 and c.appliquees + c.sautees == c.numero_applique
+		and c.sautees <= sautees_max and c.numero_applique > 0,
+		"(%s) aucune commande appliquée deux fois (%d rejouée(s)) : %d appliquées, %d sautées, jusqu'à la %d (file au plus %d)"
+		% [titre, c.rejouees, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
 
 
 # --- Scénarios ---------------------------------------------------------------------------------------

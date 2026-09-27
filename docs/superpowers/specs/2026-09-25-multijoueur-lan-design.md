@@ -72,8 +72,9 @@ de jeu.
 ### 3.2 Flux d'une frame (bataille)
 
 1. Chaque client applique ses commandes à son lion **immédiatement** (prédiction), puis les envoie
-   à l'hôte, numérotées, avec les 3 précédentes, par RPC `unreliable_ordered` à chaque frame
-   physique. L'hôte les écrit dans les commandes manuelles du lion correspondant.
+   à l'hôte, numérotées, avec les 3 précédentes, par RPC `unreliable` (non ordonnée : un Wi-Fi qui
+   réordonne une rafale de rattrapage ne doit pas faire sauter à tort des numéros manquants) à chaque
+   frame physique. L'hôte les écrit dans les commandes manuelles du lion correspondant.
 2. L'hôte simule tous les lions (`move_and_slide`, collisions entre lions, ennemis, pastilles).
 3. Les traceuses de l'hôte détectent la ville et les autres lions. Les contacts remontent aux
    `Regles`.

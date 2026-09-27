@@ -40,6 +40,7 @@ func _run() -> void:
 	_tester_reseau_manche()
 	_tester_deplacement_lion()
 	_tester_commandes_reseau()
+	_tester_commandes_dette()
 	_tester_etat_lion()
 	_tester_interpolation_lion()
 	print("== %d échec(s) ==" % _echecs)
@@ -1793,6 +1794,9 @@ func _tester_commandes_reseau() -> void:
 	c.appliquer_suivante()
 	_check(c.numero_applique == 4 and c.direction() == Vector2.UP and c.appliquees == 4,
 		"file vide (commande en retard) : la dernière appliquée tient encore un tick, sans être comptée deux fois")
+	# La tenue ci-dessus a laissé une dette (I1) : remise à zéro pour garder ce trou-de-numéros isolé
+	# de la dette, testée séparément plus bas (`_tester_commandes_dette`).
+	c.remettre_au_repos()
 	_recevoir_paquet(c, 10, [[Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2(3, 4), true]])
 	for i in range(4):
 		c.appliquer_suivante()
@@ -1840,6 +1844,59 @@ func _tester_commandes_reseau() -> void:
 	_check(c2.en_attente() == 0 and c2.direction() == Vector2.ZERO and not c2.vomir()
 		and not c2.recevoir(c2.numero_applique, Vector2.RIGHT, true) and c2.recevoir(c2.numero_applique + 1, Vector2.RIGHT, true) and c2.en_attente() == 1,
 		"client muet : repos, file vidée ; seul un numéro déjà appliqué reste refusé, un numéro seulement vidé par le repos redevient acceptable")
+
+
+## I1 (revue finale de la phase 16, `Commandes.appliquer_suivante`) : une file vide (l'hôte tient la
+## dernière commande) laisse une dette de tenues ; le rattrapage qui suit doit la rembourser en
+## sautant une commande de plus par tick tant que la file dépasse SEUIL_RATTRAPAGE (un vrai accroc, pas
+## la gigue courante), pour que le numéro appliqué ne reste pas durablement en retard sur le temps
+## réel, et sans qu'aucune commande ne soit appliquée deux fois (direction tenue constante : aucun
+## mouvement en trop, spec §10).
+func _tester_commandes_dette() -> void:
+	print("-- Dette de tenues et rattrapage (I1, revue finale phase 16)")
+	var sans_accroc := Commandes.manuelles()  # référence : jamais de tenue, reçoit à l'heure
+	var c := Commandes.manuelles()  # l'hôte testé : subit l'accroc réseau
+	var appliquer := func(cmd: Commandes, numero: int) -> void:
+		cmd.recevoir(numero, Vector2.RIGHT, false)
+		cmd.appliquer_suivante()
+
+	# Dix ticks sans accroc, des deux côtés : la référence et l'hôte testé restent synchronisés.
+	for n in range(1, 11):
+		appliquer.call(sans_accroc, n)
+		appliquer.call(c, n)
+	_check(c.numero_applique == 10 and c.dette() == 0 and c.en_attente() == 0 and c.rejouees == 0,
+		"(dette) en régime permanent, sans tenue, la file reste vide")
+
+	# Accroc réseau de 6 tenues (host hitch, revue finale) : la file de l'hôte testé reste vide (rien
+	# n'arrive), mais la dette grandit ; la référence continue de recevoir ses commandes à l'heure (le
+	# joueur, lui, n'a pas cessé de jouer).
+	for n in range(11, 17):
+		appliquer.call(sans_accroc, n)
+		c.appliquer_suivante()
+	_check(c.numero_applique == 10 and c.dette() == 6 and c.en_attente() == 0 and c.appliquees == 10,
+		"(dette) un accroc de 6 tenues : la dette grandit, sans rien appliquer deux fois ni en trop")
+
+	# Rattrapage : les 6 commandes en retard (11 à 16) arrivent d'un coup chez l'hôte testé, en même
+	# temps que celle de ce tick (17, elle, arrivée à l'heure) ; puis le réseau continue, une commande
+	# neuve par tick, sans plus aucune tenue.
+	for n in range(11, 17):
+		c.recevoir(n, Vector2.RIGHT, false)
+	appliquer.call(sans_accroc, 17)
+	c.recevoir(17, Vector2.RIGHT, false)
+	c.appliquer_suivante()
+	for n in range(18, 24):
+		appliquer.call(sans_accroc, n)
+		appliquer.call(c, n)
+	_check(sans_accroc.numero_applique == 23, "(pré-condition) sans accroc, 23 ticks appliquent 23 commandes")
+	_check(c.rejouees == 0 and c.appliquees + c.sautees == c.numero_applique,
+		"(dette) aucune commande appliquée deux fois pendant le rattrapage (%d appliquées, %d sautées, jusqu'à la %d)"
+			% [c.appliquees, c.sautees, c.numero_applique])
+	_check(sans_accroc.numero_applique - c.numero_applique < 23 - 10,
+		"(dette) le chemin appliqué se rapproche de celui sans accroc (%d contre %d), pas le plein retard de l'accroc (resterait à %d sans la dette)"
+			% [c.numero_applique, sans_accroc.numero_applique, 10])
+	_check(c.en_attente() <= Commandes.SEUIL_RATTRAPAGE,
+		"(dette) la file revient sous son seuil de rattrapage (%d au plus) dans les ticks qui suivent (%d en attente)" % [Commandes.SEUIL_RATTRAPAGE, c.en_attente()])
+	_check(c.direction() == Vector2.RIGHT and not c.vomir(), "(dette) la direction tenue constante reste correcte de bout en bout")
 
 
 func _recevoir_paquet(c: Commandes, dernier: int, commandes: Array) -> int:

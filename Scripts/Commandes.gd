@@ -9,6 +9,14 @@ extends RefCounted
 ## file (`recevoir`), dont le lion applique une commande par tick physique, dans l'ordre
 ## (`appliquer_suivante`) ; aucune n'est appliquée deux fois, et `numero_applique` (la dernière
 ## appliquée) part avec l'état du lion vers le client, qui y recale sa prédiction.
+## Fix wave (I1, revue finale de la phase 16) : une file vide (commande en retard) fait tenir la
+## dernière commande un tick de plus, sans rien consommer ; chaque tenue compte pour une dette
+## (plafonnée à FILE_MAX). Tant que la dette n'est pas remboursée et que la file dépasse
+## SEUIL_RATTRAPAGE (un vrai accroc réseau, pas la gigue courante, qui ne dépasse pas la redondance),
+## un tick de rattrapage saute en plus une commande en attente (comptée sautée), en plus d'en appliquer
+## une normalement, jusqu'à revenir à SEUIL_RATTRAPAGE : les tenues et les sauts se compensent, la file ne
+## reste plus durablement en retard après un accroc (au plus une commande appliquée par tick, jamais
+## deux fois).
 
 enum Source { LOCALES, MANUELLES }
 
@@ -19,6 +27,12 @@ const REDONDANCE := 3
 ## coup un retard de plusieurs images), les plus anciennes sont sautées, pour ne pas garder un retard
 ## que rien ne résorberait.
 const FILE_MAX := 8
+## Profondeur au-delà de laquelle la file dénonce un vrai accroc (I1), pas la gigue seule (mesuré :
+## 40 ms de gigue seule ne dépasse pas 3 ; un accroc hôte ou un rattrapage massif atteint 5 et plus).
+## En dessous, une dette en attente n'est pas remboursée (la gigue courante ne doit rien sauter de plus
+## que la redondance ne rattrape déjà) ; au-dessus, le rattrapage rembourse la dette une commande à la
+## fois jusqu'à revenir à cette profondeur.
+const SEUIL_RATTRAPAGE := 4
 ## Octets d'un paquet : numéro de la dernière commande (u32), nombre de commandes (u8), puis pour
 ## chacune, de la plus ancienne à la dernière, direction (deux f32) et vomir (u8).
 const TAILLE_ENTETE := 5
@@ -39,8 +53,20 @@ var numero_applique := 0
 var dernier_recu := 0
 var appliquees := 0
 var sautees := 0
+## Une commande dépilée dont le numéro n'est pas au-dessus de `numero_applique` (M1, ne devrait jamais
+## arriver : `recevoir` refuse déjà ce numéro ; gardé pour qu'une régression fasse échouer les tests,
+## pas seulement l'égalité `appliquees + sautees == numero_applique`, que ce cas peut quand même
+## respecter).
+var rejouees := 0
 ## La plus longue file vue (tests).
 var file_max_vue := 0
+## Dette de tenues (I1) : une file vide (au tick physique) en ajoute une, plafonnée à FILE_MAX ; un
+## rattrapage (`appliquer_suivante`, file au-delà de SEUIL_RATTRAPAGE) en rembourse une par tick, en
+## sautant une commande de plus que celle qu'il applique.
+var _dette := 0
+## Somme et nombre des profondeurs de file vues à chaque tick (I1, tests) : `profondeur_moyenne`.
+var _profondeur_totale := 0
+var _profondeur_echantillons := 0
 var _file: Array[Dictionary] = []
 
 
@@ -96,11 +122,32 @@ func recevoir(numero: int, direction_recue: Vector2, vomir_recu: bool) -> bool:
 
 
 ## Chez l'hôte, au début du tick physique du lion : la commande suivante de la file devient celle du
-## lion. File vide (commande en retard ou perdue) : la dernière appliquée tient encore un tick.
+## lion. File vide (commande en retard ou perdue) : la dernière appliquée tient encore un tick, compté
+## comme une dette (I1). Tant que cette dette n'est pas remboursée et que la file dépasse
+## SEUIL_RATTRAPAGE (un vrai accroc, pas la gigue courante), une commande de plus (la plus ancienne en
+## attente) est sautée avant celle qui s'applique ce tick, jusqu'à revenir sous ce seuil : les tenues
+## ne s'accumulent alors plus en un retard que rien ne résorberait (une seule commande appliquée par
+## tick, jamais deux fois).
 func appliquer_suivante() -> void:
+	_profondeur_totale += _file.size()
+	_profondeur_echantillons += 1
 	if _file.is_empty():
+		_dette = mini(_dette + 1, FILE_MAX)
 		return
+	if _dette > 0 and _file.size() > SEUIL_RATTRAPAGE:
+		var jetee: Dictionary = _file.pop_front()
+		if (jetee.numero as int) <= numero_applique:
+			rejouees += 1  # ne devrait jamais arriver : `recevoir` refuse déjà ce numéro
+		else:
+			sautees += (jetee.numero as int) - numero_applique
+			numero_applique = jetee.numero
+		_dette -= 1
+		if _file.is_empty():
+			return
 	var c: Dictionary = _file.pop_front()
+	if (c.numero as int) <= numero_applique:
+		rejouees += 1  # idem : gardé pour qu'une régression de `recevoir` fasse échouer les tests
+		return
 	sautees += c.numero - numero_applique - 1
 	numero_applique = c.numero
 	appliquees += 1
@@ -113,12 +160,25 @@ func en_attente() -> int:
 	return _file.size()
 
 
+## Dette de tenues encore à rembourser (I1, tests).
+func dette() -> int:
+	return _dette
+
+
+## Profondeur moyenne de la file vue à chaque tick physique (I1, tests) : la dette empêche qu'elle ne
+## reste durablement élevée après un accroc réseau.
+func profondeur_moyenne() -> float:
+	return float(_profondeur_totale) / _profondeur_echantillons if _profondeur_echantillons > 0 else 0.0
+
+
 ## Chez l'hôte, un client muet depuis trop longtemps (`Manche.SILENCE_COMMANDES`) : son lion revient
-## au repos et sa file se vide ; les numéros déjà reçus restent refusés.
+## au repos et sa file se vide ; les numéros déjà reçus restent refusés. La dette de tenues repart
+## aussi à zéro : rien à rembourser sur une file qui vient d'être vidée.
 func remettre_au_repos() -> void:
 	direction_voulue = Vector2.ZERO
 	vomir_voulu = false
 	_file.clear()
+	_dette = 0
 
 
 ## Le paquet d'un client : ses commandes `commandes` (`[direction: Vector2, vomir: bool]`, de la plus

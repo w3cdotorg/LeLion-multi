@@ -1129,9 +1129,19 @@ func _animer_latence_hote(main: Node, manche: Node, gs: Node) -> void:
 		if l == main.lion:
 			continue
 		var c: Commandes = l.commandes
-		print("COMMANDES %s appliquees=%d sautees=%d numero=%d file_max=%d" % [l.joueur.pseudo, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
-		_check(c.numero_applique > 600 and c.appliquees + c.sautees == c.numero_applique and c.sautees * 100 <= c.numero_applique,
-			"les commandes de %s : aucune appliquée deux fois, %d sautées sur %d (redondance)" % [l.joueur.pseudo, c.sautees, c.numero_applique])
+		print("COMMANDES %s appliquees=%d sautees=%d numero=%d file_max=%d profondeur_moyenne=%.2f" %
+			[l.joueur.pseudo, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue, c.profondeur_moyenne()])
+		# `rejouees` (M1, revue finale phase 16) fait vraiment échouer ce test si une commande était
+		# rejouée : l'égalité seule peut rester vraie même dans ce cas (`sautees` peut descendre au
+		# lieu de monter).
+		# I1 (revue finale phase 16) : un vrai accroc réseau (SEUIL_RATTRAPAGE) fait maintenant compter
+		# quelques commandes sautées là où l'ancien code avançait en silence (l'erreur de prédiction
+		# baissait sans que rien ne l'atteste) ; marge à 3 % (mesuré : redondance seule sous 1 %, un
+		# accroc bien réel encore sous 2 %).
+		_check(c.rejouees == 0 and c.sautees >= 0 and c.numero_applique > 600 and c.appliquees + c.sautees == c.numero_applique
+			and c.sautees * 33 <= c.numero_applique,
+			"les commandes de %s : aucune appliquée deux fois (%d rejouée(s)), %d sautées sur %d (redondance et accrocs)"
+				% [l.joueur.pseudo, c.rejouees, c.sautees, c.numero_applique])
 	_check(await _figer_au_repos(main, gs), "chaque lion au repos depuis %d ticks quand l'hôte fige la manche" % TICKS_REPOS_AVANT_GEL)
 	await _pause(1.0)
 	print("EMPREINTE %s" % _empreinte(main, manche, true))
