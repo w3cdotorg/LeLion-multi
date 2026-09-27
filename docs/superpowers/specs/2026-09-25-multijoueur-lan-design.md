@@ -59,16 +59,18 @@ de jeu.
 | `GameState` (autoload, allégé) | État de **partie** : niveau, difficulté, chrono, `pret`, `partie_en_cours`, arcade, démo, liste des `Joueur`. Signaux de partie. | `Joueur` |
 | `Commandes` (RefCounted) | Interface `direction() -> Vector2`, `vomir() -> bool`. Deux sources : `LOCALES` (actions InputMap de ce poste) et `MANUELLES` (valeurs écrites par un tiers : pilote de l'attract mode, tests, prédiction du lion local d'un client, et côté hôte les commandes reçues d'un client). Depuis la phase 16, le format des paquets de commandes (la dernière et les 3 précédentes, numérotées) et, chez l'hôte, la file des commandes d'un client : une appliquée par tick, dans l'ordre, jamais deux fois. | Input |
 | `PredictionLocale` (Node, phase 16) | Sur un client, enfant du lion local : lit les actions de ce poste une fois par tick, les numérote, fait avancer le lion tout de suite par `Lion.avancer`, se recale sur chaque état neuf de l'hôte en rejouant les commandes qu'il n'a pas encore appliquées, et lisse l'écart à l'affichage (voir 4.1). Absent chez l'hôte et en solo. | `Lion`, `Commandes` |
-| `EtatLion`, `InterpolationLion` (logique pure, phase 16) | L'état d'un lion au format réseau (instant de l'hôte, dernière commande appliquée, position, vitesse commandée, recul, orientation : 33 octets) ; l'affichage d'un lion distant, interpolé entre ses états avec 100 ms de retard. | rien |
+| `EtatLion`, `InterpolationLion` (logique pure, phase 16) | L'état d'un lion au format réseau (instant de l'hôte, dernière commande appliquée, position, vitesse commandée, recul, orientation : 33 octets) ; l'affichage d'un lion distant, interpolé entre ses états avec 100 ms de retard (plus aucun état : 3 ticks sur sa vitesse, puis à l'arrêt, sans revenir en arrière ; phase 18). | rien |
 | `Lion` (scène) | Déplacement, gerbe, traceuses, teinte, barbouillage. Lit un `Joueur` et une `Commandes`. Ne décide de rien : sur l'hôte, il signale aux `Regles` les lions que touche sa gerbe et ceux qu'il percute, comme les ennemis et les pastilles. Trois composants depuis la phase 15 bis : `DeplacementLion` (logique pure : vitesse commandée, recul ; le pas `Lion.avancer`, seul chemin du déplacement, que rejouera `PredictionLocale`), `PareChocs` (auto-tamponneuses) et `GerbeLion` (émetteurs, traceuse, zones de contact) ; le lion garde la présentation et la réplication. | `Joueur`, `Commandes` |
 | `Regles` (RefCounted, détenu par `GameState`) | Reçoit les événements (lion touché par ennemi, par vomi, pastille ramassée, choc, vol de cellules, fin de chrono, progression), chacun pour le `Joueur` concerné, et décide des effets. Donne aussi les couleurs de départ de chaque joueur (aucune en solo, ses trois nuances en bataille), dit si la partie se joue au territoire (en bataille seulement), donne l'écran du mode (2000×648 en solo, 2000×1125 en bataille), l'avancement de la partie (la ville peinte rapportée au seuil en solo, le temps de la manche en bataille : il accélère le peintre et les ennemis) et ce qui peut apparaître (pastille et sa couleur, étoile, cœurs), que lit le Spawner. `ReglesSolo` / `ReglesBataille`. Ses événements s'exécutent sur l'hôte uniquement ; l'écran et le territoire sont lus partout. | `GameState`, `Joueur` |
 | `Ville` (scène) | Masque de peinture (visuel), tampons en cache par rayon et jeu de couleurs, + deux comptages : couverture (solo, inchangé) et **grille de propriété** (bataille : un `Territoire`, créé quand les règles se jouent au territoire, tamponné par l'hôte seul, qui tient aussi les scores). Chaque tampon est peint pour un `Joueur`, dans ses couleurs. | `Joueur`, `Territoire`, `Regles` |
-| `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon (la table : arrivés seulement, couleur, Prêt ; tenue par l'hôte, diffusée à chaque changement), attribution des index et couleurs, arbitrage des demandes des clients, relais du niveau et du lancement de la manche, revérifié par l'hôte au moment où il démarre (RPC fiables sur l'autoload, présent sur chaque poste dès la connexion), signaux de connexion / déconnexion et du salon. Le salon (scène) porte le bouton « Démarrer la partie » de l'hôte. | `MultiplayerAPI` |
+| `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon (la table : arrivés seulement, couleur, Prêt ; tenue par l'hôte, diffusée à chaque changement avec le nombre de places seulement réservées), attribution des index et couleurs, arbitrage des demandes des clients, relais du niveau et du lancement de la manche, revérifié par l'hôte au moment où il démarre (RPC fiables sur l'autoload, présent sur chaque poste dès la connexion), relance d'une manche et retour au salon depuis l'écran Résultats (phase 18 : le lancement et le retour, table comprise, sur le canal fiable ordonné de la manche), exclusion annoncée à l'exclu, signaux de connexion / déconnexion et du salon. Le salon (scène) porte le bouton « Démarrer la partie » de l'hôte. | `MultiplayerAPI` |
 | `Decouverte` (autoload) | Balise UDP de l'hôte (émise tant que `Reseau` héberge, sans qu'on la relance), écoute et liste des parties entendues, validation d'une adresse IPv4 saisie. Ne nomme aucun autoload (phase 12). | `Reseau` (par son chemin) |
 | `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau, qui fait aussi apparaître ennemis et pastilles chez les clients), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène). | tout le reste |
-| `Manche` (nœud de la scène de jeu, phase 14) | En réseau : barrière de chargement (exclusion d'un absent), commandes des clients, tampons et territoire diffusés, réactions des joueurs, départs (annoncés par l'hôte à chaque client depuis la phase 17), fin de manche de l'hôte envoyée après ses derniers tampons et son territoire (phase 17). Hors réseau, inerte. | `Reseau`, `Ville`, `Joueur` |
+| `Manche` (nœud de la scène de jeu, phase 14) | En réseau : barrière de chargement (exclusion d'un absent), commandes des clients, tampons et territoire diffusés, réactions des joueurs, départs (annoncés par l'hôte à chaque client depuis la phase 17 ; depuis la phase 18, `demarrer` rattrape aussi un pair parti dans l'image entre l'ancienne manche et la neuve, désabonnée à temps de `Reseau.joueur_parti`, par le même chemin qu'un départ normal), fin de manche de l'hôte envoyée après ses derniers tampons et son territoire (phase 17) avec son bilan, que chaque client applique (phase 18 : l'état final de chaque lion, crans, statistiques, départs). Hors réseau, inerte. | `Reseau`, `Ville`, `Joueur`, `BilanManche` |
+| `BilanManche` (logique pure, phase 18) | Ce que l'hôte tient pour définitif au gong (chrono ; par joueur, cellules, crans, statistiques, départ ; l'état final de chaque lion), son format réseau, et ce qu'en tire l'écran Résultats (classement, parts, meneurs, les trois titres). | `Joueur`, `EtatLion`, `ReglesBataille` |
+| `Resultats` (scène, phase 18) | L'écran Résultats, posé par `Main` sur la ville figée à la place du HUD de la bataille, sur chaque poste (§8) : il n'affiche que le bilan de l'hôte et la table des joueurs ; le choix de l'hôte (ou Quitter) part en signal, `Main` le suit. Le départ de l'hôte demande confirmation (décision de l'utilisateur du 27/09, §8). | `BilanManche`, `Joueur` |
 | `Peinture` (logique pure, phase 14) | Jeux de tampons tirés de leur clé, tirage d'un tampon par sa graine, format réseau des tampons : chaque poste dessine les mêmes. | rien |
-| `HUDBataille` (scène, phase 17) | Le HUD d'une bataille, posé par `Main` à la place de celui du solo : vignettes, chrono, panneau de fin et sa sortie (§8). Lit le territoire de la ville, le chrono et les signaux des joueurs sur chaque poste. | `Ville`, `Joueur`, `Regles` |
+| `HUDBataille` (scène, phase 17) | Le HUD d'une bataille, posé par `Main` à la place de celui du solo : vignettes et chrono (§8) ; il se cache à la fin, sous l'écran Résultats (phase 18). Lit le territoire de la ville, le chrono et les signaux des joueurs sur chaque poste. | `Ville`, `Joueur`, `Regles` |
 | `PlacementPseudos` (logique pure, phase 17) | Écarte à l'horizontale les pseudos des lions qui se recouvrent et les garde dans l'écran. | rien |
 
 ### 3.2 Flux d'une frame (bataille)
@@ -147,18 +149,28 @@ de jeu.
   poste branche les règles de bataille et la même table des joueurs (identifiant, pseudo et couleur
   de chaque index, `GameState.configurer_bataille_reseau`), puis charge la scène de jeu. Retour
   (Échap, B) quitte le salon pour l'écran Réseau. Aucun contrôle du salon ne prend le focus : une
-  action n'agit qu'à l'appui (ni répétition du clavier, ni stick tenu).
+  action n'agit qu'à l'appui (ni répétition du clavier, ni stick tenu, même déjà penché à l'ouverture
+  du salon ; phase 18). Les clients voient aussi les places seulement réservées (leur nombre part avec
+  la table, phase 18). Au retour d'une manche (Retour au salon, depuis l'écran Résultats, phase 18) :
+  la même table sans les partis, personne prêt, la manche plus en cours (les arrivées de nouveau
+  acceptées, la balise l'annonce), le niveau gardé.
 - **Commandes** : chaque joueur utilise les commandes actuelles de son PC (clavier ou manette).
 - **Pause** : aucune en réseau. Échap / Start ouvre un menu local (Reprendre, Quitter la partie)
   pendant que le jeu continue.
 - **Déconnexions** :
   - hôte perdu : message « L'hôte a quitté la partie », puis retour à l'écran Réseau depuis le salon
-    (on peut aussitôt rejoindre une autre partie), au titre depuis une manche ;
+    (on peut aussitôt rejoindre une autre partie), au titre depuis une manche (écran Résultats
+    compris) ;
   - client perdu en salon : sa carte se libère ;
   - client perdu en manche : son lion disparaît, ses cellules restent, il reste au classement en
-    grisé (l'hôte annonce son départ à chaque client, phase 17 ; un exclu de la barrière aussi) ;
+    grisé (l'hôte annonce son départ à chaque client, phase 17 ; un exclu de la barrière aussi ; depuis
+    la phase 18, un pair déjà parti dans l'image d'une manche rechargée est rattrapé au démarrage de
+    la neuve, par le même chemin) ;
   - client qui n'a pas chargé la scène de jeu 20 s après le lancement (barrière de chargement) :
-    exclu, l'hôte le déconnecte, la manche commence sans lui (phase 14) ;
+    exclu, l'hôte le déconnecte, la manche commence sans lui (phase 14) ; l'exclu l'apprend de l'hôte
+    avant la déconnexion : « Exclu : ta partie a mis trop de temps à charger. » (phase 18) ;
+  - client qui quitte l'écran Résultats (Quitter, Échap) : sa ligne se grise chez les autres ; sous
+    deux joueurs, Revanche et Niveau suivant se grisent (phase 18) ;
   - un départ volontaire est un DISCONNECT fiable d'ENet, renvoyé jusqu'à son accusé de réception ;
     un poste muet est considéré parti après 3 à 8 s, 20 à 30 s pendant le chargement de la manche.
 
@@ -313,14 +325,30 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 - **Départ** : l'hôte déclenche l'intro « Prêt ? Vomissez ! » chez tous. Le chrono démarre à la
   fin de l'intro, piloté par l'hôte.
 - **Fin** : à 0 chez l'hôte (son chrono seul décide), tout se fige ; l'hôte envoie à chaque client, après
-  ses derniers tampons et son territoire sur le même canal fiable, la fin avec son chrono et ses scores
-  définitifs : le client prend ce chrono et se fige (phase 17 ; l'état final de chaque lion viendra en
-  phase 18). En attendant l'écran Résultats, un panneau de fin (« FIN DE LA MANCHE ! », le gagnant ou
-  les ex æquo) et sa sortie (Échap, Start, bouton : le titre). **Écran Résultats** : podium
-  en barres colorées animées (réutilise l'animation du bilan de `GameOver`), pourcentages, trois
-  titres (« Le plus vicieux » : étourdissements infligés, « Le voleur » : cellules volées,
-  « L'auto-tamponneur » : chocs). L'hôte choisit *Revanche*, *Niveau suivant* ou *Retour au
-  salon*. Les clients voient « En attente de l'hôte… ».
+  ses derniers tampons et son territoire sur le même canal fiable, la fin avec son bilan
+  (`BilanManche`, phase 18 : son chrono ; par joueur, cellules, crans, statistiques, départ ; l'état
+  final de chaque lion) : le client prend ce chrono, pose l'état final de chaque lion (sa prédiction
+  s'arrête : un joueur qui tient ses touches au gong ne continue plus sur son écran), les crans et les
+  statistiques de l'hôte, et se fige. **Écran Résultats** (phase 18, `Resultats`, sur chaque poste,
+  tiré du seul bilan de l'hôte, à la place du HUD, sur la ville figée assombrie) : « FIN DE LA
+  MANCHE ! » et le gagnant (ou les ex æquo, ou personne) ; le classement en barres colorées animées
+  (l'animation du bilan de `GameOver`), une ligne par joueur, le plus de cellules d'abord : rang, lion
+  teint (couronné pour chaque meneur), pseudo, part des cellules peintes, étourdissements infligés,
+  cellules volées, chocs, « TOI » ou « PARTI » ; trois titres (« Le plus vicieux » : étourdissements
+  infligés, « Le voleur » : cellules volées, « L'auto-tamponneur » : chocs ; tous les ex æquo, aucun
+  si personne n'en a). L'hôte choisit pour tous *Revanche* (le même niveau) ou *Niveau suivant* (en
+  boucle ; deux joueurs au moins pour l'un comme l'autre : la manche se relance chez tous sans
+  repasser par le salon, la scène de jeu se recharge) ou *Retour au salon* (la même table) ; les
+  clients voient « En attente de l'hôte… » ; chacun peut *Quitter* (Échap : le titre ; l'hôte qui
+  quitte ramène ses clients au titre). Aucun bouton ne prend le focus ; une action n'agit qu'à l'appui,
+  jamais tenue depuis la manche, et un choix au clavier n'est pris qu'1 s après l'animation (Espace
+  martelé au gong). En bataille locale : Revanche, Niveau suivant, Quitter.
+  **Confirmation du départ de l'hôte** (décision de l'utilisateur du 27/09) : le départ de l'hôte
+  ramenant tout le monde au titre (le réseau quitté, ou l'unique poste de la bataille locale), Échap ou
+  le bouton Quitter lui demandent d'abord confirmation (« Quitter la partie pour tout le monde ? »,
+  Oui/Non) ; un second Échap, vomir, la touche de validation (Entrée/Start, `ui_accept`) ou Oui
+  confirment, toute autre touche ou Non annulent, sans rien choisir d'autre. Un client, dont le départ
+  ne retire que lui, quitte sans confirmation, aussitôt.
 - **Traductions** : tous les nouveaux textes passent par `traductions.csv` (FR + EN).
 
 ## 9. Gestion des erreurs
@@ -333,7 +361,7 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 | Connexion à une IP qui ne répond pas | Délai de 5 s puis « Pas de réponse de l'hôte. Pare-feu de l'hôte ? Réseau Privé ? », retour à l'accueil de l'écran Réseau |
 | Version différente, salon plein, manche en cours | Refus explicite côté client (textes traduits, clés `Reseau.REFUS_*`) |
 | Aucune balise reçue | Liste vide avec l'indice « Pare-feu ? Réseau Privé ? Essaie par IP » |
-| Hôte perdu | Message « L'hôte a quitté la partie » puis retour à l'écran Réseau (depuis le salon, ou l'écran Réseau lui-même : son accueil), au titre depuis une manche |
+| Hôte perdu | Message « L'hôte a quitté la partie » puis retour à l'écran Réseau (depuis le salon, ou l'écran Réseau lui-même : son accueil), au titre depuis une manche (ou son écran Résultats) ; « Exclu : ta partie a mis trop de temps à charger. » pour un joueur exclu par la barrière de chargement |
 | Client perdu | Voir section 4 |
 
 ## 10. Tests
@@ -392,6 +420,15 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   reçoit la fin (son chrono pris sur celui de l'hôte, 0,25 s d'écart au plus), le même HUD figé sur
   chaque poste (chrono à 0:00, parts, rangs, tics), puis l'hôte sort par Échap et ses clients le voient
   partir ; l'empreinte de fin de manche des scénarios 9, 11 et 12 compte aussi le HUD (départs compris).
+  Depuis la phase 18, le scénario 13 continue : chacun peint sans lâcher ses touches jusqu'au gong, et
+  le HUD, le bilan, les lions (posés sur l'état final de l'hôte) et l'écran Résultats sont les mêmes
+  sur chaque poste ; l'hôte choisit Revanche au clavier, chaque poste recharge une manche neuve de 6 s
+  qui finit de même ; un client quitte l'écran Résultats, les autres le voient partir ; l'hôte choisit
+  Retour au salon : la même table sans le partant, personne prêt ; puis l'hôte quitte le salon. Le muet
+  du scénario 9 apprend son exclusion. Les tests unitaires couvrent aussi le bilan (format réseau,
+  classement, titres), la relance et le retour au salon, et les manches enchaînées (canaux, barrière) ;
+  le banc de la prédiction, la touche tenue au gong ; `tests/bataille_test.gd`, l'écran Résultats d'une
+  bataille locale, Revanche et Niveau suivant (territoire, Spawner, chrono neufs).
 - **Trace des lions** (`tests/trace_lions.gd`, phase 15 bis, hors CI) : une bataille à 4 lions, une
   partie solo et une réplique de client rejouées tick par tick (hasard semé, `--fixed-fps 60`) ; leur
   empreinte (l'état observable de chaque lion à chaque tick) prouve qu'une refonte du lion ne change
