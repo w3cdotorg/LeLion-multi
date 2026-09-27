@@ -1199,18 +1199,30 @@ func _run() -> void:
 		and lr.velocity == Vector2.ZERO, "un pas hors de l'écran le ramène au bord, sans vitesse fantôme (%s)" % lr.global_position)
 	lr.deplacement.vitesse = Vector2.ZERO
 	lr.global_position = Vector2(600, 300)
+	# Phase 16 : hors d'une image physique (le sondage réseau, où arrivent les états de l'hôte), le pas
+	# est refusé : `move_and_slide` y intégrerait le delta de traitement
+	await process_frame
+	var x_hors: float = lr.global_position.x
+	_check(not lr.avancer(Vector2.RIGHT, dt_pas) and lr.global_position.x == x_hors and lr.deplacement.vitesse == Vector2.ZERO,
+		"hors d'une image physique, le pas est refusé : le lion ne bouge pas (ligne ERROR attendue)")
+	await _frames(1)
+	# Phase 16 : chez l'hôte, chaque tick écrit l'état du lion, que son Synchro recopie chez les clients
+	lr.global_position = Vector2(640, 320)
+	await _frames(2)
+	var etat_lr: Dictionary = EtatLion.decoder(lr.etat_reseau)
+	_check(not etat_lr.is_empty() and etat_lr.position == lr.position and etat_lr.vitesse == lr.deplacement.vitesse
+		and etat_lr.recul == lr.deplacement.recul and etat_lr.direction == lr.direction_du_lion and etat_lr.commande == 0,
+		"chaque tick, l'hôte écrit l'état du lion : position, vitesse commandée, recul, orientation (aucune commande de client)")
 
-	# Phase 14 : sur un client, un lion n'est qu'une réplique du lion de l'hôte (position, vitesse,
-	# orientation et vomi reçus par son Synchro ; réactions par les signaux de son joueur)
+	# Phase 14 : sur un client, un lion n'est qu'une réplique du lion de l'hôte (état et vomi reçus par
+	# son Synchro ; réactions par les signaux de son joueur). Phase 16 : il est interpolé entre les états
 	var synchro_lion := lr.get_node_or_null("Synchro") as MultiplayerSynchronizer
 	var config_lion: SceneReplicationConfig = null if synchro_lion == null else synchro_lion.replication_config
-	_check(config_lion != null and config_lion.get_properties() == [^".:position", ^".:velocity", ^".:direction_du_lion", ^".:vomi_de_l_hote"]
-		and config_lion.property_get_replication_mode(^".:position") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
-		and config_lion.property_get_replication_mode(^".:velocity") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
-		and config_lion.property_get_replication_mode(^".:direction_du_lion") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
+	_check(config_lion != null and config_lion.get_properties() == [^".:etat_reseau", ^".:vomi_de_l_hote"]
+		and config_lion.property_get_replication_mode(^".:etat_reseau") == SceneReplicationConfig.REPLICATION_MODE_ALWAYS
 		and config_lion.property_get_replication_mode(^".:vomi_de_l_hote") == SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE
-		and config_lion.get_properties().all(func(p: NodePath) -> bool: return config_lion.property_get_spawn(p)),
-		"le Synchro du lion réplique position et vitesse en continu, orientation et vomi à chaque changement, tous à l'apparition")
+		and not config_lion.property_get_spawn(^".:etat_reseau") and config_lion.property_get_spawn(^".:vomi_de_l_hote"),
+		"le Synchro du lion réplique son état en continu (sans rien à l'apparition) et son vomi à chaque changement (dès l'apparition)")
 	var poste_lion := Node2D.new()
 	poste_lion.name = "PosteClientLion"
 	root.add_child(poste_lion)
@@ -1236,16 +1248,23 @@ func _run() -> void:
 	await _frames(5)
 	_check(repl.position == Vector2(600, 500) and repl.velocity == Vector2.ZERO and not repl.est_en_train_de_vomir,
 		"sur un client, un lion ne suit pas ses commandes : il ne bouge ni ne vomit de lui-même")
-	repl.position = Vector2(700, 500)  # ce qu'écrit le Synchro
-	repl.velocity = Vector2(350, 0)
-	repl.direction_du_lion = 1
+	# Ce qu'écrit le Synchro : un état par tick de l'hôte, le lion filant vers la droite à 350 px/s
+	var pas_repl := 350.0 / 60.0
+	for i in range(12):
+		repl.etat_reseau = EtatLion.encoder(1000 + i, 0, Vector2(700 + i * pas_repl, 500), Vector2(350, 0), Vector2.ZERO, 1)
+		await _frames(1)
 	repl.vomi_de_l_hote = true
 	for i in range(3):
 		await process_frame  # le vomi démarre dans _process
 	await _frames(1)
-	_check(repl.position == Vector2(700, 500) and repl.sprite.scale.x == 1.0 and repl.deplacement.vitesse == Vector2(350, 0)
+	_check(repl.position.y == 500.0 and repl.position.x > 700.0 and repl.position.x < 700.0 + 11 * pas_repl and repl.sprite.scale.x == 1.0
+		and repl.velocity == Vector2(350, 0) and repl.deplacement.vitesse == Vector2(350, 0)
 		and repl.est_en_train_de_vomir and repl.gerbe.vomi_container.get_children().all(func(e: GPUParticles2D) -> bool: return e.emitting),
-		"la réplique suit l'état reçu : position, vitesse (son animation), orientation, vomi (particules)")
+		"la réplique suit les états reçus, interpolés avec un peu de retard (x = %.1f) : position, vitesse (son animation), orientation, vomi (particules)" % repl.position.x)
+	await _frames(30)
+	var arret_repl: Vector2 = repl.position
+	_check(arret_repl.is_equal_approx(Vector2(700 + (11 + InterpolationLion.EXTRAPOLATION_MAX) * pas_repl, 500)),
+		"plus aucun état : la réplique continue sur sa vitesse %d ticks, puis s'arrête (x = %.1f)" % [int(InterpolationLion.EXTRAPOLATION_MAX), arret_repl.x])
 	repl.vomi_de_l_hote = false
 	for i in range(3):
 		await process_frame
@@ -1253,7 +1272,7 @@ func _run() -> void:
 	j_repl.etourdir(ReglesBataille.DUREE_ETOURDI_VOMI, ReglesBataille.DUREE_IMMUNITE, repl.global_position + Vector2(-50, 66), j_rouge.couleur)
 	await _frames(2)
 	var mat_repl := repl.sprite.material as ShaderMaterial
-	_check(repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur and repl.position == Vector2(700, 500),
+	_check(repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_couleur") == j_rouge.couleur and repl.position == arret_repl,
 		"un étourdissement reçu de l'hôte s'affiche sur la réplique (étoiles, barbouillage), sans la déplacer")
 	j_repl.recevoir_fin_etourdissement(ReglesBataille.DUREE_IMMUNITE)
 	await _frames(2)

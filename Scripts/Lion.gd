@@ -11,10 +11,14 @@ extends CharacterBody2D
 ## étoiles, barbouillage, clignotement, secousse, trot) reste ici.
 ## Le lion ne décide de rien : sur l'hôte, il signale aux règles les autres lions que touche
 ## sa gerbe et ceux qu'il percute, comme le font les ennemis et les pastilles.
-## En réseau (phase 14), seul l'hôte simule les lions ; sur un client, chaque lion est une réplique
-## (`_suivre_l_hote`) : position, vitesse, orientation et vomi viennent de l'hôte par son
-## `MultiplayerSynchronizer` (`Synchro`), ses réactions (étourdissement, crans, gerbe XXL) par les
-## signaux de son joueur, que la manche lui transmet (`Joueur.recevoir_*`).
+## En réseau (phase 14), l'hôte simule les lions et écrit à chaque tick l'état de chacun
+## (`etat_reseau`, `EtatLion` : position, vitesse commandée, recul, orientation, dernière commande
+## appliquée), que son `MultiplayerSynchronizer` (`Synchro`) recopie chez chaque client avec son vomi ;
+## ses réactions (étourdissement, crans, gerbe XXL) arrivent par les signaux de son joueur, que la
+## manche lui transmet (`Joueur.recevoir_*`). Sur un client (phase 16), un lion distant est affiché
+## avec un peu de retard, interpolé entre les états reçus (`_suivre_l_hote`, `InterpolationLion`) ; le
+## lion du joueur local est prédit (`prediction`, `PredictionLocale`) : il avance tout de suite avec les
+## commandes de ce poste, par le même pas que l'hôte (`avancer`), et se recale sur ses états.
 
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 const CENTRE := Vector2(68, 66)  # centre du corps, dans le repère du lion
@@ -23,6 +27,8 @@ const RAYON_ETOILES := Vector2(40, 12)
 const VITESSE_ETOILES := 5.0  # radians par seconde
 const DUREE_SECOUSSE := 0.25
 const AMPLITUDE_SECOUSSE := 6.0
+## États de l'hôte gardés au plus entre deux ticks physiques d'un client.
+const ETATS_RECUS_MAX := 64
 
 @export var inclinaison_max: float = 0.14  # radians
 
@@ -34,8 +40,9 @@ const AMPLITUDE_SECOUSSE := 6.0
 @onready var gerbe: GerbeLion = $Gerbe
 
 var est_en_train_de_vomir := false
-## 1 = droite, -1 = gauche. Répliquée chez les clients (`Synchro`) : le setter y retourne le sprite
-## et réoriente la gerbe.
+## 1 = droite, -1 = gauche. Le setter retourne le sprite et réoriente la gerbe. Sur un client, celle
+## d'un lion distant vient de ses états interpolés, celle du lion local de sa prédiction (jamais
+## remise à l'ancienne orientation de l'hôte pendant un demi-tour).
 var direction_du_lion: int = 1:
 	set(valeur):
 		if valeur == direction_du_lion:
@@ -61,7 +68,31 @@ var joueur: Joueur:
 			push_error("Lion.joueur se fixe avant l'ajout à l'arbre")
 			return
 		joueur = valeur
+## Chez l'hôte, un lion de client applique une commande reçue par tick (`Commandes.appliquer_suivante`) ;
+## sur un client, le lion local a des commandes manuelles, que remplit sa prédiction.
 var commandes: Commandes
+## Vrai sur un client (fixé dans `_ready`) : les états reçus de l'hôte y sont gardés pour le prochain
+## tick physique.
+var _replique := false
+## Sur un client : les états reçus de l'hôte depuis le dernier tick physique (décodés, dans l'ordre
+## d'arrivée), rejoués dans ce tick : par l'interpolation d'un lion distant, ou par la prédiction.
+var _etats_recus: Array[Dictionary] = []
+## Sur un client, l'affichage d'un lion distant.
+var _interpolation: InterpolationLion
+## Chez l'hôte, l'état du lion écrit à chaque tick physique (`EtatLion.encoder`), que le `Synchro`
+## recopie chez chaque client ; sur un client, le setter garde chaque état reçu pour le prochain tick
+## physique (jamais appliqué pendant le sondage réseau : `avancer` ne se rejoue que dans une image
+## physique).
+var etat_reseau := PackedByteArray():
+	set(valeur):
+		etat_reseau = valeur
+		if not _replique:
+			return
+		var etat := EtatLion.decoder(valeur)
+		if etat.is_empty():
+			push_warning("Lion : état de l'hôte illisible, ignoré")
+		elif _etats_recus.size() < ETATS_RECUS_MAX:
+			_etats_recus.append(etat)
 ## Vitesse commandée et recul du lion (logique pure) : ce que `avancer` fait avancer d'un pas.
 var deplacement := DeplacementLion.new()
 ## Secondes de jeu écoulées pour ce lion (ticks physiques) : trot, étoiles, délai entre deux chocs.
@@ -75,6 +106,9 @@ var _rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	_rng.randomize()
+	_replique = not multiplayer.is_server()
+	if _replique:
+		_interpolation = InterpolationLion.new(Engine.physics_ticks_per_second)
 	if joueur == null:
 		joueur = GameState.joueur_local()
 	if commandes == null:
@@ -96,21 +130,28 @@ func _physics_process(delta: float) -> void:
 	if not multiplayer.is_server():
 		_suivre_l_hote(delta)
 		return
+	commandes.appliquer_suivante()
 	avancer(_direction_voulue(), delta)
 	_animer_deplacement(delta)
 	gerbe.signaler_vomi_sur_les_lions()
+	etat_reseau = EtatLion.encoder(Engine.get_physics_frames(), commandes.numero_applique, position,
+		deplacement.vitesse, deplacement.recul, direction_du_lion)
 
 
 ## Un pas de déplacement du lion vers `direction` (longueur 1 au plus), de `delta` secondes : son
 ## orientation, sa vitesse (commandée, recul, contacts avec les autres lions), `move_and_slide`, puis
-## les bords de l'écran. Le seul chemin du déplacement sur l'hôte (tick physique) ; la prédiction du
-## lion local (phase 16) rejouera les mêmes pas, ses commandes en main.
-## À appeler seulement dans une image physique, avec `delta` égal au tick physique : `move_and_slide()`
-## intègre avec le delta du moteur, pas celui reçu en argument, donc un appel hors `_physics_process`
-## (ex. depuis le `poll` multijoueur) fausse la distance parcourue. Un rejeu de prédiction (phase 16)
-## se fait donc dans `_physics_process` ; `pare_chocs.bloquer()` ne rejoue pas des contacts passés,
-## il ne lit que l'état physique et les positions actuelles au moment de l'appel.
-func avancer(direction: Vector2, delta: float) -> void:
+## les bords de l'écran. Le seul chemin du déplacement : sur l'hôte (tick physique) et dans la
+## prédiction du lion local d'un client (`PredictionLocale`, qui rejoue aussi les pas pas encore
+## appliqués par l'hôte).
+## Seulement dans une image physique, avec `delta` égal au tick physique : `move_and_slide()` intègre
+## avec le delta du moteur, pas celui reçu en argument, donc un appel hors d'une image physique (ex.
+## depuis le `poll` multijoueur, où arrivent les états de l'hôte) fausserait la distance parcourue ;
+## refusé (faux, le lion ne bouge pas). `pare_chocs.bloquer()` ne rejoue pas des contacts passés, il ne
+## lit que l'état physique et les positions actuelles au moment de l'appel.
+func avancer(direction: Vector2, delta: float) -> bool:
+	if not Engine.is_in_physics_frame():
+		push_error("Lion.avancer hors d'une image physique : ce pas est ignoré")
+		return false
 	if direction.x != 0:
 		direction_du_lion = 1 if direction.x > 0 else -1  # le setter réoriente le lion
 	velocity = pare_chocs.bloquer(deplacement.vitesse_du_pas(direction, delta))
@@ -127,6 +168,7 @@ func avancer(direction: Vector2, delta: float) -> void:
 		velocity.y = 0.0
 	global_position.x = x_borne
 	global_position.y = y_borne
+	return true
 
 
 func _process(delta: float) -> void:
@@ -155,18 +197,33 @@ func _marge_haute() -> float:
 	return -etiquette_pseudo.position.y if etiquette_pseudo.visible else 0.0
 
 
-## Sur un client : le lion suit l'hôte. Sa position et sa vitesse sont celles que recopie son
-## `Synchro` ; il ne se déplace pas de lui-même, ne se bloque pas contre les autres lions et ne
-## signale rien aux règles (la prédiction du lion local viendra en phase 16). Seule l'animation
-## (inclinaison, trot) tourne ici, sur la vitesse de l'hôte.
+## Sur un client, un lion distant suit l'hôte : position, vitesse (totale) et orientation viennent de
+## ses états, interpolés avec un peu de retard (`InterpolationLion`) ; tant qu'aucun n'est arrivé, il
+## garde les siennes. Il ne se déplace pas de lui-même, ne se bloque pas contre les autres lions et ne
+## signale rien aux règles. L'animation (inclinaison, trot) tourne sur la vitesse affichée.
 func _suivre_l_hote(delta: float) -> void:
+	for etat in _etats_recus:
+		_interpolation.ajouter(etat.instant, etat.position, etat.vitesse + etat.recul, etat.direction)
+	_etats_recus.clear()
+	_interpolation.avancer(delta * Engine.physics_ticks_per_second)
+	var vu := _interpolation.echantillon()
+	if not vu.is_empty():
+		position = vu.position
+		velocity = vu.vitesse
+		direction_du_lion = vu.direction
 	deplacement.vitesse = velocity
 	_animer_deplacement(delta)
 
 
-## Un lion étourdi ignore ses commandes : il ne se dirige plus et ne vomit plus.
+## La direction que suit le lion pour la commande `voulue` : aucune avant la fin de l'intro ni pendant
+## un étourdissement (commandes ignorées). La même règle chez l'hôte et dans la prédiction d'un client,
+## qui rejoue ses commandes avec elle.
+func direction_pour(voulue: Vector2) -> Vector2:
+	return voulue if GameState.pret and not joueur.est_etourdi() else Vector2.ZERO
+
+
 func _direction_voulue() -> Vector2:
-	return commandes.direction() if GameState.pret and not joueur.est_etourdi() else Vector2.ZERO
+	return direction_pour(commandes.direction())
 
 
 ## Sur un client, la réplique vomit quand le lion de l'hôte vomit.

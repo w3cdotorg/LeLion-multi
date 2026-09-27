@@ -8,9 +8,14 @@ extends Area2D
 ## signalé aux règles que si l'approche était assez rapide et que le délai anti-rafale est passé avec
 ## cet autre lion (un lion étourdi reste poussable). Pendant le contact, `bloquer` retire de la vitesse
 ## du lion ce qui l'enfoncerait dans l'autre et écarte deux lions qui se chevauchent.
-## Seul l'hôte signale un choc aux règles. Sur un client, le contact de deux répliques ne fait que
-## secouer leur sprite : leur position et leur vitesse viennent de l'hôte (la prédiction du lion
-## local, en phase 16, y reprendra le recul et le blocage).
+## Seul l'hôte signale un choc aux règles. Sur un client, un lion distant ne fait que secouer son
+## sprite au choc (sa position et sa vitesse viennent de l'hôte, interpolées) ; le lion local, prédit
+## (phase 16), prend tout de suite son recul et son blocage contre les lions affichés, pour un « boing »
+## immédiat : chaque choc simulé part aussi en signal (`choc_simule`), que sa prédiction note pour le
+## rejouer tant que l'hôte, qui fait foi, ne l'a pas dans ses états.
+
+## Un choc vient de changer la vitesse commandée et le recul de ce lion (ce qui leur a été ajouté).
+signal choc_simule(vitesse: Vector2, recul: Vector2)
 
 ## Recul de chaque lion au choc = vitesse d'approche relative × facteur_choc.
 @export var facteur_choc: float = 1.2
@@ -63,20 +68,33 @@ func _on_area_entered(zone: Area2D) -> void:
 	var normale := _normale_de_choc(autre)
 	var approche := (_lion.velocity - autre.velocity).dot(-normale)
 	var vers_autre := deplacement.vitesse.dot(-normale)
+	var choc_vitesse := Vector2.ZERO
 	if vers_autre > 0.0:
-		deplacement.vitesse += normale * vers_autre
+		choc_vitesse = normale * vers_autre
+		deplacement.vitesse += choc_vitesse
+	var choc_recul := Vector2.ZERO
+	if _compte_comme_choc(autre, approche):
+		choc_recul = normale * approche * facteur_choc
+		deplacement.recul += choc_recul
+		_lion.secouer()
+		# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
+		if multiplayer.is_server() and _lion.get_instance_id() < autre.get_instance_id():
+			GameState.regles.choc_entre_lions(_lion.joueur, autre.joueur)
+	if choc_vitesse != Vector2.ZERO or choc_recul != Vector2.ZERO:
+		choc_simule.emit(choc_vitesse, choc_recul)
+
+
+## Vrai si le contact avec `autre`, à la vitesse d'approche `approche`, compte comme un choc (assez
+## rapide, délai anti-rafale passé avec cet autre lion) ; il est alors noté pour ce délai.
+func _compte_comme_choc(autre: Lion, approche: float) -> bool:
 	if approche < approche_min_choc:
-		return
+		return false
 	_nettoyer_derniers_chocs()
 	var dernier: float = _derniers_chocs.get(autre.get_instance_id(), -1.0)
 	if dernier >= 0.0 and _lion.temps - dernier < delai_entre_chocs:
-		return
+		return false
 	_derniers_chocs[autre.get_instance_id()] = _lion.temps
-	deplacement.recul += normale * approche * facteur_choc
-	_lion.secouer()
-	# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
-	if multiplayer.is_server() and _lion.get_instance_id() < autre.get_instance_id():
-		GameState.regles.choc_entre_lions(_lion.joueur, autre.joueur)
+	return true
 
 
 ## Entrées du dictionnaire des délais anti-rafale dont l'autre lion n'existe plus (déconnexion,
