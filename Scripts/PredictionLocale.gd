@@ -179,11 +179,14 @@ func _recaler(etat: Dictionary, delta: float) -> void:
 	_lion.pare_chocs.en_rejeu = false
 	rejeu_max = maxi(rejeu_max, _historique.size() - 1)
 	var ecart := avant - _lion.position
-	if ecart.length() > SEUIL_RECALAGE:
+	# Sur le décalage accumulé (pas seulement ce nouvel écart) : un décalage déjà proche du seuil,
+	# encore à peine sous lui, ne doit pas s'additionner à un nouvel écart sans jamais se recaler.
+	var nouveau_decalage := _decalage + ecart
+	if nouveau_decalage.length() > SEUIL_RECALAGE:
 		recalages += 1
 		_decalage = Vector2.ZERO
 	else:
-		_decalage += ecart
+		_decalage = nouveau_decalage
 
 
 ## Un choc simulé par le pare-chocs du lion (entre deux ticks) : noté avec la commande du prochain tick,
