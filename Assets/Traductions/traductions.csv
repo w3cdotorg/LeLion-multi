@@ -96,3 +96,18 @@ SALON_AIDE_HOTE,"Gauche/Droite : couleur   ·   Haut/Bas : niveau   ·   Espace 
 SALON_ADRESSES,"Les autres te voient dans leur liste, ou tapent ton adresse : %s","Others see you in their list, or type your address: %s"
 PAUSE_RESEAU,La partie continue,The game goes on
 QUITTER_PARTIE,Quitter la partie,Leave the game
+BATAILLE_JOUEUR,Joueur %d,Player %d
+BATAILLE_PARTI,PARTI,LEFT
+BATAILLE_ETOURDI,★ ÉTOURDI,★ STUNNED
+BATAILLE_XXL,★ XXL %d s,★ XXL %d s
+BATAILLE_RANG_1,1er,1st
+BATAILLE_RANG_2,2e,2nd
+BATAILLE_RANG_3,3e,3rd
+BATAILLE_RANG_4,4e,4th
+BATAILLE_RANG_5,5e,5th
+BATAILLE_RANG_6,6e,6th
+BATAILLE_FIN,FIN DE LA MANCHE !,TIME'S UP!
+BATAILLE_GAGNANT,%s gagne la manche !,%s wins the round!
+BATAILLE_EGALITE,Égalité : %s !,Tie: %s!
+BATAILLE_PERSONNE,Personne n'a peint la ville.,Nobody painted the town.
+BATAILLE_AIDE_FIN,Échap : quitter la partie,Esc: leave the game

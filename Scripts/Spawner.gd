@@ -16,7 +16,8 @@ extends Node
 
 @export_group("Pickups")
 @export var delai_premier_pickup := 1.0
-## Délai entre le départ d'une pastille (ramassée) et l'arrivée de la suivante.
+## Délai entre le départ d'une pastille (ramassée) et l'arrivée de la suivante, en solo (en bataille,
+## celui des règles : `Regles.delai_entre_pastilles`).
 @export var delai_entre_pickups := 6.0
 ## Zone des pastilles dans l'écran du solo (648 px de haut) ; sa hauteur suit celle de l'écran.
 @export var zone_pickups := Rect2(150, 80, 1700, 300)
@@ -45,6 +46,10 @@ var _demarre := false
 
 func _ready() -> void:
 	GameState.partie_terminee.connect(_on_partie_terminee)
+	# Extra (revue de capture) : en bataille, la zone remonte sous la bande du HUD ; sans effet en
+	# solo. Une fois pour de bon : `GameState.regles` est déjà celui de la partie à cet instant
+	# (`configurer_bataille`/`configurer_solo` sont appelés avant de charger la scène de jeu).
+	zone_pickups = GameState.regles.zone_pickups_ajustee(zone_pickups)
 
 
 ## Les apparitions commencent : le peintre s'il y en a un, puis, à la fin de l'intro, les pastilles,
@@ -143,19 +148,28 @@ func spawn_bonus(position_bonus: Vector2) -> Node:
 	return bonus
 
 
-## La pastille suivante est programmée quand celle-ci quitte la scène (ramassée) : en bataille,
-## un cran de gerbe ne débloque aucune couleur, rien d'autre ne le signalerait. Une scène qui se
-## libère fait aussi sortir ses pastilles : rien n'est programmé hors de l'arbre.
+## La pastille suivante est programmée quand celle-ci quitte la scène (ramassée, ou expirée en
+## bataille) : en bataille, un cran de gerbe ne débloque aucune couleur, rien d'autre ne le
+## signalerait. Une scène qui se libère fait aussi sortir ses pastilles : rien n'est programmé hors de
+## l'arbre.
 func _on_pastille_partie() -> void:
 	if is_inside_tree():
-		_programmer(delai_entre_pickups, _spawn_prochain_pickup)
+		_programmer(GameState.regles.delai_entre_pastilles(delai_entre_pickups), _spawn_prochain_pickup)
 
 
+## Une pastille arrive, si les règles en offrent une et en laissent arriver une de plus (en bataille,
+## sous le plafond) ; tant qu'il y en a moins que `Regles.pastilles_en_meme_temps`, la suivante est
+## programmée après le délai (en solo, une seule : la suivante attend le départ de celle-ci).
 func _spawn_prochain_pickup() -> void:
 	var index := GameState.regles.pastille_a_offrir()
 	if index < 0 or not GameState.partie_en_cours:
 		return
+	var presentes := get_tree().get_nodes_in_group("pickup").size()
+	if not GameState.regles.pastille_peut_arriver(presentes):
+		return
 	spawn_pickup(index, _position_pickup_aleatoire())
+	if presentes + 1 < GameState.regles.pastilles_en_meme_temps():
+		_programmer(GameState.regles.delai_entre_pastilles(delai_entre_pickups), _spawn_prochain_pickup)
 
 
 ## Hauteur de l'écran rapportée à celle du solo : 1 en solo (hauteurs d'apparition inchangées).
@@ -163,19 +177,34 @@ func _echelle_hauteur() -> float:
 	return get_viewport().get_visible_rect().size.y / Regles.TAILLE_ECRAN_SOLO.y
 
 
-## Au hasard dans la zone des pastilles, à `distance_min_du_lion` de chaque lion si possible
-## (dix essais).
+## Au hasard dans la zone des pastilles, à `distance_min_du_lion` de chaque lion si possible (dix
+## essais). En solo, mesurée depuis le coin du lion (`global_position`), le dernier essai gardé si
+## aucun ne convient ; en bataille (`Regles.pastilles_loin_des_lions`), depuis le centre de chaque
+## lion, et le plus loin de tous des dix essais gardé : une pastille ne naît pas collée à un lion.
 func _position_pickup_aleatoire() -> Vector2:
 	var lions := get_tree().get_nodes_in_group("lion")
 	var echelle := _echelle_hauteur()
+	var loin := GameState.regles.pastilles_loin_des_lions()
 	var pos := Vector2.ZERO
+	var plus_loin := Vector2.ZERO
+	var plus_grand_ecart := -1.0
 	for tentative in range(10):
 		pos = Vector2(
 			randf_range(zone_pickups.position.x, zone_pickups.end.x),
 			randf_range(zone_pickups.position.y * echelle, zone_pickups.end.y * echelle))
-		if lions.all(func(l: Node) -> bool: return pos.distance_to((l as Node2D).global_position) >= distance_min_du_lion):
-			break
-	return pos
+		if not loin:
+			if lions.all(func(l: Node) -> bool: return pos.distance_to((l as Node2D).global_position) >= distance_min_du_lion):
+				break
+			continue
+		var ecart := INF
+		for l: Node2D in lions:
+			ecart = minf(ecart, pos.distance_to(l.global_position + Lion.CENTRE))
+		if ecart >= distance_min_du_lion:
+			return pos
+		if ecart > plus_grand_ecart:
+			plus_grand_ecart = ecart
+			plus_loin = pos
+	return plus_loin if loin else pos
 
 
 func _y_ennemi_aleatoire() -> float:
@@ -204,6 +233,10 @@ func spawn_pickup(index: int, position_pickup: Vector2) -> Node:
 	pickup.global_position = position_pickup
 	pickup.tree_exited.connect(_on_pastille_partie)
 	get_parent().add_child(pickup, true)
+	# En bataille, une pastille que personne ne ramasse expire (l'arbre en pause, sa minuterie attend)
+	var vie: float = GameState.regles.duree_de_vie_pastille()
+	if vie > 0.0:
+		get_tree().create_timer(vie, false).timeout.connect(pickup._expirer)
 	return pickup
 
 

@@ -303,12 +303,15 @@ func _verifier_convergence(titre: String, arret: int, ticks: int) -> void:
 ## une fois ou est sauté, et les sautées restent rares (redondance). `rejouees` (M1, revue finale de la
 ## phase 16) fait vraiment échouer ce test si une commande était rejouée : l'égalité seule peut rester
 ## vraie même dans ce cas (`sautees` peut descendre au lieu de monter).
-func _verifier_commandes(titre: String, sautees_max: int) -> void:
+## I2 (revue finale phase 17, désync-report) : `sautees` reste la somme de `perdues` (jamais arrivées à
+## temps, la vraie perte réseau) et `rattrapees` (délestées exprès par le rattrapage, pas une perte) ;
+## seule `perdues` a un seuil (`perdues_max`), `rattrapees` n'est qu'une mesure rapportée à l'appelant.
+func _verifier_commandes(titre: String, perdues_max: int) -> void:
 	var c: Commandes = h1.commandes
 	_check(c.rejouees == 0 and c.sautees >= 0 and c.appliquees + c.sautees == c.numero_applique
-		and c.sautees <= sautees_max and c.numero_applique > 0,
-		"(%s) aucune commande appliquée deux fois (%d rejouée(s)) : %d appliquées, %d sautées, jusqu'à la %d (file au plus %d)"
-		% [titre, c.rejouees, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
+		and c.perdues <= perdues_max and c.numero_applique > 0,
+		"(%s) aucune commande appliquée deux fois (%d rejouée(s)) : %d appliquées, %d perdues, %d rattrapées par le délestage volontaire (mesure), jusqu'à la %d (file au plus %d)"
+		% [titre, c.rejouees, c.appliquees, c.perdues, c.rattrapees, c.numero_applique, c.file_max_vue])
 
 
 # --- Scénarios ---------------------------------------------------------------------------------------

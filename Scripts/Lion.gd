@@ -111,10 +111,13 @@ var _secousse_restante := 0.0
 ## Générateur propre au lion pour la secousse du sprite : ne pas consommer la séquence globale
 ## de `randf_range`, dont dépendent le Spawner et les ennemis.
 var _rng := RandomNumberGenerator.new()
+## Abscisse de l'étiquette du pseudo posée par la scène (centrée sur la tête), d'où `rect_pseudo` part.
+var _x_pseudo := 0.0
 
 
 func _ready() -> void:
 	_rng.randomize()
+	_x_pseudo = etiquette_pseudo.position.x
 	_replique = not multiplayer.is_server()
 	if _replique and prediction == null:
 		_interpolation = InterpolationLion.new(Engine.physics_ticks_per_second)
@@ -207,9 +210,26 @@ func _process(delta: float) -> void:
 
 
 ## Hauteur gardée libre au-dessus du lion : celle de son pseudo quand il s'affiche (bataille),
-## pour qu'un lion collé en haut de l'écran ne le cache pas ; aucune en solo.
+## pour qu'un lion collé en haut de l'écran ne le cache pas ; aucune en solo. L'étiquette ne glisse
+## qu'à l'horizontale (`placer_pseudo`) : cette hauteur ne change jamais.
 func _marge_haute() -> float:
 	return -etiquette_pseudo.position.y if etiquette_pseudo.visible else 0.0
+
+
+## Le texte du pseudo, en pixels de l'écran, là où la scène le pose (centré au-dessus de la tête) :
+## il suit la position affichée du lion (`position` et le décalage de la prédiction, `visuel`), pas
+## son seul corps.
+func rect_pseudo() -> Rect2:
+	var texte := etiquette_pseudo.get_minimum_size().x
+	var coin := global_position + visuel.position + Vector2(_x_pseudo + (etiquette_pseudo.size.x - texte) / 2.0, etiquette_pseudo.position.y)
+	return Rect2(coin, Vector2(texte, etiquette_pseudo.size.y))
+
+
+## Pose le texte du pseudo à l'abscisse `x_texte` de l'écran (son bord gauche ; `PlacementPseudos`) :
+## l'étiquette glisse à l'horizontale, jamais en hauteur.
+func placer_pseudo(x_texte: float) -> void:
+	var texte := etiquette_pseudo.get_minimum_size().x
+	etiquette_pseudo.position.x = x_texte - (etiquette_pseudo.size.x - texte) / 2.0 - global_position.x - visuel.position.x
 
 
 ## Sur un client, un lion distant suit l'hôte : position, vitesse (totale) et orientation viennent de
@@ -266,14 +286,23 @@ func demarrer_vomi() -> void:
 	est_en_train_de_vomir = true
 	gerbe.demarrer()
 	anim.play("Vomit")
-	Audio.demarrer_vomi()
+	if est_local():
+		Audio.demarrer_vomi()
 
 
+## La boucle du vomi (une seule, dans `Audio`) n'est qu'au lion de ce poste : un autre lion qui arrête
+## de vomir ne la coupe plus (phase 17 bis).
 func arreter_vomi() -> void:
 	est_en_train_de_vomir = false
 	gerbe.arreter()
 	anim.play("Idle")
-	Audio.arreter_vomi()
+	if est_local():
+		Audio.arreter_vomi()
+
+
+## Vrai si ce lion est celui du joueur de ce poste (en solo, le seul lion).
+func est_local() -> bool:
+	return joueur == GameState.joueur_local()
 
 
 ## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ; à
@@ -354,6 +383,7 @@ func _on_etourdi(origine: Vector2, barbouillage: Color) -> void:
 	_barbouiller(barbouillage)
 	etoiles.visible = true
 	_tourner_etoiles()
+	Audio.jouer_etourdi(est_local())
 
 
 ## Fin de l'étourdissement : barbouillage et étoiles s'en vont, l'immunité clignote.

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Synthétise les effets sonores du jeu dans Assets/Sons (WAV 44,1 kHz mono 16 bits).
 
-Usage : python3 tools/generer_sons.py   (depuis la racine du projet)
+Usage : python3 tools/generer_sons.py [nom…]   (depuis la racine du projet)
+Sans nom, tous les effets ; avec des noms, ceux-là seulement (ex. : boing tic fin etourdi). Le bruit
+de « mort » n'est pas semé : le regénérer change son fichier.
 """
 import math
 import random
 import struct
+import sys
 import wave
 from pathlib import Path
 
@@ -112,10 +115,64 @@ def pret():
     ecrire("pret", out, gain=0.7)
 
 
+def boing():
+    """« Boing » des auto-tamponneuses : une note qui plonge vers le grave en vibrant, comme un ressort."""
+    dur, out, ph = 0.35, [], 0.0
+    for i in range(int(SR * dur)):
+        t = i / SR
+        f = 420 * math.exp(-5 * t) + 110 + 25 * math.sin(2 * math.pi * 22 * t) * math.exp(-6 * t)
+        ph += 2 * math.pi * f / SR
+        x = math.sin(ph) + 0.3 * math.sin(2 * ph)
+        out.append(x * env(t, dur, r=0.12) * math.exp(-3 * t))
+    ecrire("boing", out)
+
+
+def tic():
+    """Tic du chrono dans les dix dernières secondes : un clic sec et bref."""
+    dur, out = 0.06, []
+    for i in range(int(SR * dur)):
+        t = i / SR
+        x = math.sin(2 * math.pi * 1800 * t) * 0.8 + math.sin(2 * math.pi * 3600 * t) * 0.2
+        out.append(x * math.exp(-70 * t))
+    ecrire("tic", out, gain=0.6)
+
+
+def fin():
+    """Gong de fin de manche : des partiels inharmoniques qui s'éteignent lentement."""
+    dur, out = 1.6, []
+    partiels = [(196.0, 1.0), (293.7, 0.6), (392.0, 0.5), (523.3, 0.3), (659.3, 0.2)]
+    for i in range(int(SR * dur)):
+        t = i / SR
+        x = sum(a * math.sin(2 * math.pi * f * t) * math.exp(-(1.5 + k) * t) for k, (f, a) in enumerate(partiels))
+        out.append(x * env(t, dur, a=0.003, r=0.3))
+    ecrire("fin", out)
+
+
+def etourdi():
+    """Étourdissement : trois tintements qui descendent, les étoiles qui tournent."""
+    out = []
+    for f in [1320.0, 990.0, 740.0]:
+        d = 0.11
+        for i in range(int(SR * d)):
+            t = i / SR
+            out.append((math.sin(2 * math.pi * f * t) + 0.3 * math.sin(2 * math.pi * f * 2.76 * t)) * math.exp(-18 * t))
+    ecrire("etourdi", out, gain=0.6)
+
+
+EFFETS = {
+    "pickup": pickup,
+    "vomi": vomi,
+    "mort": mort,
+    "victoire": victoire,
+    "boss": boss,
+    "pret": pret,
+    "boing": boing,
+    "tic": tic,
+    "fin": fin,
+    "etourdi": etourdi,
+}
+
+
 if __name__ == "__main__":
-    pickup()
-    vomi()
-    mort()
-    victoire()
-    boss()
-    pret()
+    for nom in sys.argv[1:] or list(EFFETS):
+        EFFETS[nom]()

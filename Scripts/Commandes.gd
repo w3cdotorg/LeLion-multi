@@ -48,11 +48,22 @@ var vomir_voulu := false
 var suspendues := false
 ## Chez l'hôte : le numéro de la dernière commande appliquée (0 : aucune), le plus grand numéro reçu,
 ## et les comptes que lisent les tests (chaque numéro jusqu'à `numero_applique` est appliqué une fois
-## ou sauté, jamais deux fois : `appliquees + sautees == numero_applique`).
+## ou sauté, jamais deux fois : `appliquees + sautees == numero_applique`). `sautees` reste la somme
+## des deux causes ci-dessous, distinguées depuis la revue finale de la phase 17 (I2, désync-report) :
+## un rattrapage volontaire (délestage de latence après un accroc hôte) n'est pas une vraie perte de
+## commande et ne doit pas compter dans le seuil de perte réseau des tests.
 var numero_applique := 0
 var dernier_recu := 0
 var appliquees := 0
 var sautees := 0
+## Sautées par le rattrapage volontaire (I2) : la file dépassait SEUIL_RATTRAPAGE, une dette restait à
+## rembourser, et une commande en attente a été délestée exprès pour éviter qu'un retard ne
+## s'installe. Ce n'est pas une perte réseau : à ne rapporter que comme mesure (pas de seuil strict).
+var rattrapees := 0
+## Sautées faute d'être arrivées à temps (I2) : jamais reçues avant leur tick (perdues au-delà de ce
+## que la redondance couvre), ou reçues puis évincées par le plafond FILE_MAX. C'est la vraie perte
+## réseau : à comparer au seuil des tests.
+var perdues := 0
 ## Une commande dépilée dont le numéro n'est pas au-dessus de `numero_applique` (M1, ne devrait jamais
 ## arriver : `recevoir` refuse déjà ce numéro ; gardé pour qu'une régression fasse échouer les tests,
 ## pas seulement l'égalité `appliquees + sautees == numero_applique`, que ce cas peut quand même
@@ -139,7 +150,9 @@ func appliquer_suivante() -> void:
 		if (jetee.numero as int) <= numero_applique:
 			rejouees += 1  # ne devrait jamais arriver : `recevoir` refuse déjà ce numéro
 		else:
-			sautees += (jetee.numero as int) - numero_applique
+			var delestees: int = (jetee.numero as int) - numero_applique
+			sautees += delestees
+			rattrapees += delestees  # rattrapage volontaire (I2) : pas une perte réseau
 			numero_applique = jetee.numero
 		_dette -= 1
 		if _file.is_empty():
@@ -148,7 +161,9 @@ func appliquer_suivante() -> void:
 	if (c.numero as int) <= numero_applique:
 		rejouees += 1  # idem : gardé pour qu'une régression de `recevoir` fasse échouer les tests
 		return
-	sautees += c.numero - numero_applique - 1
+	var manquantes: int = c.numero - numero_applique - 1
+	sautees += manquantes
+	perdues += manquantes  # jamais arrivées à temps (I2) : la vraie perte réseau
 	numero_applique = c.numero
 	appliquees += 1
 	direction_voulue = c.direction

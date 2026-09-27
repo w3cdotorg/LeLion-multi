@@ -8,11 +8,12 @@ extends Area2D
 ## signalé aux règles que si l'approche était assez rapide et que le délai anti-rafale est passé avec
 ## cet autre lion (un lion étourdi reste poussable). Pendant le contact, `bloquer` retire de la vitesse
 ## du lion ce qui l'enfoncerait dans l'autre et écarte deux lions qui se chevauchent.
-## Seul l'hôte signale un choc aux règles. Sur un client, un lion distant ne fait que secouer son
-## sprite au choc (sa position et sa vitesse viennent de l'hôte, interpolées) ; le lion local, prédit
-## (phase 16), prend tout de suite son recul et son blocage contre les lions affichés, pour un « boing »
-## immédiat : chaque choc simulé part aussi en signal (`choc_simule`), que sa prédiction note pour le
-## rejouer tant que l'hôte, qui fait foi, ne l'a pas dans ses états.
+## Seul l'hôte signale un choc aux règles ; chaque poste joue son « boing » (`Audio.jouer_boing`, un
+## par choc). Sur un client, un lion distant ne fait que secouer son sprite au choc (sa position et sa
+## vitesse viennent de l'hôte, interpolées) ; le lion local, prédit (phase 16), prend tout de suite son
+## recul et son blocage contre les lions affichés, pour un « boing » immédiat : chaque choc simulé part
+## aussi en signal (`choc_simule`), que sa prédiction note pour le rejouer tant que l'hôte, qui fait
+## foi, ne l'a pas dans ses états.
 
 ## Un choc vient de changer la vitesse commandée et le recul de ce lion (ce qui leur a été ajouté).
 signal choc_simule(vitesse: Vector2, recul: Vector2)
@@ -83,6 +84,8 @@ func _on_area_entered(zone: Area2D) -> void:
 		choc_recul = normale * approche * facteur_choc
 		deplacement.recul += choc_recul
 		_lion.secouer()
+		# Sur chaque poste (phase 17 bis) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1).
+		Audio.jouer_boing(_lion.est_local() or autre.est_local())
 		# Un seul signalement par choc : celui des deux lions dont l'identifiant est le plus petit.
 		if multiplayer.is_server() and _lion.get_instance_id() < autre.get_instance_id():
 			GameState.regles.choc_entre_lions(_lion.joueur, autre.joueur)

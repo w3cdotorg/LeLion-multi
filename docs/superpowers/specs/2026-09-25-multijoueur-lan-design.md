@@ -33,11 +33,11 @@ et pertes de paquets à prévoir).
 |---|---|
 | Vomi qui touche un autre lion | **Étourdit 1,5 s** : immobile, ne vomit plus, recul, tête barbouillée de la couleur de l'agresseur, étoiles. Puis **1 s d'immunité** (clignotement). |
 | Couleurs de vomi | **Une couleur par joueur**, rendue en 3 nuances (foncée, pure, claire). |
-| Pastilles de couleur | Donnent **+1 cran de gerbe** (1 à 7 crans ; rayon de peinture de 16 px au premier cran, 5 px de plus par cran, 46 px au septième). Départ à 1 cran. Premier arrivé, premier servi. En solo, chaque couleur débloquée donne aussi un cran : les rayons du solo ne changent pas. |
+| Pastilles de couleur | Donnent **+1 cran de gerbe** (1 à 7 crans ; rayon de peinture de 16 px au premier cran, 5 px de plus par cran, 46 px au septième). Départ à 1 cran. Premier arrivé, premier servi. En solo, chaque couleur débloquée donne aussi un cran : les rayons du solo ne changent pas. En bataille (phase 17, réglé sans essai à 4-6) : 2 à la fois de 2 à 3 joueurs, 3 de 4 à 6, une toutes les 4 s sous ce plafond, qui expire au bout de 12 s si personne ne la prend, loin du centre des lions ; en solo, une à la fois, 6 s après le départ de la précédente. |
 | Étoile XXL | Inchangée, par joueur (gerbe × 2 pendant 8 s). |
 | Cœurs | Aucun en multi. |
-| Ennemis (soucoupe, coccinelle, peintre) | Étourdissent **2,5 s** (sans barbouillage), puis 1 s d'immunité. |
-| Fin de manche | **Chrono de 90 s**, personne n'est éliminé. Le plus de cellules gagne, ex æquo possibles. |
+| Ennemis (soucoupe, coccinelle, peintre) | Étourdissent **2,5 s** (sans barbouillage), puis **3 s de répit** (l'immunité : le temps de fuir le peintre, qui couvre la bande de peinture ; phase 17). Le peintre se repose deux fois plus longtemps qu'en solo entre deux passages. |
+| Fin de manche | **Chrono de 90 s**, personne n'est éliminé. Le plus de cellules gagne, ex æquo possibles. Seul le chrono de l'hôte termine la manche ; chaque client reçoit sa fin (phase 17). |
 | Collisions entre lions | **Auto-tamponneuses** : blocage physique + impulsion de recul proportionnelle à la vitesse relative. Un lion étourdi peut être poussé. |
 | Viewport multi | **2000×1125 (16:9)**. Le solo garde 2000×648. |
 | Palette | Rouge `(0.81, 0.14, 0.01)`, bleu `(0.24, 0.38, 1.00)`, jaune `(1.00, 0.91, 0.09)`, vert `(0.19, 0.82, 0.34)`, magenta `(0.87, 0.26, 0.73)`, cyan `(0.23, 0.92, 1.00)` (`GameState.PALETTE_BATAILLE`, phase 11 bis). En deutéranopie simulée (Machado 2009), l'écart OKLab minimal entre deux couleurs pures est de 0,186 (0,115 avant réglage) ; sur la crinière, rouge et vert, magenta et cyan ne s'y distinguent que par la clarté : le pseudo accompagne toujours la couleur (étiquette du lion, vignettes du HUD). Sur le territoire de la ville, peint dans les trois nuances de chaque joueur (foncée/pure/claire, `Joueur.nuances`), des paires de nuances de joueurs différents se rapprochent encore plus en deutéranopie : magenta pur ≈ cyan foncé (écart OKLab 0,028), rouge clair ≈ jaune foncé (0,046), rouge pur ≈ vert foncé (0,047). La propriété d'une cellule ne se lit donc pas à sa teinte mais au score du HUD, qui porte le pseudo. |
@@ -66,8 +66,10 @@ de jeu.
 | `Reseau` (autoload) | Pair ENet, poignée de main (version, pseudo), liste des joueurs du salon (la table : arrivés seulement, couleur, Prêt ; tenue par l'hôte, diffusée à chaque changement), attribution des index et couleurs, arbitrage des demandes des clients, relais du niveau et du lancement de la manche, revérifié par l'hôte au moment où il démarre (RPC fiables sur l'autoload, présent sur chaque poste dès la connexion), signaux de connexion / déconnexion et du salon. Le salon (scène) porte le bouton « Démarrer la partie » de l'hôte. | `MultiplayerAPI` |
 | `Decouverte` (autoload) | Balise UDP de l'hôte (émise tant que `Reseau` héberge, sans qu'on la relance), écoute et liste des parties entendues, validation d'une adresse IPv4 saisie. Ne nomme aucun autoload (phase 12). | `Reseau` (par son chemin) |
 | `Main` | Instancie N lions (via `MultiplayerSpawner` en réseau, qui fait aussi apparaître ennemis et pastilles chez les clients), applique l'écran des règles branchées avant elle (par le titre ou le salon, jamais par la scène). | tout le reste |
-| `Manche` (nœud de la scène de jeu, phase 14) | En réseau : barrière de chargement (exclusion d'un absent), commandes des clients, tampons et territoire diffusés, réactions des joueurs, départs. Hors réseau, inerte. | `Reseau`, `Ville`, `Joueur` |
+| `Manche` (nœud de la scène de jeu, phase 14) | En réseau : barrière de chargement (exclusion d'un absent), commandes des clients, tampons et territoire diffusés, réactions des joueurs, départs (annoncés par l'hôte à chaque client depuis la phase 17), fin de manche de l'hôte envoyée après ses derniers tampons et son territoire (phase 17). Hors réseau, inerte. | `Reseau`, `Ville`, `Joueur` |
 | `Peinture` (logique pure, phase 14) | Jeux de tampons tirés de leur clé, tirage d'un tampon par sa graine, format réseau des tampons : chaque poste dessine les mêmes. | rien |
+| `HUDBataille` (scène, phase 17) | Le HUD d'une bataille, posé par `Main` à la place de celui du solo : vignettes, chrono, panneau de fin et sa sortie (§8). Lit le territoire de la ville, le chrono et les signaux des joueurs sur chaque poste. | `Ville`, `Joueur`, `Regles` |
+| `PlacementPseudos` (logique pure, phase 17) | Écarte à l'horizontale les pseudos des lions qui se recouvrent et les garde dans l'écran. | rien |
 
 ### 3.2 Flux d'une frame (bataille)
 
@@ -154,7 +156,7 @@ de jeu.
     (on peut aussitôt rejoindre une autre partie), au titre depuis une manche ;
   - client perdu en salon : sa carte se libère ;
   - client perdu en manche : son lion disparaît, ses cellules restent, il reste au classement en
-    grisé ;
+    grisé (l'hôte annonce son départ à chaque client, phase 17 ; un exclu de la barrière aussi) ;
   - client qui n'a pas chargé la scène de jeu 20 s après le lancement (barrière de chargement) :
     exclu, l'hôte le déconnecte, la manche commence sans lui (phase 14) ;
   - un départ volontaire est un DISCONNECT fiable d'ENet, renvoyé jusqu'à son accusé de réception ;
@@ -215,12 +217,13 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 - **Étourdissement** : commandes ignorées, recul, barbouillage, étoiles qui tournent. L'immunité
   réutilise le clignotement actuel. Étourdissement et immunité partagent la minuterie
   d'invulnérabilité du solo : `Joueur.etourdir` la règle sur la durée de l'étourdissement plus
-  1 s, et les règles ignorent un joueur étourdi ou invulnérable (le peintre et la gerbe signalent
-  leur contact à chaque frame).
+  1 s (3 s de répit après un ennemi en bataille, phase 17), et les règles ignorent un joueur
+  étourdi ou invulnérable (le peintre et la gerbe signalent leur contact à chaque frame).
 - **Collisions** : les lions partagent une couche de collision dédiée (couche 5) : un pare-chocs
   (`Area2D`) de 45 px au lieu des 63 px du corps. Le corps reste sur la couche 1, où ennemis et
   pastilles le détectent, et ne heurte plus rien (masque 0). Au premier contact, impulsion `recul`
-  des deux côtés proportionnelle à la vitesse d'approche relative, son « boing », petite secousse
+  des deux côtés proportionnelle à la vitesse d'approche relative, son « boing » (sur chaque poste, un
+  par choc, plus discret entre deux autres lions que celui de ce poste), petite secousse
   du sprite (pas de secousse d'écran en multi) ; pendant le contact, la part de la vitesse dirigée
   vers l'autre lion est annulée. Un choc ne cause pas d'étourdissement. Un ennemi ne ré-étourdit
   pas un lion immunisé.
@@ -292,14 +295,28 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 
 ## 8. HUD et fin de manche
 
-- **HUD bataille** : 6 vignettes en ordre fixe (couleur, pseudo, % de la ville, crans en points),
-  couronne sur le meneur, vignette locale mise en évidence. Chrono central, rouge avec tic sonore
-  dans les 10 dernières secondes.
-- **Musique** : les couches suivent le temps restant (arpèges à 60 s, mélodie à 30 s). Thème du
-  peintre au Village.
+- **HUD bataille** (phase 17, `HUDBataille`) : 6 vignettes au plus, en ordre fixe (celui des index),
+  moitié de chaque côté du chrono : couleur (bordure, lion teint), pseudo (« Joueur n » sans pseudo),
+  **part des cellules peintes** (les cellules du joueur sur toutes celles que possèdent les joueurs,
+  en pourcents entiers qui font 100 à eux tous ; 0 % pour tous tant que personne ne possède rien ;
+  décision de l'utilisateur du 27/09), **rang** (« 1er », « 2e »… ; ex æquo au même rang ; aucun sans
+  cellule ; tiré des cellules, jamais des parts arrondies), couronne posée de travers sur la tête du
+  lion de la vignette de chaque meneur, crans en points, gerbe XXL et ses secondes (décomptées par le HUD),
+  étourdissement ; vignette locale mise en évidence (bordure épaisse, « TOI ») ; un joueur parti en
+  grisé (« PARTI »). Le classement se lit sans la couleur (pseudo, part, rang). Chrono central, rouge
+  avec tic sonore dans les 10 dernières secondes. Les pseudos au-dessus des lions ne se recouvrent
+  jamais et restent dans l'écran (`PlacementPseudos`).
+- **Musique** : les couches suivent le temps de la manche (arpèges à 60 s restantes, mélodie à 30 s :
+  `int(avancement × 3)`, `Regles.intensite_musique`). Thème du peintre au Village.
+- **Sons** (phase 17 bis) : « boing » des chocs (§5), étourdissement, tic, gong de fin sur chaque
+  poste ; annonce du peintre aussi chez les clients ; la boucle du vomi n'est qu'au lion de ce poste.
 - **Départ** : l'hôte déclenche l'intro « Prêt ? Vomissez ! » chez tous. Le chrono démarre à la
   fin de l'intro, piloté par l'hôte.
-- **Fin** : à 0, tout se fige, l'hôte envoie les scores définitifs. **Écran Résultats** : podium
+- **Fin** : à 0 chez l'hôte (son chrono seul décide), tout se fige ; l'hôte envoie à chaque client, après
+  ses derniers tampons et son territoire sur le même canal fiable, la fin avec son chrono et ses scores
+  définitifs : le client prend ce chrono et se fige (phase 17 ; l'état final de chaque lion viendra en
+  phase 18). En attendant l'écran Résultats, un panneau de fin (« FIN DE LA MANCHE ! », le gagnant ou
+  les ex æquo) et sa sortie (Échap, Start, bouton : le titre). **Écran Résultats** : podium
   en barres colorées animées (réutilise l'animation du bilan de `GameOver`), pourcentages, trois
   titres (« Le plus vicieux » : étourdissements infligés, « Le voleur » : cellules volées,
   « L'auto-tamponneur » : chocs). L'hôte choisit *Revanche*, *Niveau suivant* ou *Retour au
@@ -325,7 +342,8 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   non-régression du solo.
 - **Tests unitaires headless** (`tests/unitaires.gd`) : charge et vol de cellule, seuil de
   possession, attribution et conflits de couleurs, refus de version, sérialisation des événements
-  de tampon.
+  de tampon ; depuis la phase 17, le chrono (affichage, fin chez l'hôte seulement), le classement ex
+  æquo, les couches de musique et le placement des pseudos.
 - **Tests de prédiction** : un lion prédit sans pertes reste à moins de 4 px de l'hôte ; avec
   80 ms de latence, 40 ms de gigue et 5 % de pertes, l'écart converge sous 4 px en 150 ms après
   l'arrêt des commandes, et aucune commande n'est appliquée deux fois par l'hôte. Depuis la phase 16 :
@@ -369,7 +387,11 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   apparitions, niveau, et les réactions de chaque joueur (étourdissements, crans, gerbes XXL)
   comptées sur chaque poste (aucune perdue ni doublée). Les statistiques de bataille ne sont tenues
   que par l'hôte (phase 18 : les envoyer aux clients). `DUREE11=45` (décision de l'utilisateur, pas
-  90 s : marge CI sous le `timeout 300`).
+  90 s : marge CI sous le `timeout 300`). Depuis la phase 17 (scénario 13), la fin au chrono de l'hôte
+  sous latence simulée : 1 hôte et 2 clients derrière le relais, une manche de 10 s ; chaque client
+  reçoit la fin (son chrono pris sur celui de l'hôte, 0,25 s d'écart au plus), le même HUD figé sur
+  chaque poste (chrono à 0:00, parts, rangs, tics), puis l'hôte sort par Échap et ses clients le voient
+  partir ; l'empreinte de fin de manche des scénarios 9, 11 et 12 compte aussi le HUD (départs compris).
 - **Trace des lions** (`tests/trace_lions.gd`, phase 15 bis, hors CI) : une bataille à 4 lions, une
   partie solo et une réplique de client rejouées tick par tick (hasard semé, `--fixed-fps 60`) ; leur
   empreinte (l'état observable de chaque lion à chaque tick) prouve qu'une refonte du lion ne change

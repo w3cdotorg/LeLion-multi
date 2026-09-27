@@ -733,7 +733,8 @@ func _run() -> void:
 	var attendues := {
 		"Soucoupe": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
 		"Coccinelle": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:rotation", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
-		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
+		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE],
+			[^".:etat", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
 		"ColorPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER], [^".:couleur_index", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
 		"BonusPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
 		"CoeurPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
@@ -839,6 +840,14 @@ func _run() -> void:
 		and coccinelle_repl.speed == 0.0 and boss_client.position == Vector2(1000, 300) and boss_client._tween == null,
 		"sur un client, un ennemi ne bouge pas de lui-même, ne tire rien au hasard et le peintre ne lance aucun tween")
 	_check(boss_client.sprite.scale.x < 0.0 and boss_client.cote == -1, "sur un client, le peintre regarde du côté reçu de l'hôte (sprite en miroir)")
+	# Phase 17 bis : l'annonce du peintre, décidée par l'hôte, s'entend aussi chez chaque client (son état
+	# est répliqué) ; l'état répété, ou un autre état, ne rejoue rien
+	var annonces_avant := _sons.count("boss")
+	boss_client.etat = boss_client.Etat.ANNONCE
+	boss_client.etat = boss_client.Etat.ANNONCE
+	boss_client.etat = boss_client.Etat.ENTREE
+	_check(_sons.count("boss") == annonces_avant + 1 and boss_client._tween == null,
+		"sur un client, l'annonce du peintre reçue de l'hôte joue son son, une fois, sans lancer de tween")
 	_check(not spawner_client._demarre and spawner_client._timer_soucoupe == null and poste_client.get_child_count() == enfants_client,
 		"sur un client, le Spawner ne fait rien apparaître (tout vient de l'hôte)")
 	# Chaque nœud synchronisé quitte le sous-arbre avant que son pair ne change (sinon l'API du client
@@ -1010,13 +1019,31 @@ func _run() -> void:
 		"un matériau d'un autre shader sur le sprite est remplacé par celui de la teinte")
 	lion_neuf.free()
 
+	# Phase 17 bis : la boucle du vomi n'appartient qu'au lion de ce poste ; un autre lion qui arrête
+	# de vomir ne la coupe plus
+	lr.commandes.vomir_voulu = true
+	lb.commandes.vomir_voulu = true
+	for i in range(3):
+		await process_frame
+	lb.commandes.vomir_voulu = false
+	for i in range(3):
+		await process_frame
+	_check(lr.est_local() and not lb.est_local() and lr.est_en_train_de_vomir and not lb.est_en_train_de_vomir and audio._vomi.playing,
+		"un autre lion qui arrête de vomir ne coupe pas la boucle du vomi du lion de ce poste")
+	lr.commandes.vomir_voulu = false
+	for i in range(3):
+		await process_frame
+	_check(not audio._vomi.playing, "le lion de ce poste qui arrête de vomir coupe sa boucle")
+
 	# Étourdissement par un ennemi : immobile, repoussé, étoiles, sans barbouillage
 	var materiau_bleu := lb.sprite.material as ShaderMaterial
 	lb.commandes.direction_voulue = Vector2.LEFT
 	await _frames(5)
 	_check(lb.deplacement.vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
 	materiau_bleu.set_shader_parameter("barbouillage_force", 0.5)  # pour un check discriminant : un ennemi doit bien la remettre à 0
+	var etourdis_avant := _sons.count("etourdi")
 	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
+	_check(_sons.count("etourdi") == etourdis_avant + 1, "un étourdissement joue son son (phase 17 bis)")
 	_check(j_bleu.est_etourdi() and lb.deplacement.vitesse == Vector2.ZERO and lb.deplacement.recul.x > 0.0 and lb.etoiles.visible,
 		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
 	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "un ennemi ne barbouille pas")
@@ -1118,6 +1145,7 @@ func _run() -> void:
 	lr.global_position = Vector2(600, 300)
 	lb.global_position = Vector2(800, 300)
 	await _frames(2)
+	var boings_avant := _sons.count("boing")
 	lr.commandes.direction_voulue = Vector2.RIGHT
 	for i in range(90):
 		await _frames(1)
@@ -1125,6 +1153,31 @@ func _run() -> void:
 			break
 	lr.commandes.direction_voulue = Vector2.ZERO
 	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
+	_check(_sons.count("boing") == boings_avant + 1, "un choc fait « boing », une fois pour les deux lions (%d)" % (_sons.count("boing") - boings_avant))
+	# M6 (revue finale phase 17) : dans la même image, un son plus fort (celui du lion de ce poste) ne
+	# doit jamais être masqué par un son plus discret (un choc entre deux AUTRES lions) déjà joué ;
+	# et l'inverse ne double pas inutilement (un son plus discret après le son fort déjà joué est ignoré).
+	# Une image neuve d'abord : le choc réel ci-dessus a déjà enregistré un « boing » sur celle-ci.
+	await _frames(1)
+	var _boings_db := func() -> Array[float]:
+		var db: Array[float] = []
+		for enfant in audio.get_children():
+			if enfant is AudioStreamPlayer and enfant.stream != null and enfant.stream.resource_path.get_file().get_basename() == "boing":
+				db.append(enfant.volume_db)
+		return db
+	var avant_m6: int = _boings_db.call().size()
+	audio.jouer_boing(false)  # discret (-9 dB) : un choc entre deux autres lions, traité en premier
+	audio.jouer_boing(true)  # le lion de ce poste, dans la même image : ne doit pas être masqué
+	var apres_m6: Array[float] = _boings_db.call()
+	_check(apres_m6.size() == avant_m6 + 2 and apres_m6[-1] > apres_m6[-2],
+		"M6 : un son plus fort (ce poste) n'est jamais masqué par un son plus discret déjà joué dans la même image (%s)" % [apres_m6.slice(avant_m6)])
+	await _frames(1)  # nouvelle image : la dédup par image ne doit pas retenir l'ancienne
+	audio.jouer_boing(true)  # fort, joué le premier cette fois
+	audio.jouer_boing(false)  # discret, après le fort déjà joué : ignoré, pas de doublon inutile
+	var apres_m6_2: Array[float] = _boings_db.call()
+	_check(apres_m6_2.size() == apres_m6.size() + 1,
+		"un son plus discret qui arrive après un son plus fort déjà joué dans la même image ne rejoue pas (%d au lieu de %d)"
+			% [apres_m6_2.size(), apres_m6.size() + 1])
 	_check(lr.deplacement.recul.x < 0.0 and lb.deplacement.recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
 		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
 	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")
@@ -2027,8 +2080,14 @@ func _tester_manche_reseau() -> void:
 		_check(manche.barriere and noms == attendus_noms and main.lion == main.lions[0] and main.lion.joueur == GS.joueur_local()
 			and main.lion.commandes.source == Commandes.Source.LOCALES and main.get_node("Intro")._lancee and main.get_node("Spawner")._demarre,
 			"(%s) barrière passée : un lion par joueur encore là (%s), celui de ce poste lit ses commandes, l'intro et les apparitions commencent" % [essai, noms])
+		var hud: CanvasLayer = main.hud_bataille
+		_check(hud != null and hud.vignettes.map(func(v: Dictionary) -> String: return v.pseudo.text) == ["Hôte", "Bob"]
+			and hud.vignettes[0].badge.text == "TOI",
+			"(%s) le HUD de la bataille : une vignette par joueur de la table, « TOI » sur celle de l'hôte" % essai)
 		if essai == "absent":
 			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
+			_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].badge.text == "PARTI",
+				"(absent) l'exclu reste au classement, en grisé ; son départ sera annoncé aux clients en passant la barrière")
 			main.free()
 			await _frames(1)
 			reseau.quitter()
@@ -2083,10 +2142,30 @@ func _tester_manche_reseau() -> void:
 		await _frames(2)
 		_check(not is_instance_valid(lion_bob) and main.lions.size() == 1 and ville.territoire.cellules_de(1) == cellules_bob and cellules_bob > 0,
 			"un joueur parti en pleine manche perd son lion, ses cellules restent au territoire (%d)" % cellules_bob)
+		_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].part.text != "0 %",
+			"le HUD grise Bob, parti, avec sa part des cellules peintes (%s) ; la manche annonce son départ" % hud.vignettes[1].part.text)
+		# I2 (revue finale phase 17) : un tampon et une case de territoire tout juste peints, encore en
+		# attente (aucune image écoulée depuis pour les diffuser normalement), doivent partir avec la fin,
+		# avant elle, sur le même canal : sinon la mutation « fin sans vidage » ne serait jamais mise à
+		# l'épreuve (elle passerait tous les tests sans qu'aucun tampon ni case ne soit réellement en vol).
+		ville.peindre(ville.position, 22, GS.joueurs[0])
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)  # reprend la cellule de Bob, parti
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)
+		_check(not manche._tampons.is_empty() and not ville.territoire._changements.is_empty(),
+			"(pré-condition) un tampon et une case de territoire sont en attente, pas encore diffusés")
+		manche.envois_ordre.clear()
+		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
+		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
+		GS.terminer_partie(true)
+		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
+		_check(manche.envois_ordre == ([&"_recevoir_tampons", &"_recevoir_territoire", &"_recevoir_fin_manche"] as Array[StringName]),
+			"I2 : les derniers tampons et le territoire partent avant la fin, sur le même canal (%s)" % [manche.envois_ordre])
 		# Un hôte perdu (chez un client) : message, tout se fige
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused, "l'hôte perdu : « L'hôte a quitté la partie », la partie se fige")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not hud.fin.visible,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place du panneau de fin), la partie se fige")
 		paused = false
 		main.free()
 		await _frames(1)

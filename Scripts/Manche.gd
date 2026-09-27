@@ -31,8 +31,15 @@ extends Node
 ##   RPC fiables, qui appellent chez chaque client les méthodes du `Joueur` qui émettent les mêmes
 ##   signaux (Lion, HUD, Audio).
 ## - Départs : un client parti (`Reseau.joueur_parti`) perd son lion chez l'hôte (sa disparition est
-##   répliquée), ses cellules restent ; un hôte perdu arrête la manche du client (la scène de jeu
-##   affiche le message et revient au titre).
+##   répliquée), ses cellules restent ; l'hôte annonce son départ à chaque client (`depart_vu` : le HUD
+##   le grise, phase 17) ; un hôte perdu arrête la manche du client (la scène de jeu affiche le message
+##   et revient au titre).
+## - Fin de manche (phase 17) : décidée par l'hôte seul (son chrono, ses règles), elle part après ses
+##   derniers tampons et son territoire, sur le même canal fiable ordonné, avec son chrono et ses
+##   scores ; chaque client la reçoit, prend le chrono de l'hôte et termine sa manche (tout se fige, le
+##   HUD montre la fin), puis n'envoie plus de commandes. Le chrono d'un client, parti à la fin de sa
+##   propre intro, ne termine jamais rien lui-même. L'état final de chaque lion viendra avec cette fin
+##   en phase 18.
 ## Nœud de scène : il nomme `Reseau` et `GameState` ; les tests `--script` ne le nomment pas.
 
 ## Chez l'hôte puis chez chaque client : la barrière de chargement est passée, la manche commence.
@@ -40,6 +47,9 @@ signal barriere_passee()
 ## Chez l'hôte : le joueur d'index `index` a quitté la manche (déconnecté, ou exclu faute de scène
 ## chargée à temps).
 signal joueur_parti(index: int)
+## Sur chaque poste : le joueur d'index `index` a quitté la manche (chez l'hôte à son départ ; chez un
+## client quand l'hôte l'annonce, en passant la barrière pour un départ d'avant) : le HUD le grise.
+signal depart_vu(index: int)
 
 ## Délai de la barrière de chargement, en secondes : au-delà, les joueurs dont la scène n'est pas
 ## chargée sont exclus.
@@ -69,6 +79,18 @@ var barriere := false
 var tampons_diffuses := 0
 var tampons_recus := 0
 var empreinte_tampons := 0
+## Vrai une fois la manche finie sur ce poste : chez l'hôte à sa fin (ses règles, ou le test réseau
+## qui la fige), chez un client à la fin reçue de l'hôte.
+var finie := false
+## Client : le chrono de l'hôte moins celui de ce poste quand la fin est arrivée, en secondes (lu par
+## le test réseau : le décalage de la latence, sans conséquence, puisque le chrono de ce poste prend
+## celui de l'hôte).
+var ecart_chrono_fin := 0.0
+## Hôte : la suite des méthodes passées à `_envoyer`, dans l'ordre (I2, revue finale phase 17) : lue
+## par les tests (smoke, réseau) pour prouver que les derniers tampons et le territoire partent
+## avant la fin de manche, sur le même canal fiable ordonné. Jamais vidée d'elle-même : au test de
+## la vider avant la mesure qui l'intéresse.
+var envois_ordre: Array[StringName] = []
 
 var _hote := false
 var _ville: Node2D
@@ -82,6 +104,8 @@ var _recues: Dictionary[int, int] = {}
 var _prets: Array[int] = []
 ## Hôte : les clients exclus par la barrière, qui partent.
 var _exclus: Array[int] = []
+## Hôte : les index des joueurs partis de la manche (exclus compris), annoncés à chaque client prêt.
+var _partis: Array[int] = []
 var _tampons: Array[Dictionary] = []
 var _temps_territoire := 0.0
 ## Hôte : temps de jeu (ticks physiques) écoulé depuis le début du chargement. Pas l'horloge
@@ -117,6 +141,7 @@ func demarrer(ville: Node2D) -> void:
 	if _hote:
 		Reseau.scene_chargee.connect(_sur_scene_chargee)
 		Reseau.joueur_parti.connect(_sur_depart_reseau)
+		GameState.partie_terminee.connect(_sur_fin_de_partie)
 	Reseau.signaler_scene_chargee()
 	if _hote:
 		_verifier_barriere()
@@ -125,7 +150,7 @@ func demarrer(ville: Node2D) -> void:
 ## Les autoloads survivent à la scène de jeu : ne rien leur laisser.
 func _exit_tree() -> void:
 	for connexion: Array in [[Reseau.hote_perdu, _sur_hote_perdu], [Reseau.scene_chargee, _sur_scene_chargee],
-			[Reseau.joueur_parti, _sur_depart_reseau]]:
+			[Reseau.joueur_parti, _sur_depart_reseau], [GameState.partie_terminee, _sur_fin_de_partie]]:
 		if (connexion[0] as Signal).is_connected(connexion[1]):
 			(connexion[0] as Signal).disconnect(connexion[1])
 
@@ -212,8 +237,11 @@ func _verifier_barriere() -> void:
 		j.etourdissement_fini.connect(_sur_fin_etourdissement.bind(j))
 		j.crans_changes.connect(_sur_crans.bind(j))
 		j.bonus_change.connect(_sur_bonus.bind(j))
+		j.bonus_dure.connect(_sur_bonus_dure.bind(j))
 	barriere_passee.emit()  # la scène fait apparaître les lions : leurs apparitions partent avant l'intro
 	_envoyer(&"_lancer_intro", [])
+	for index in _partis:  # les départs d'avant la barrière (exclus compris)
+		_envoyer(&"_recevoir_depart", [index])
 
 
 ## Chez l'hôte : `id` n'a pas chargé sa scène à temps. Il est déconnecté (proprement : il le voit
@@ -251,7 +279,7 @@ func _lancer_intro() -> void:
 ## Chez un client : la commande de ce tick, lue par la prédiction du lion de ce poste, avec les 3
 ## précédentes, une fois par tick physique.
 func _envoyer_commandes() -> void:
-	if not barriere or _prediction == null or not is_instance_valid(_prediction):
+	if not barriere or finie or _prediction == null or not is_instance_valid(_prediction):
 		return
 	var octets := _prediction.paquet()
 	if not octets.is_empty():
@@ -372,10 +400,15 @@ func _sur_crans(crans: int, j: Joueur) -> void:
 
 
 func _sur_bonus(actif_: bool, j: Joueur) -> void:
-	if actif_:
-		_envoyer(&"_recevoir_bonus", [j.index, j.bonus_restant])
-	else:
+	if not actif_:
 		_envoyer(&"_recevoir_fin_bonus", [j.index])
+
+
+## M2 (revue finale phase 17) : `bonus_dure` part à chaque activation de la gerbe XXL, première
+## activation et prolongation confondues (contrairement à `bonus_change`, qui ne l'est qu'une fois) :
+## un client recale ainsi son décompte quand une deuxième étoile prolonge la gerbe en cours.
+func _sur_bonus_dure(duree: float, j: Joueur) -> void:
+	_envoyer(&"_recevoir_bonus", [j.index, duree])
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -429,6 +462,38 @@ func _duree_valide(v: Variant) -> bool:
 	return v is float and is_finite(v) and v >= 0.0 and v <= 30.0
 
 
+# --- Fin de manche ------------------------------------------------------------------------------
+
+
+## Chez l'hôte : la manche est finie (son chrono, ou le test réseau qui la fige). Ses derniers tampons
+## et son territoire partent d'abord, puis la fin, sur le même canal fiable ordonné : chez un client,
+## la fin arrive après eux, les scores définitifs déjà appliqués.
+func _sur_fin_de_partie(_victoire: bool) -> void:
+	if not barriere or finie:
+		return
+	finie = true
+	_diffuser_tampons()
+	_diffuser_territoire()
+	var territoire: Territoire = _ville.territoire
+	_envoyer(&"_recevoir_fin_manche", [GameState.temps_ecoule, PackedInt32Array() if territoire == null else territoire.scores()])
+
+
+## Chez un client : la manche est finie chez l'hôte, à son chrono `temps`, sur ses scores `scores`
+## (déjà appliqués : la fin suit son dernier territoire sur le même canal ; un écart est signalé). Le
+## chrono de ce poste prend celui de l'hôte, puis la manche se termine ici aussi.
+@rpc("authority", "call_remote", "reliable", CANAL_PEINTURE)
+func _recevoir_fin_manche(temps: Variant, scores: Variant) -> void:
+	if not actif or finie or not (temps is float) or not is_finite(temps) or temps < 0.0:
+		return
+	finie = true
+	var territoire: Territoire = null if _ville == null else _ville.territoire
+	if territoire != null and (not (scores is PackedInt32Array) or scores != territoire.scores()):
+		push_error("Manche : scores de fin désynchronisés de l'hôte (%s au lieu de %s)" % [territoire.scores(), scores])
+	ecart_chrono_fin = temps - GameState.temps_ecoule
+	GameState.temps_ecoule = temps
+	GameState.terminer_partie(true)
+
+
 # --- Départs ----------------------------------------------------------------------------------------
 
 
@@ -440,7 +505,25 @@ func _sur_depart_reseau(id: int) -> void:
 			_commandes.erase(j.index)
 			_recues.erase(j.index)
 			joueur_parti.emit(j.index)
+			_annoncer_depart(j.index)
 	_verifier_barriere()
+
+
+## Chez l'hôte : le joueur d'index `index` est parti ; chaque client prêt l'apprend (les autres, en
+## passant la barrière).
+func _annoncer_depart(index: int) -> void:
+	if _partis.has(index):
+		return
+	_partis.append(index)
+	depart_vu.emit(index)
+	_envoyer(&"_recevoir_depart", [index])
+
+
+## Chez un client : l'hôte annonce le départ du joueur d'index `index`.
+@rpc("authority", "call_remote", "reliable")
+func _recevoir_depart(index: Variant) -> void:
+	if _joueur_recu(index) != null:
+		depart_vu.emit(index)
 
 
 ## Chez un client : l'hôte est perdu (ce poste est déjà hors réseau) ; la manche s'arrête là.
@@ -452,6 +535,7 @@ func _sur_hote_perdu() -> void:
 ## client dont la scène de jeu n'est pas chargée : le nœud de la manche n'y existe pas encore ; ni
 ## chez un client déjà déconnecté dont le départ n'est pas encore arrivé ici).
 func _envoyer(methode: StringName, arguments: Array) -> void:
+	envois_ordre.append(methode)
 	var connectes := multiplayer.get_peers()
 	for id in _prets:
 		if connectes.has(id):

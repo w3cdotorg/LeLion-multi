@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Test réseau du transport (phase 11), de la découverte (phase 12), du salon (phase 13), de la
-# manche synchronisée (phase 14), de bout en bout (phase 15) et de la prédiction sous latence
-# simulée (phase 16) : des postes headless sur localhost, un processus Godot par poste
-# (tests/reseau/joueur.gd), et pour le scénario 12 le simulateur de latence (tests/reseau/relais.gd),
-# scénario après scénario.
+# manche synchronisée (phase 14), de bout en bout (phase 15), de la prédiction sous latence
+# simulée (phase 16) et de la fin de manche au chrono (phase 17) : des postes headless sur localhost,
+# un processus Godot par poste (tests/reseau/joueur.gd), et pour les scénarios 12 et 13 le simulateur de
+# latence (tests/reseau/relais.gd), scénario après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
 # et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778) ; le relais du
-# scénario 12 écoute sur port_de_base + 2012.
+# scénario n (12, 13) écoute sur port_de_base + 2000 + n.
 # Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40 ; les
-# scénarios 11 et 12, des manches jouées, ont le leur : DUREE11 + 60, DUREE12 + 50),
+# scénarios 11, 12 et 13, des manches jouées, ont le leur : DUREE11 + 60, DUREE12 + 50, DUREE13 + 50),
 # DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion : hors CI, où la diffusion n'a pas
 # été mesurée ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
 # Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
@@ -529,6 +529,38 @@ DELAI=$DELAI_AVANT12
 [ "$(for nom in hote12 a12 b12; do grep -h "^EMPREINTE " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
 	&& [ "$(compter "^EMPREINTE " hote12 a12 b12)" -eq 3 ] || echec "prédiction sous latence : l'hôte et les deux clients doivent finir avec la même empreinte"
 grep -hE "^PREDICTION |^COMMANDES |^RELAIS datagrammes" "$JOURNAUX/a12.log" "$JOURNAUX/b12.log" "$JOURNAUX/hote12.log" "$JOURNAUX/relais12.log" 2>/dev/null | sed 's/^/  (latence) /'
+
+# 13. Fin de manche au chrono (phase 17), par les vraies scènes : un hôte et deux clients, les clients
+#     derrière le relais (80 ms d'aller-retour, 40 ms de gigue, 5 % de pertes), jouent une manche courte
+#     (DUREE13 s, `ReglesBataille.duree_manche` sur chaque poste) que seul le chrono de l'hôte termine :
+#     chaque client reçoit sa fin (son chrono pris sur celui de l'hôte, « ECART_CHRONO », au plus 0,25 s),
+#     tout se fige chez tous sur le même HUD (chrono à 0:00, parts, rangs : les lignes « FIN »
+#     identiques), les tics des dernières secondes comptés sur chaque poste ; puis l'hôte sort par Échap
+#     (le titre) et ses clients le voient partir, puis le relais s'arrête.
+DUREE13=10
+P=$((PORT_BASE + 13))
+B=$((PORT_BASE + 1013))
+R=$((PORT_BASE + 2013))
+DELAI_AVANT13=$DELAI
+DELAI=$((DUREE13 + 50))
+lancer_relais relais13 --ecoute=$R --vers=$P --latence=80 --gigue=40 --pertes=5 --graine=13 --fin="$JOURNAUX/fin13"
+lancer hote13 --role=chrono-hote --port=$P --port-balise=$B --pseudo=Hote13 --clients=2 --niveau=0 --duree-manche=$DUREE13 \
+	--rester="$JOURNAUX/rester13"
+if attendre_ligne relais13 "RELAIS PRET" && attendre_hote hote13; then
+	lancer a13 --role=chrono-client --port=$R --port-balise=$B --pseudo=Anna --sens=1 --duree-manche=$DUREE13
+	lancer b13 --role=chrono-client --port=$R --port-balise=$B --pseudo=Bruno --sens=-1 --duree-manche=$DUREE13
+	attendre_ligne hote13 "^FIN " $((DUREE13 + 40)) && attendre_ligne a13 "^FIN " && attendre_ligne b13 "^FIN "
+	touch "$JOURNAUX/rester13"
+	attendre_fin hote13
+	attendre_fin a13
+	attendre_fin b13
+fi
+touch "$JOURNAUX/rester13" "$JOURNAUX/fin13"
+terminer "fin de manche au chrono de l'hôte sous latence simulée : chaque client la reçoit, le même HUD figé partout (chrono, parts, rangs, tics), puis l'hôte sort par Échap"
+DELAI=$DELAI_AVANT13
+[ "$(for nom in hote13 a13 b13; do grep -h "^FIN " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^FIN " hote13 a13 b13)" -eq 3 ] || echec "fin au chrono : l'hôte et les deux clients doivent finir sur le même HUD"
+grep -hE "^FIN |^ECART_CHRONO" "$JOURNAUX/hote13.log" "$JOURNAUX/a13.log" "$JOURNAUX/b13.log" 2>/dev/null | sed 's/^/  (chrono) /'
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then

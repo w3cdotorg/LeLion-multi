@@ -81,8 +81,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 
 | # | Objet | Fichiers | Sortie |
 |---|---|---|---|
-| 17 | **HUD de bataille** : vignettes, couronne, chrono de 90 s, tic, musique sur le temps restant. | ➕ `Scenes/HUDBataille.tscn` ➕ `Scripts/HUDBataille.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ HUD à 6 |
-| 17 bis | **Sons de bataille** : « boing » des chocs entre lions (spec §5), synthétisé comme les autres effets. | ✏️ `tools/generer_sons.py` ➕ `Assets/Sons/boing.wav` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/smoke_test.gd` | smoke vert |
+| 17 | **HUD de bataille, fin au chrono et sons** (17 et 17 bis réunies) : HUD à part du solo (une vignette par joueur dans l'ordre des index : pseudo, lion teint et couronné de travers pour chaque meneur ex æquo compris, part des cellules peintes (100 % à eux tous), rang, crans en points, gerbe XXL décomptée par le HUD, étourdissement, départ en grisé ; celle de ce poste mise en évidence ; chrono de 90 s rouge et tic dans les 10 dernières secondes) ; la manche finie au chrono de l'hôte seul, sa fin (chrono, scores) envoyée à chaque client après ses derniers tampons et son territoire, les départs annoncés ; panneau de fin et sortie (Échap : le titre) en attendant les Résultats ; musique au tiers du temps de la manche ; pseudos des lions écartés sans se chevaucher, dans l'écran (`PlacementPseudos`) ; rythme de la manche à 4-6 (pastilles à plusieurs, toutes les 4 s, qui expirent, loin du centre des lions ; 3 s de répit après un ennemi, pause du peintre doublée) ; sons (« boing » de chaque choc sur chaque poste, étourdissement, gong, tic, annonce du peintre chez les clients, boucle du vomi du seul lion local) ; scénario 13 du test réseau (fin au chrono sous latence simulée) et HUD dans l'empreinte ; version 0.17. | ➕ `Scenes/HUDBataille.tscn` ➕ `Scripts/HUDBataille.gd` ➕ `Scripts/PlacementPseudos.gd` ➕ `Assets/Sons/boing.wav` `tic.wav` `fin.wav` `etourdi.wav` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/PareChocs.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scenes/Boss.tscn` ✏️ `Scripts/Main.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Spawner.gd` ✏️ `tools/generer_sons.py` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/bataille_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ HUD à 6, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5) |
+| 17 bis | (réunie avec la 17, même PR) | | |
 | 18 | **Résultats** : podium, trois titres, Revanche / Niveau suivant / Salon. | ➕ `Scenes/Resultats.tscn` ➕ `Scripts/Resultats.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Assets/Traductions/traductions.csv` | ◉ résultats |
 | 19 | **Livraison Windows** : preset, `.pck` intégré, artefact CI, README « Jouer en LAN », captures. | ✏️ `export_presets.cfg` ✏️ `.github/workflows/ci.yml` ✏️ `README.md` ✏️ `tests/screenshots.gd` ✏️ `project.godot` | `.exe` en artefact, testé sur Windows par l'utilisateur |
 
@@ -124,29 +124,30 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
-- **phase 17** (rythme de la manche) : le Spawner fait arriver une pastille à la fois, 6 s après le
-  départ de la précédente (phase 10 bis) ; une pastille que personne ne ramasse bloque la suivante,
-  comme en solo. À revoir en jeu à 4-6 joueurs (délai propre à la bataille dans les règles, durée
-  de vie des pastilles). La distance aux lions (`distance_min_du_lion`) se mesure depuis
-  `global_position` (coin du sprite, à ~95 px du centre du corps) et, après dix essais ratés, la
-  dernière position est gardée même collée à un lion : en bataille seulement (le solo ne change
-  pas), mesurer depuis `global_position + CENTRE` et garder le plus éloigné des dix candidats ;
-- **phase 17** : une bataille finie se fige sans issue (arbre en pause, pas d'overlay, Échap
-  inactif car `partie_en_cours` est faux). Sans conséquence tant que rien ne termine une bataille ;
-  dès que le chrono appelle `terminer_partie`, garder une sortie jusqu'à l'écran Résultats de la
-  phase 18 (Échap permis une fois la manche finie, retour au salon ou au titre), ou livrer 17 et 18
-  ensemble ;
-- **phase 17** (HUD) : les étiquettes de pseudo se chevauchent quand deux lions se touchent (vu sur
-  les captures de la phase 10 ter, ◉ manche à 4 : « Joueur 3Joueur 4 » illisible) ; les décaler ou
-  les empiler verticalement, ou estomper celle du lion le plus bas ;
-- **phase 17** (HUD, étiquettes ; réaffecté par la phase 13, dont l'aperçu n'est pas un `Lion`) :
-  l'étiquette de pseudo au-dessus du lion en manche est centrée (`offset_left -42 … offset_right
-  178`) sur un lion borné à `x ∈ [0, 2000 - sprite_w]` ; un pseudo de 12 caractères larges la rend
-  plus large que ses 220 px et elle déborde des deux côtés, donc sort de l'écran quand le lion est
-  collé à un bord. L'hôte coupe tout pseudo à `Reseau.PSEUDO_MAX` (12, phase 11), l'écran Réseau
-  et les cartes du salon les tiennent (phases 12 bis et 13 : « WWWWWWWWWWWW » à 24 px dans une
-  carte de 310 px) : clamper l'abscisse de l'étiquette dans l'écran, avec le décalage des
-  étiquettes qui se chevauchent (point ci-dessus), et le vérifier sur capture aux deux bords ;
+- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19) rythme
+  de la manche : en bataille, les pastilles arrivent à plusieurs (`Regles.pastilles_en_meme_temps` :
+  2 de 2 à 3 joueurs, 3 de 4 à 6), une toutes les 4 s sous ce plafond (`delai_entre_pastilles`, 6 s en
+  solo), et une pastille que personne ne ramasse expire au bout de 12 s (`duree_de_vie_pastille`) : elle
+  ne bloque plus les autres ; chacune naît loin du **centre** de chaque lion
+  (`pastilles_loin_des_lions`) et, si aucun des dix essais n'est à `distance_min_du_lion` de tous, au
+  plus loin des dix ; elle naît aussi sous la bande du HUD (`HAUTEUR_BANDE_HUD`, 160 px à l'échelle de
+  l'écran de bataille, extra de la Task 6 hors brief : `Regles.zone_pickups_ajustee`), une estimation
+  du bas des vignettes non mesurée sur une capture réelle. Le solo ne change pas (une à la fois, 6 s
+  après le départ de la précédente, coin du lion, dernier essai ; sa trace non plus). Réglé sans essai
+  à 4-6 (justifications dans `ReglesBataille`) : la manche pilotée de `tests/bataille_test.gd` finit
+  avec 7 crans pour chacun des 4 lions (le pilote court à chaque pastille) ; **phase 19** : juger en
+  vrai le rythme des pastilles, le peintre et `HAUTEUR_BANDE_HUD` ;
+- (résolu en phase 17) une bataille finie garde une sortie : le panneau de fin du HUD de la bataille
+  (« FIN DE LA MANCHE ! », le gagnant ou les ex æquo) et Échap, Start ou le bouton : le titre, qui
+  quitte le réseau (l'hôte qui sort ramène ses clients au titre, « L'hôte a quitté la partie ») ; le
+  menu local se ferme et se tait à la fin ; le bouton ne prend jamais le focus (Espace tenu au gong ne
+  quitte pas). **Phase 18** : l'écran Résultats remplace ce panneau et cette sortie (retour au salon) ;
+- (résolu en phase 17) les étiquettes de pseudo de deux lions qui se touchent ne se chevauchent plus
+  et restent dans l'écran, aux deux bords (`PlacementPseudos`, appliqué par `Main._placer_pseudos` à
+  chaque image : les textes qui se recouvrent se serrent en un bloc centré sur leurs places voulues,
+  ramené dans l'écran ; vérifié par `tests/bataille_test.gd`, bord gauche et bord droit, avec
+  « WWWWWWWWWWWW », et sur les captures du ◉ HUD à 6). Elles ne glissent qu'à l'horizontale : leur
+  hauteur, que borne `Lion._marge_haute()`, ne change jamais (la physique et la trace non plus) ;
 - (résolu en phase 14 bis, réaffecté de la phase 14) sons de ramassage : tout passe par `Audio` et
   les signaux du joueur local, sur chaque poste (`couleur_debloquee`, `crans_changes`,
   `bonus_change(true)`, `vies_changees` en hausse, la référence des vies reprise à `partie_prete`),
@@ -169,9 +170,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   un client ne les simule jamais ;
 - (résolu en phase 14) les ennemis ne tournent pas côté client : chacun commence son `_ready` et
   son `_physics_process` par `Ennemi.est_replique()` (ni hasard, ni déplacement, ni tween, ni
-  libération) ; le peintre applique le côté reçu (`Boss.cote`, setter). **Phase 17 bis** :
-  l'annonce du peintre (`Audio.jouer("boss")`, dans `Boss._changer_etat` de l'hôte) ne s'entend
-  que chez l'hôte : la faire entendre aux clients (réplique de `Boss.etat`, ou RPC de la manche) ;
+  libération) ; le peintre applique le côté reçu (`Boss.cote`, setter). (Résolu en phase 17) son
+  état est répliqué (`Boss.etat`, à chaque changement) : son annonce s'entend aussi chez chaque client
+  (le setter de la réplique joue `Audio.jouer("boss")`) ;
 - (résolu en phase 14 bis) durcissements de la revue 8 ter : `create_client` vérifié `OK`, intrus
   du groupe « lion » avec un champ `joueur` (ennemis et pastilles), recul du peintre vérifié
   horizontal après le contact continu, peintre remis au repos. Le recul vérifié a révélé un défaut :
@@ -197,16 +198,20 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   17 à 61 ms chez l'hôte comme chez un client (lignes `MESURE`) ; la frame la plus longue tout
   court (18 à 70 ms) ne génère pas toujours (quatre processus Godot sur un Mac).
   Pas de pré-génération. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs ;
-- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phase 16) : le test
-  réseau prend ~150 s sur ce Mac, dont ~52 s pour le scénario 11 (`DUREE11=45`, décision de
-  l'utilisateur) et ~38 s pour le scénario 12 (la manche sous latence simulée, `DUREE12=20`), sous le
+- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phases 16 et 17) : le
+  test réseau prend ~157 s sur ce Mac (140 s avant la phase 17), dont ~52 s pour le scénario 11
+  (`DUREE11=45`, décision de l'utilisateur), ~38 s pour le scénario 12 (la manche sous latence
+  simulée, `DUREE12=20`) et ~17 s pour le scénario 13 (la fin au chrono, `DUREE13=10`), sous le
   `timeout 300` du pas « Test réseau » de `ci.yml` ; le banc de la prédiction (`tests/prediction_test.gd`)
   a son propre pas, ~1 s. Au-delà de ~200 s, raccourcir un scénario ou relever ce `timeout` ;
-- **phase 17** (le peintre en bataille, vu en phase 15) : sur le Village, le peintre (421 px de haut,
-  posé sur les toits) couvre toute la bande de peinture ; sans fuir, un joueur est étourdi sans
-  relâche (le programme du scénario 11 sans fuite, mesuré à 90 s : 21 % de la ville peinte en 90 s
-  à 4, contre 58 à 66 % en fuyant). À régler avec le rythme de la manche (délai propre à la
-  bataille, taille ou fréquence du peintre en bataille) ;
+- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19) le
+  peintre en bataille (vu en phase 15) : sur le Village, il couvre toute la bande de peinture, et un
+  joueur qui ne fuyait pas était étourdi sans relâche (le programme du scénario 11 sans fuite, mesuré à
+  90 s : 21 % de la ville peinte à 4, contre 58 à 66 % en fuyant). En bataille, un étourdissement par
+  un ennemi laisse 3 s de répit (`ReglesBataille.DUREE_REPIT_ENNEMI`, l'immunité ; 1 s après un vomi,
+  inchangé) : à 350 px/s, plus de deux fois la largeur du peintre (442 px) ; et le peintre se repose
+  deux fois plus longtemps entre deux passages (`Regles.facteur_repos_peintre`, 4 s au lieu de 2) : la
+  bande est libre un tiers du temps au lieu d'un cinquième. **Phase 19** : le juger en vrai ;
 - **phase 18** (résultats, vu en phase 15) : les statistiques de bataille (`Joueur.chocs`,
   `etourdissements_infliges`, `cellules_volees`) ne sont tenues que par l'hôte (règles) et ne sont
   pas répliquées : l'écran Résultats d'un client doit les recevoir de l'hôte (dans le message de fin
@@ -217,15 +222,16 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `Reseau.joueur_parti(id)` : la manche retrouve son joueur par `Joueur.id_reseau`, oublie ses
   commandes et son lion disparaît chez tous (disparition répliquée) ; un hôte perdu arrive chez
   chaque client par `Reseau.hote_perdu` : « L'hôte a quitté la partie » sur la partie figée, puis
-  le titre. **Phase 17** : le joueur parti reste au classement en grisé (le `Joueur` n'a pas encore
-  d'état « parti » ; son lion disparu le dit) ;
+  le titre. (Résolu en phase 17) le joueur parti reste au classement en grisé sur chaque poste : l'hôte
+  annonce chaque départ (`Manche._recevoir_depart`, ceux d'avant la barrière, un exclu, en la
+  passant ; `Manche.depart_vu` sur chaque poste), le HUD le grise (`HUDBataille.marquer_parti`) ;
 - (résolu en phase 14) les réactions d'un joueur (étourdissement et sa fin, crans, gerbe XXL et sa
   fin) partent de l'hôte en RPC fiables de la manche, qui appellent chez chaque client les méthodes
   du `Joueur` qui émettent les mêmes signaux (`etourdir`, `activer_bonus`, `recevoir_crans`,
   `recevoir_fin_etourdissement`, `recevoir_fin_bonus`) ; `GameState._process` ne décompte les
-  minuteries des joueurs que sur l'hôte. **Phase 17** : sur un client, `Joueur.bonus_restant`
-  reste celui reçu au début de la gerbe XXL (seule sa fin arrive) : le HUD de bataille décompte
-  lui-même, ou ne montre pas les secondes ;
+  minuteries des joueurs que sur l'hôte. (Résolu en phase 17) sur un client, `Joueur.bonus_restant`
+  reste celui reçu au début de la gerbe XXL (seule sa fin arrive) : le HUD de la bataille décompte
+  lui-même ses secondes (`HUDBataille.xxl_restant`), que la fin reçue efface ;
 - **phase 19** (qui touche `tests/screenshots.gd`) : le coup de `tests/screenshots.gd` (vers la
   ligne 96) tombe pendant l'intro et n'a aucun effet ; le déplacer après `GS.demarrer()` et relancer
   le script à la main (la CI ne le lance pas). Les minuteries `null` du Spawner quand la partie se
@@ -238,7 +244,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
   tronque sur 8 bits, `Color.to_rgba32()` arrondit ;
-- **phase 17** (HUD) : la palette de bataille est réglée pour la deutéranopie depuis la phase 11 bis
+- (résolu en phase 17 : les vignettes du HUD portent le pseudo, la part et le rang, pas seulement la
+  couleur) la palette de bataille est réglée pour la deutéranopie depuis la phase 11 bis
   (écart OKLab minimal 0,186 entre couleurs pures simulées, vérifié par `tests/unitaires.gd`), mais
   sur la crinière (couleur × luminance du sprite) rouge et vert restent deux kakis que seule la
   clarté sépare, magenta et cyan deux gris bleutés : les vignettes du HUD portent le pseudo, pas
@@ -248,15 +255,12 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   foncé 0,047 — M2, revue finale phase 11 bis, garde-fou sur la moyenne des nuances par joueur dans
   `tests/unitaires.gd`) : la propriété d'une cellule se lit au score du HUD (avec le pseudo), jamais
   à sa teinte ;
-- **phase 17** : le score d'un joueur se lit sur le territoire de la ville
+- (résolu en phase 17) le score d'un joueur se lit sur le territoire de la ville
   (`ville.territoire.cellules_de(joueur.index)`, sur `ville.territoire.nb_peignables` pour un
-  pourcentage, comme la manche de `tests/bataille_test.gd`) ; il n'y a pas de `Joueur.cellules`
-  (spec §3.1). La couverture du solo reste mesurée en bataille (`GameState.progression`) : le
-  peintre et la difficulté des ennemis suivent `Regles.avancement()` depuis la phase 10 bis (le
-  temps de la manche en bataille) ; la musique (`Main._on_progression_changee`, encore sur la
-  couverture) et le HUD (encore celui du solo en bataille : cœurs, arc-en-ciel, chrono qui monte)
-  sont à la phase 17. `int(regles.avancement() × 3)` donne les couches de la spec §8 (arpèges à
-  30 s écoulées, mélodie à 60 s), mais au rythme du chrono, pas des mesures de couverture ;
+  pourcentage) : c'est ce que lit le HUD de la bataille, qui remplace en bataille celui du solo ; il
+  n'y a pas de `Joueur.cellules` (spec §3.1). La musique suit `Regles.intensite_musique()`,
+  `int(avancement() × 3)` dans les deux modes (la formule du solo ; en bataille, arpèges à 30 s de
+  jeu, mélodie à 60 s), à chaque image en bataille (`Main._process`) ;
 - (résolu en phase 14) un joueur parti garde ses cellules telles quelles (spec §4) : aucune
   opération de `Territoire` n'est nécessaire, les autres peuvent les lui voler ;
 - **phase 18** : le territoire de la ville ne se remet à zéro que dans `charger_skyline` ; si
@@ -269,7 +273,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   s'interrompt ; `Spawner.demarrer()` (phase 14) ne repart pas une seconde fois : une nouvelle
   manche recharge la scène, ou le Spawner reçoit un `relancer()` explicite ; la barrière de
   chargement (`Reseau.scenes_chargees`, vidée par `lancer_manche`) suppose aussi une scène
-  rechargée ;
+  rechargée. Depuis la phase 17, la manche d'une scène gardée resterait aussi `finie` (elle
+  n'enverrait plus de fin, un client plus de commandes), le HUD figé sur son panneau de fin : une
+  scène rechargée règle tout cela d'un coup ;
 - (résolu en phase 14 bis) le commentaire de `Boss.acceleration_max` suit l'avancement des règles ;
 - (sans objet depuis la phase 14) aucune couleur ni aucun pseudo de `Joueur` ne change sous un lion
   existant : la table des joueurs est posée avant la scène de jeu et la `spawn_function` la lit ;
@@ -326,12 +332,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   commandes ignorées) à ses pas comme à ses rejeux : le lion suit l'hôte (banc : 0 px d'erreur une fois
   l'étourdissement connu ; environ 14 px à sa fin, qui arrive avec un aller de retard, absorbés par la
   correction douce) ;
-- **phase 17 bis** : jouer le « boing » dans `PareChocs._on_area_entered` (à côté de `Lion.secouer`), sur chaque machine
-  (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
-- **prochaine phase qui touche `Scripts/Regles.gd`** : `Titre._ready` applique aussi
-  `taille_ecran()` (retour au titre en solo 2000×648) : étendre le docstring de
-  `Regles.taille_ecran()` ("appliquée par `Main` en entrant dans la scène de jeu") avec "et par le
-  titre" ;
+- (résolu en phase 17) le « boing » part de `PareChocs._on_area_entered`, à côté de `Lion.secouer`,
+  sur chaque poste (`Audio.jouer_boing` : un par choc, les deux pare-chocs le signalant ; 9 dB plus
+  bas entre deux autres lions que celui de ce poste) : immédiat pour le joueur local (spec §4.1) ;
+- (résolu, constaté en phase 17) le docstring de `Regles.taille_ecran()` dit déjà « appliquée par
+  `Main` en entrant dans la scène de jeu, et par le titre (qui remet le solo) » ;
 - la clé du cache des tampons de `Scripts/Ville.gd` dépend de l'ordre des couleurs : le même jeu de
   couleurs dans un ordre différent crée une entrée de cache redondante, pas un mauvais rendu.
   Acceptable en l'état ; à revoir seulement si le cache déborde en pratique.
@@ -347,8 +352,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 19** (protocole, M7 de la revue de la phase 11) : la version présentée à la poignée de
   main est `application/config/version`, « 0.13 » depuis la phase 13, qui a introduit les premiers
   RPC (ceux du salon, sur l'autoload `Reseau`) : deux postes de phases différentes s'y refusent
-  désormais « version différente ». Chaque phase qui change les RPC (14, 16, 18) doit encore
-  l'augmenter (« 0.14 », « 0.16 »…) ; sinon un `.exe` de CI (Windows) et une version locale (Mac) de phases
+  désormais « version différente ». Chaque phase qui change les RPC (14, 16, 17, 18) doit encore
+  l'augmenter (« 0.14 », « 0.16 », « 0.17 »…) ; sinon un `.exe` de CI (Windows) et une version locale (Mac) de phases
   différentes s'accepteraient, puis échoueraient en silence sur des RPC ou des caches de nœuds
   incompatibles. Phase 19 : garder cette règle, ou la remplacer par une constante `PROTOCOLE`
   envoyée dans la demande et comparée avec le même refus `REFUS_VERSION` ;
@@ -422,10 +427,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   Les chocs contre un lion distant qui bouge sont prédits contre sa position affichée, en retard de
   ~140 ms (100 ms d'interpolation et l'aller) : l'hôte fait foi, l'écart se résorbe en glissant
   (spec §13) ;
-- **phase 17 bis** (sons de bataille, depuis la phase 8 bis) : chaque lion, local ou non, appelle
-  `Audio.demarrer_vomi` / `arreter_vomi` : un lion qui arrête de vomir coupe la boucle du joueur
-  local ; ne la jouer que pour le lion de `joueur_local()` (et un son spatialisé ou plus discret
-  pour les autres) ;
+- (résolu en phase 17) la boucle du vomi n'est qu'au lion de ce poste (`Lion.est_local()`) : un autre
+  lion qui arrête de vomir ne la coupe plus ; les autres lions ne jouent rien en vomissant (une boucle
+  spatialisée par lion attend que l'essai à 4-6 la réclame, phase 19) ;
 - **phase 19** (captures ; revue de la phase 14, vérifié en phase 16) : chez un client qui perd
   l'hôte, le moteur fait disparaître les nœuds apparus par le `MultiplayerSpawner` (lions, ennemis,
   pastilles) : le message s'affiche sur une ville sans lions. Sans conséquence pour la prédiction
@@ -435,13 +439,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   14, Task 9) est à verser avec les autres captures ; il force une fenêtre
   (`DisplayServer.window_set_mode`) : `Regles.appliquer_ecran` ne règle pas une fenêtre en plein
   écran (réglage « plein écran » de `Parametres`) ;
-- **phase 17** : la fin de manche n'existe pas encore en réseau : le test réseau fige la manche de
-  l'hôte par `GameState.terminer_partie` ; les clients ne le savent pas (le chrono de la phase 17
-  devra l'annoncer, et `Manche` diffuse déjà ses derniers tampons et son territoire l'arbre en
-  pause) ;
-- **phase 18** (vu en phase 16, désync-report.md du scénario 11) : la fin de manche devra être une
-  décision de l'hôte, appliquée à réception chez chaque client, qui porte l'état final de chaque
-  lion. Par conception, la prédiction d'un client ne distingue pas un hôte figé d'un silence Wi-Fi et
+- (résolu en phase 17) la fin de manche existe en réseau : chez l'hôte, son chrono (ou le test réseau
+  qui fige sa manche) appelle `terminer_partie` ; `Manche._sur_fin_de_partie` envoie ses derniers
+  tampons, son territoire, puis la fin (`_recevoir_fin_manche` : son chrono et ses scores), sur le même
+  canal fiable ordonné ; chaque client prend le chrono de l'hôte et termine sa manche (tout se fige,
+  le HUD montre la fin), puis n'envoie plus de commandes (scénario 13 du test réseau) ;
+- **phase 18** (vu en phase 16, désync-report.md du scénario 11 ; la décision de l'hôte existe depuis
+  la phase 17, `Manche._recevoir_fin_manche`) : la fin de manche devra aussi porter l'état final de
+  chaque lion. Par conception, la prédiction d'un client ne distingue pas un hôte figé d'un silence Wi-Fi et
   continue (spec §4.1, YAGNI) : un client qui tient encore ses touches au gong voit son propre lion
   continuer à bouger sur son écran après la fin, pendant que l'hôte et les autres postes le montrent
   déjà arrêté ; sans ce message de fin, cet écart ne se résorbe jamais (le test réseau le contourne en
@@ -460,27 +465,56 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   l'intro. Tolérance large (ENet coupe vers ~8 s de silence en session ; mesuré ~35 s pour un
   chargement au maximum de 30 s), d'où la sévérité mineure. Préchauffer pendant le chargement : une
   image avec un lion (et sa gerbe active) hors champ, libéré avant `signaler_scene_chargee` ;
-- **phase 17** (chrono de bataille en réseau, précision de la revue finale 14, complète le point
-  ci-dessus sur la fin de manche) : à 90 s, le mode intérimaire reste sûr sans le chrono
-  (`ReglesBataille.avancement()` dépasse 1, mais le Spawner et le peintre le bornent par `clamp` ;
-  aucune fin n'est émise d'un seul côté, aucun écran solo ne s'ouvre) — à dire aux testeurs d'un
-  essai LAN avant la phase 17. La fin devra être décidée par l'hôte et envoyée par RPC ; le chrono de
-  chaque client démarre à la fin de **sa propre** intro, décalé de la latence : il ne doit rien
-  terminer lui-même ;
+- (résolu en phase 17) chrono de bataille en réseau : la fin est décidée par l'hôte seul
+  (`ReglesBataille.temps_ecoule_change`, appelé par `GameState._process` chez l'hôte) et envoyée par
+  RPC ; le chrono de chaque client, parti à la fin de **sa propre** intro et décalé de la latence, ne
+  termine jamais rien lui-même (`tests/unitaires.gd`) : à la fin reçue, il prend celui de l'hôte
+  (mesuré sous le relais, 80/40/5 : écart de 0,007 à 0,019 s) ;
 - **phase 18** (M2 de la revue finale 16, `Scripts/InterpolationLion.gd:90-92`) : pendant un accroc
   Wi-Fi de 200 à 420 ms, le lion distant extrapole 3 ticks puis glisse en arrière (jusqu'à 2,8 px par
   tick) avant de sauter en avant de 21 à 54 px à la reprise ; c'est le prix du correctif du lion figé
   (désync-report du scénario 11), mais visible en jeu normal. À corriger en repoussant le glissement
   arrière après un silence plus long (≥ 500 ms), ou en le rendant inutile par le message de fin de
-  manche de cette phase (les lions distants reçoivent alors directement leur état final) ;
-- **phase 18** (M5 de la revue finale 16) : la décision de fin de manche devra aussi arrêter
+  manche (`Manche._recevoir_fin_manche`, phase 17), une fois qu'il portera l'état final des lions
+  distants ;
+- **phase 18** (M5 de la revue finale 16) : la décision de fin de manche (phase 17 : un client se fige
+  à sa réception, l'arbre en pause, donc sa prédiction aussi) devra aussi arrêter
   `PredictionLocale` chez chaque client (pas d'API aujourd'hui : se caler sur l'état final, remettre
   `_decalage` à zéro, cesser de lire les actions de ce poste), en plus de donner leur état final aux
   lions distants ; le point déjà noté ci-dessus sur la fin de manche (phase 18) couvre le besoin, pas
   ce crochet côté prédiction ;
-- **phase 17** (M5 de la revue finale 16) : tout ce que le HUD ou des effets accrochent au lion local
-  doit suivre sa position affichée (`lion.position + lion.visuel.position`), pas son corps seul (le
-  décalage de correction, phase 16, ne bouge que l'affichage) ;
+- (résolu en phase 17, M5 de la revue finale 16) ce que le HUD accroche aux lions suit leur position
+  affichée : les pseudos, enfants de `Lion.visuel`, placés depuis `position + visuel.position`
+  (`Lion.rect_pseudo`, vérifié par `tests/bataille_test.gd`) ; les vignettes du HUD ne s'accrochent à
+  aucun lion ;
+- **phase 18** (sortie de la phase 17) : le panneau de fin du HUD de la bataille et sa sortie vers le
+  titre ne sont qu'un intérim : l'écran Résultats les remplace (le bouton « Retour au salon » a
+  besoin du RPC qui ramène chaque poste au salon, point ci-dessus) ; la manche finie au chrono y
+  arrive par `GameState.partie_terminee` sur chaque poste. `ReglesBataille.duree_manche` (variable
+  statique du test réseau, comme `Manche.delai_chargement`) reste à `DUREE_MANCHE` dans le jeu ;
+- **phase 19** (essai LAN à 4-6 joueurs, phase 17) : juger en vrai le HUD de la bataille (lisibilité
+  des vignettes dans la fenêtre par défaut, 1400×788, et en plein écran 1080p ; la couronne posée de travers sur le lion des meneurs, les parts des cellules peintes), le volume des
+  sons neufs (« boing », tic, gong, étourdissement ; `Audio.DB_AUTRES`), et surtout le rythme réglé à
+  l'aveugle en phase 17 (plafond et délai des pastilles, leur durée de vie, le répit après un ennemi, la
+  pause du peintre, `HAUTEUR_BANDE_HUD` : constantes de `ReglesBataille`).
 - **phase 19** (M5 de la revue finale 16) : `PredictionLocale._journal` (jusqu'à 20 000 entrées par
   manche) et ses statistiques ne sont que de l'instrumentation de test, livrée telle quelle dans le
   jeu ; sans danger, mais à borner ou retirer.
+- **phase 18** (M3 de la revue finale 17, `Scripts/Manche.gd:512` `_recevoir_depart` et les RPC de
+  réactions `_recevoir_etourdi`/`_recevoir_crans`/`_recevoir_bonus`, canal 0, alors que la fin de
+  manche part sur `CANAL_PEINTURE`) : un cran pris, un étourdissement ou un départ dans la dernière
+  image avant le gong (ou un paquet du canal 0 retransmis sous perte) peut arriver chez un client
+  après sa fin de manche ; le HUD figé de l'hôte le montre déjà, pas celui du client, et
+  `HUDBataille.gd:86-88` ne se rafraîchit plus une fois l'arbre en pause (seul `marquer_parti` le
+  fait). À corriger en joignant au message de fin l'état final de chaque joueur (crans, étourdi,
+  bonus, statistiques de l'hôte) et la liste `_partis`, appliqués par le client avant
+  `terminer_partie` ; à défaut, passer `_recevoir_depart` et les réactions sur `CANAL_PEINTURE`, et
+  brancher le rafraîchissement du HUD sur les signaux des joueurs pour qu'il suive même en pause.
+  L'écran Résultats de la phase 18 construira ses titres sur ces valeurs : à faire avant lui, ou en
+  tête de la phase 18 ;
+- **phase 18** (M5 de la revue finale 17, antérieur à la branche, `Scripts/Main.gd:186`
+  `_sur_hote_perdu`) : si un client tient Espace (vomir) quand l'hôte disparaît en pleine manche,
+  l'arbre se met en pause avant qu'aucun lion n'arrête la boucle (`Audio._vomi`, en
+  `PROCESS_MODE_ALWAYS`) : elle continue sur le titre. `Audio.arreter_vomi` n'est appelé que par un
+  lion, le menu local et la fin normale de partie (`Audio._on_partie_terminee`). À corriger par
+  `Audio.arreter_vomi()` dans `Main._sur_hote_perdu`, et/ou en filet de sécurité dans `Titre._ready`.

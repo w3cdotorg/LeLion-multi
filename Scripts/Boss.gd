@@ -11,13 +11,21 @@ signal etat_change(etat: Etat)
 @export var duree_entree := 3.0
 @export var duree_pause := 1.0
 @export var duree_sortie := 3.0
-@export var duree_repos := 2.0
+@export var duree_repos := 2.0           # en solo ; en bataille, fois `Regles.facteur_repos_peintre`
 @export var acceleration_max := 0.65     # facteur de durée en fin de partie (avancement des règles)
 @export var depassement_annonce := 40.0  # pixels visibles pendant l'annonce
 
 @onready var sprite: Sprite2D = $Sprite2D
 
-var etat := Etat.REPOS
+## Répliqué chez les clients (`Synchro`, à chaque changement) : l'annonce du peintre s'y entend comme
+## chez l'hôte (phase 17 bis), qui la joue dans `_changer_etat`.
+var etat := Etat.REPOS:
+	set(valeur):
+		if valeur == etat:
+			return
+		etat = valeur
+		if valeur == Etat.ANNONCE and is_node_ready() and est_replique():
+			Audio.jouer("boss")
 ## 1 = entre par la gauche, -1 = par la droite. Répliqué chez les clients (`Synchro`) : le peintre y
 ## regarde vers le centre comme chez l'hôte.
 var cote := 1:
@@ -98,7 +106,7 @@ func _changer_etat(nouvel_etat: Etat) -> void:
 	match etat:
 		Etat.REPOS:
 			position.x = _x_hors_ecran()
-			_tween.tween_interval(duree_repos * facteur_vitesse())
+			_tween.tween_interval(duree_repos * GameState.regles.facteur_repos_peintre() * facteur_vitesse())
 			_tween.tween_callback(_changer_etat.bind(Etat.ANNONCE))
 		Etat.ANNONCE:
 			position.x = _x_annonce()

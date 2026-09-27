@@ -43,6 +43,8 @@ func _run() -> void:
 	_tester_commandes_dette()
 	_tester_etat_lion()
 	_tester_interpolation_lion()
+	_tester_chrono_bataille()
+	_tester_placement_pseudos()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -424,17 +426,18 @@ func _tester_regles_bataille() -> void:
 	_check(a.est_etourdi() and b.est_etourdi() and a.etourdissements_infliges == 1 and b.etourdissements_infliges == 1,
 		"un trade tête-à-tête dans la même frame étourdit les deux lions (aucun n'est ignoré comme agresseur déjà étourdi)")
 
-	# Ennemis : 2,5 s sans barbouillage, puis 1 s d'immunité ; aucune vie perdue
+	# Ennemis : 2,5 s sans barbouillage, puis 3 s de répit (phase 17 : le temps de fuir le peintre) ;
+	# aucune vie perdue
 	for i in range(10):
 		r.lion_touche_par_ennemi(bleu, Vector2(1, 2))  # le peintre signale le contact à chaque frame
 	_check(bleu.est_etourdi() and is_equal_approx(bleu.etourdi_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI)
-		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_IMMUNITE)
+		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_REPIT_ENNEMI)
 		and barbouillages.size() == 2 and barbouillages[1].a == 0.0 and bleu.vies == 3,
-		"un ennemi étourdit 2,5 s sans barbouillage (un seul étourdissement pour dix contacts), sans vie perdue")
-	bleu.avancer(ReglesBataille.DUREE_ETOURDI_ENNEMI + 0.5)
+		"un ennemi étourdit 2,5 s sans barbouillage (un seul étourdissement pour dix contacts), sans vie perdue, puis laisse 3 s de répit")
+	bleu.avancer(ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_REPIT_ENNEMI - 0.1)
 	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
-	_check(barbouillages.size() == 2, "un ennemi ne ré-étourdit pas un lion immunisé")
-	bleu.avancer(1.0)
+	_check(barbouillages.size() == 2, "un ennemi ne ré-étourdit pas un lion pendant son répit (le peintre encore dessus)")
+	bleu.avancer(0.2)
 	gs.pret = false
 	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
 	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
@@ -1803,6 +1806,10 @@ func _tester_commandes_reseau() -> void:
 	_check(c.numero_applique == 10 and c.sautees == 2 and c.appliquees + c.sautees == c.numero_applique
 		and c.direction().is_equal_approx(Vector2(0.6, 0.8)),
 		"trois paquets perdus de suite (5 à 9) : 5 et 6 manquent, sautés et comptés ; aucune commande n'est appliquée deux fois ; la direction reçue reste bornée")
+	# I2 (revue finale phase 17, désync-report) : une vraie perte réseau (jamais reçue, pas de rattrapage
+	# ici, la dette venant d'être remise à zéro) ne compte que dans `perdues`, jamais dans `rattrapees`.
+	_check(c.perdues == 2 and c.rattrapees == 0,
+		"un numéro jamais reçu incrémente perdues (%d), pas rattrapees (%d) : ce n'est pas un rattrapage volontaire" % [c.perdues, c.rattrapees])
 	var neuves := 0
 	for dernier in range(14, 31, 4):
 		neuves += _recevoir_paquet(c, dernier, [[Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, true]])
@@ -1891,6 +1898,10 @@ func _tester_commandes_dette() -> void:
 	_check(c.rejouees == 0 and c.appliquees + c.sautees == c.numero_applique,
 		"(dette) aucune commande appliquée deux fois pendant le rattrapage (%d appliquées, %d sautées, jusqu'à la %d)"
 			% [c.appliquees, c.sautees, c.numero_applique])
+	# I2 (revue finale phase 17, désync-report) : ce rattrapage n'est pas une perte réseau (toutes les
+	# commandes 11 à 16 ont fini par arriver) ; il doit être compté à part de `perdues`.
+	_check(c.rattrapees > 0 and c.perdues == 0,
+		"(dette) un délestage volontaire du rattrapage incrémente rattrapees (%d), pas perdues (%d) : ce n'est pas une perte réseau" % [c.rattrapees, c.perdues])
 	_check(sans_accroc.numero_applique - c.numero_applique < 23 - 10,
 		"(dette) le chemin appliqué se rapproche de celui sans accroc (%d contre %d), pas le plein retard de l'accroc (resterait à %d sans la dette)"
 			% [c.numero_applique, sans_accroc.numero_applique, 10])
@@ -1987,6 +1998,151 @@ func _tester_interpolation_lion() -> void:
 	desordre.ajouter(200, Vector2(200, 0), Vector2.ZERO, 1)
 	desordre.avancer(1.0)
 	_check(is_equal_approx(desordre.retard(), InterpolationLion.RETARD), "un saut de plus d'ECART_MAX ticks (un poste figé) recale l'horloge d'un coup")
+
+
+## Phase 17 : le chrono de la manche (affichage, fin chez l'hôte seulement), le classement et les
+## couches de musique.
+func _tester_chrono_bataille() -> void:
+	print("-- Chrono et classement de la bataille (phase 17)")
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	gs.pret = true
+	var r: ReglesBataille = gs.regles
+	var affiches: Array[int] = []
+	for t in [0.0, 0.5, 80.0, 80.2, 89.99, 90.0, 95.0]:
+		gs.temps_ecoule = t
+		affiches.append(r.secondes_restantes())
+	_check(affiches == [90, 90, 10, 10, 1, 0, 0] and r.temps_restant() == 0.0,
+		"le chrono affiche les secondes restantes arrondies au-dessus : 1:30 au départ, 0:01 jusqu'au bout, 0:00 à la fin (%s)" % [affiches])
+	var musique: Array[int] = []
+	for t in [0.0, 29.9, 30.0, 59.9, 60.0, 90.0]:
+		gs.temps_ecoule = t
+		musique.append(r.intensite_musique())
+	_check(musique == [0, 0, 1, 1, 2, 3], "en bataille, les arpèges entrent à 30 s de jeu, la mélodie à 60 s (%s)" % [musique])
+	gs.temps_ecoule = 0.0
+	var fins: Array[bool] = []
+	var sur_fin := func(v: bool) -> void: fins.append(v)
+	gs.partie_terminee.connect(sur_fin)
+	# Sur un client : son chrono tourne, jamais il ne termine la manche lui-même
+	var api := SceneMultiplayer.new()
+	var pair := ENetMultiplayerPeer.new()
+	_check(pair.create_client("127.0.0.1", 17796) == OK, "(pré-condition) GameState sur un pair client")
+	api.multiplayer_peer = pair
+	set_multiplayer(api, gs.get_path())
+	gs._process(ReglesBataille.DUREE_MANCHE + 5.0)
+	_check(gs.partie_en_cours and fins.is_empty() and r.secondes_restantes() == 0,
+		"sur un client, le chrono passé à zéro ne termine pas la manche : elle attend la fin de l'hôte")
+	set_multiplayer(null, gs.get_path())
+	pair.close()
+	# Sur l'hôte (hors réseau compris) : la manche se termine quand le chrono arrive à zéro, pas avant
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(ReglesBataille.DUREE_MANCHE - 0.5)
+	_check(gs.partie_en_cours and fins.is_empty(), "sur l'hôte, la manche continue tant que le chrono n'est pas à zéro")
+	gs._process(0.5)
+	_check(not gs.partie_en_cours and fins == [true], "sur l'hôte, le chrono à zéro termine la manche, une fois (%s)" % [fins])
+	gs._process(1.0)
+	_check(fins.size() == 1 and is_equal_approx(gs.temps_ecoule, ReglesBataille.DUREE_MANCHE),
+		"une manche finie ne se retermine pas, son chrono reste arrêté")
+	# Une manche courte (le test réseau) : la durée se règle sur le script des règles
+	var script_regles: Script = load("res://Scripts/ReglesBataille.gd")
+	script_regles.duree_manche = 10.0
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(10.0)
+	_check(not gs.partie_en_cours and fins.size() == 2 and is_equal_approx(r.avancement(), 1.0),
+		"une manche réglée sur 10 s (test réseau) se termine à 10 s")
+	script_regles.duree_manche = ReglesBataille.DUREE_MANCHE
+	gs.partie_terminee.disconnect(sur_fin)
+	# En solo, le chrono compte sans jamais finir la partie ; la musique suit la ville peinte
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.pret = true
+	gs._process(500.0)
+	gs.progression = gs.seuil_victoire() * 0.7
+	_check(gs.partie_en_cours and gs.regles.intensite_musique() == 2,
+		"en solo, le chrono ne finit jamais la partie, et la musique suit la ville peinte (une couche par tiers du seuil)")
+	gs.progression = 0.0
+	gs.partie_en_cours = false
+	gs.pret = false
+
+	_check(ReglesBataille.rangs([0, 0, 0]) == [0, 0, 0], "au départ, personne n'est classé (aucune cellule)")
+	_check(ReglesBataille.rangs([5, 9, 5, 0]) == [2, 1, 2, 0] and ReglesBataille.rangs([7, 7, 3]) == [1, 1, 3],
+		"le plus de cellules est premier ; des ex æquo partagent leur rang, le suivant saute d'autant")
+	_check(ReglesBataille.parts([0, 0, 0]) == [0, 0, 0] and ReglesBataille.parts([3, 0]) == [100, 0],
+		"la part des cellules peintes : 0 % pour tous tant que personne ne possède rien (aucune division par zéro), 100 % pour le seul peintre")
+	var parts_a_4 := ReglesBataille.parts([349, 274, 326, 426])
+	_check(ReglesBataille.parts([1, 1, 1]) == [34, 33, 33] and ReglesBataille.parts([2, 1]) == [67, 33]
+		and ReglesBataille.parts([5, 9, 5, 0]) == [26, 48, 26, 0] and parts_a_4 == [25, 20, 24, 31],
+		"les parts font 100 à elles toutes, le reste de l'arrondi aux plus grands restes, jamais à un joueur sans cellule (%s)" % [parts_a_4])
+
+	# Le rythme de la manche (phase 17) : pastilles et peintre ; le solo ne change pas
+	var solo := ReglesSolo.new(gs)
+	_check(solo.pastilles_en_meme_temps() == 1 and solo.pastille_peut_arriver(5) and solo.delai_entre_pastilles(6.0) == 6.0
+		and solo.duree_de_vie_pastille() == 0.0 and solo.facteur_repos_peintre() == 1.0
+		and not solo.pastilles_loin_des_lions(),
+		"en solo, une pastille à la fois, 6 s après le départ de la précédente, sans fin de vie ; le peintre se repose comme avant")
+	var plafonds: Array[int] = []
+	for nb in [2, 3, 4, 6]:
+		gs.configurer_bataille(nb)
+		plafonds.append(gs.regles.pastilles_en_meme_temps())
+	var b6: Regles = gs.regles
+	_check(plafonds == [2, 2, 3, 3] and b6.pastille_peut_arriver(2) and not b6.pastille_peut_arriver(3),
+		"en bataille, deux pastilles à la fois de 2 à 3 joueurs, trois de 4 à 6, jamais plus (%s)" % [plafonds])
+	_check(b6.delai_entre_pastilles(6.0) == ReglesBataille.DELAI_ENTRE_PASTILLES and ReglesBataille.DELAI_ENTRE_PASTILLES == 4.0
+		and b6.duree_de_vie_pastille() == 12.0 and b6.facteur_repos_peintre() == 2.0 and b6.pastilles_loin_des_lions(),
+		"en bataille, une pastille toutes les 4 s, qui expire au bout de 12 s si personne ne la prend ; le peintre se repose deux fois plus")
+	# Extra (revue de capture) : la zone des pastilles remonte sous la bande du HUD en bataille (les
+	# vignettes), jamais en solo (pas de HUD au-dessus du jeu)
+	var zone_repere := Rect2(150, 80, 1700, 300)
+	_check(solo.zone_pickups_ajustee(zone_repere) == zone_repere,
+		"en solo, la zone des pastilles n'est pas ajustée (pas de bande de HUD au-dessus du jeu)")
+	var zone_ajustee: Rect2 = b6.zone_pickups_ajustee(zone_repere)
+	var echelle_bataille := ReglesBataille.TAILLE_ECRAN.y / float(Regles.TAILLE_ECRAN_SOLO.y)
+	_check(zone_ajustee.position.y > zone_repere.position.y and is_equal_approx(zone_ajustee.end.y, zone_repere.end.y)
+		and is_equal_approx(zone_ajustee.position.y * echelle_bataille, ReglesBataille.HAUTEUR_BANDE_HUD),
+		"en bataille, la zone des pastilles remonte sous la bande du HUD, sans changer son bas (%s)" % [zone_ajustee])
+	gs.configurer_solo()
+
+
+## Phase 17 : les étiquettes de pseudo de lions qui se touchent s'écartent à l'horizontale, sans
+## sortir de l'écran (2000 px).
+func _tester_placement_pseudos() -> void:
+	print("-- Étiquettes de pseudo (phase 17)")
+	var voisins: Array[Rect2] = [Rect2(100, 50, 120, 30), Rect2(180, 50, 120, 30)]
+	var xs := PlacementPseudos.repartir(voisins, 2000.0)
+	_check(is_equal_approx(xs[0], 77.0) and is_equal_approx(xs[1], 203.0),
+		"deux pseudos à la même hauteur qui se recouvrent s'écartent chacun de la moitié de ce qui manque (%s)" % [xs])
+	var etages: Array[Rect2] = [Rect2(100, 50, 120, 30), Rect2(150, 90, 120, 30)]
+	_check(PlacementPseudos.repartir(etages, 2000.0) == [100.0, 150.0], "deux pseudos l'un au-dessus de l'autre restent où ils sont")
+	var bords: Array[Rect2] = [Rect2(-40, 50, 120, 30), Rect2(1950, 400, 120, 30)]
+	_check(PlacementPseudos.repartir(bords, 2000.0) == [0.0, 1880.0], "un pseudo qui déborde d'un bord y est ramené")
+	var au_bord: Array[Rect2] = [Rect2(-10, 50, 120, 30), Rect2(60, 50, 120, 30)]
+	xs = PlacementPseudos.repartir(au_bord, 2000.0)
+	_check(xs[0] == 0.0 and is_equal_approx(xs[1], 126.0), "contre le bord, l'autre pseudo prend tout l'écart (%s)" % [xs])
+	var tas: Array[Rect2] = []
+	for i in range(6):
+		tas.append(Rect2(1700 + 3 * i, 50, 260, 30))  # six pseudos de 12 caractères larges, sur le même lion
+	xs = PlacementPseudos.repartir(tas, 2000.0)
+	var separes := true
+	for i in range(6):
+		separes = separes and xs[i] >= 0.0 and xs[i] + 260.0 <= 2000.0
+		for j in range(6):
+			if i != j and xs[i] < xs[j]:
+				separes = separes and xs[i] + 260.0 + PlacementPseudos.ECART <= xs[j] + 0.01
+	_check(separes, "six pseudos larges en tas contre un bord s'étalent sans se recouvrir, dans l'écran (%s)" % [xs])
+	# I1 (revue finale phase 17) : un pseudo court (lion à x=1000) à côté d'un pseudo large de 12
+	# capitales (lion à x=1092, 92 px à droite : distance de contact entre deux lions). Chaque texte
+	# est centré sur son lion (comme `Lion.rect_pseudo`) : le texte large, plus il est large, a un
+	# bord gauche plus à gauche que le texte court, bien que son lion soit à droite. Trier par bord
+	# gauche (l'ancien code) inverse alors l'ordre des deux étiquettes ; trier par centre le préserve.
+	var court := Rect2(1000.0 - 23.0, 50, 46, 30)  # centré sur le lion de gauche (x=1000)
+	var large := Rect2(1092.0 - 147.5, 50, 295, 30)  # centré sur le lion de droite (x=1092)
+	_check(large.position.x < court.position.x, "(pré-condition) le bord gauche du texte large est bien avant celui du texte court")
+	xs = PlacementPseudos.repartir([court, large], 2000.0)
+	_check(xs[0] + court.size.x + PlacementPseudos.ECART <= xs[1],
+		"deux lions à distance de contact (92 px) : le pseudo large reste sur le lion de droite, jamais basculé sur celui de gauche (%s)" % [xs])
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

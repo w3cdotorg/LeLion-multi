@@ -69,6 +69,19 @@ func avancement() -> float:
 	return 0.0
 
 
+## Couches de musique à entendre (0 : la base seule, 1 : + arpèges, 2 : + mélodie ; au-delà, `Audio`
+## borne) : une par tiers de l'avancement (en solo, la ville peinte rapportée au seuil ; en
+## bataille, les arpèges à 30 s de jeu et la mélodie à 60 s, spec §8).
+func intensite_musique() -> int:
+	return int(avancement() * 3.0)
+
+
+## Le temps de la partie vient d'avancer (`GameState._process`, chez l'hôte seulement) : sans effet
+## par défaut (le chrono du solo ne fait que compter) ; en bataille, le chrono termine la manche.
+func temps_ecoule_change() -> void:
+	pass
+
+
 ## Index de la couleur de l'arc-en-ciel de la prochaine pastille à faire apparaître, -1 pour
 ## aucune (lu par le Spawner quand une pastille est due). Aucune par défaut.
 func pastille_a_offrir() -> int:
@@ -78,6 +91,49 @@ func pastille_a_offrir() -> int:
 ## Vrai si l'étoile XXL peut apparaître maintenant (lu par le Spawner à chaque échéance).
 func etoile_peut_apparaitre() -> bool:
 	return false
+
+
+## Vrai si une pastille doit apparaître loin du centre de chaque lion, au plus loin des dix essais du
+## Spawner quand aucun ne l'est assez ; faux (le solo, inchangé) : loin du coin du lion, le dernier
+## essai gardé.
+func pastilles_loin_des_lions() -> bool:
+	return false
+
+
+## Pastilles de couleur présentes en même temps au plus : après chaque arrivée, le Spawner en programme
+## une autre tant qu'il y en a moins. Une seule par défaut (le solo : la suivante n'arrive qu'après le
+## départ de la précédente).
+func pastilles_en_meme_temps() -> int:
+	return 1
+
+
+## Vrai si une pastille peut arriver alors que `presentes` sont déjà là : toujours par défaut (le solo,
+## inchangé) ; en bataille, sous le plafond (`pastilles_en_meme_temps`).
+func pastille_peut_arriver(_presentes: int) -> bool:
+	return true
+
+
+## Délai avant l'arrivée de la pastille suivante (après le départ d'une pastille ou, sous le plafond,
+## l'arrivée de la précédente), en secondes : celui du Spawner par défaut (le solo, 6 s).
+func delai_entre_pastilles(delai_du_spawner: float) -> float:
+	return delai_du_spawner
+
+
+## Durée de vie d'une pastille de couleur que personne ne ramasse, en secondes ; 0 : illimitée (le
+## solo). Sa fin (`Pastille._expirer`) est un départ comme un autre : la suivante est programmée.
+func duree_de_vie_pastille() -> float:
+	return 0.0
+
+
+## Facteur de la pause du peintre entre deux passages : 1 par défaut (le solo).
+func facteur_repos_peintre() -> float:
+	return 1.0
+
+
+## La zone des pastilles (échelle du solo, 648 px de haut) ajustée pour ce mode, appelée une fois par
+## le Spawner à son démarrage : inchangée par défaut (le solo, sans HUD au-dessus de l'écran de jeu).
+func zone_pickups_ajustee(zone: Rect2) -> Rect2:
+	return zone
 
 
 ## Vrai si la partie a des cœurs à ramasser (le Spawner ne programme leurs apparitions que si

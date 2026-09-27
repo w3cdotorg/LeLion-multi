@@ -2,7 +2,7 @@ extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
 ##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
 ## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client,
-## manche-muet, bout-hote, bout-client, latence-hote, latence-client.
+## manche-muet, bout-hote, bout-client, latence-hote, latence-client, chrono-hote, chrono-client.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -113,6 +113,17 @@ extends SceneTree
 ##   --fige=chemin. Une fois ses commandes d'après l'arrêt accusées par l'hôte, écrit « PREDICTION … »
 ##   (erreurs de prédiction, recalages, à-coups, plus long rejeu) et vérifie : aucun recalage, l'erreur
 ##   rarement au-delà de 16 px, sous 4 px 150 ms après l'arrêt ; puis sa propre « EMPREINTE ».
+## Fin de manche au chrono (phase 17), par les vraies scènes : 1 hôte + 2 clients (derrière le relais),
+##   une manche courte de --duree-manche=S secondes (`ReglesBataille.duree_manche`, sur chaque poste),
+##   sur le niveau --niveau=L choisi par l'hôte. Chaque poste fait sa passe de peinture (--sens), puis
+##   attend la fin : chez l'hôte par son chrono, chez un client par la fin reçue de l'hôte (son chrono
+##   pris sur celui de l'hôte : « ECART_CHRONO <s> », l'écart qu'il avait) ; tout se fige sur le panneau
+##   de fin, 0:00, les tics des dernières secondes comptés ; « FIN <HUD> » (chrono, pseudos, parts,
+##   rangs : la même ligne sur chaque poste).
+##   Chrono-hôte : --clients=N, --niveau=L, --duree-manche=S, --rester=chemin (« HOTE RESTE », puis,
+##   ce fichier créé, sort par Échap : le titre, hors réseau).
+##   Chrono-client : --sens=1|-1, --duree-manche=S ; attend le départ de l'hôte (« L'hôte a quitté la
+##   partie » à la place du panneau de fin, puis le titre).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -132,6 +143,15 @@ const TICKS_REPOS_AVANT_GEL := 30
 const ECART_PREDICTION := 4.0
 const TICKS_CONVERGENCE := 9
 const A_COUP := 350.0 / 60.0 * 1.5
+## Fin de manche au chrono : écart toléré entre le chrono de l'hôte et celui d'un client quand la fin y
+## arrive, en secondes (la latence de l'intro et celle de la fin se compensent : reste la gigue du relais,
+## 40 ms, et une image de chaque côté ; 0,25 s au départ). I2 (revue finale phase 17) : le scénario 13
+## peint sans s'arrêter jusqu'au gong (des tampons et le territoire en vol au moment de la fin, sur le
+## même canal fiable ordonné que la fin) : un tampon ou un changement de territoire perdu sous les 5 %
+## de pertes simulées peut bloquer la fin derrière lui (canal ordonné) le temps d'une retransmission
+## ENet (mesuré une fois à 0,332 s sous charge CPU) ; les scores restants identiques chez tous (« FIN »),
+## seule cette marge purement latence a besoin d'être plus large qu'avant ce scénario plus réaliste.
+const ECART_CHRONO := 0.6
 ## Vitesse (px/s) au-delà de laquelle un lion ramasse une pastille « au vol », ou percute l'hôte.
 const VITESSE_AU_VOL := 150.0
 const VITESSE_CHOC := 250.0
@@ -205,6 +225,8 @@ func _pause(secondes: float) -> void:
 
 
 func _run() -> void:
+	# Textes attendus en français, quelle que soit la langue du système (la CI tourne en anglais).
+	TranslationServer.set_locale("fr")
 	reseau = root.get_node("Reseau")
 	decouverte = root.get_node("Decouverte")
 	reseau.pseudo = _option("pseudo", "Poste")
@@ -233,8 +255,10 @@ func _run() -> void:
 		await _jouer_bout(role == "bout-hote")
 	elif role == "latence-hote" or role == "latence-client":
 		await _jouer_latence(role == "latence-hote")
+	elif role == "chrono-hote" or role == "chrono-client":
+		await _jouer_chrono(role == "chrono-hote")
 	else:
-		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote, bout-client, latence-hote ou latence-client")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote, bout-client, latence-hote, latence-client, chrono-hote ou chrono-client")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -839,10 +863,34 @@ func _jouer_passe(main: Node, sens: int) -> void:
 	print("MESURE %s : %d jeux de tampons en cache, frame la plus longue %.0f ms pendant la passe" % [reseau.pseudo, main.get_node("Ville")._tampons.size(), pire])
 
 
+## Comme `_jouer_passe`, mais peint sans s'arrêter jusqu'au gong (`gs.partie_en_cours` devient faux),
+## au lieu de s'arrêter après 2,5 s et d'attendre le reste de la manche les mains vides (I2, revue
+## finale phase 17) : garantit que ce poste a des tampons et une case de territoire en vol au moment
+## où la fin de manche part, pour que le scénario 13 mette réellement à l'épreuve l'ordre
+## tampons/territoire puis fin (`_diffuser_tampons` → `_diffuser_territoire` → `_recevoir_fin_manche`).
+## Vrai si la manche s'est bien terminée avant `delai` secondes.
+func _peindre_jusquau_gong(main: Node, sens: int, gs: Node, delai: float) -> bool:
+	var ville: Node2D = main.get_node("Ville")
+	var cible: float = ville.position.y - ville.tex_size.y / 2.0 - 233.0
+	Input.action_press("deplacer_bas")
+	_check(await _attendre(func() -> bool: return main.lion.position.y >= cible), "le lion de ce poste descend vers la ville (%.0f)" % main.lion.position.y)
+	Input.action_release("deplacer_bas")
+	var action := "deplacer_droite" if sens > 0 else "deplacer_gauche"
+	Input.action_press(action)
+	Input.action_press("vomir")
+	var fin := Time.get_ticks_msec() + int(delai * 1000)
+	while gs.partie_en_cours and Time.get_ticks_msec() < fin:
+		await process_frame
+	Input.action_release(action)
+	Input.action_release("vomir")
+	return not gs.partie_en_cours
+
+
 ## L'empreinte de la manche sur ce poste : territoire (propriétaire compté de chaque cellule), scores,
 ## tampons (nombre diffusé par l'hôte ou reçu par un client, et l'empreinte de leur suite), lions
 ## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position),
-## niveau et, pour la manche de bout en bout, les réactions de chaque joueur vues ici. Pas l'image
+## niveau, le HUD de la bataille (phase 17 : chrono, pseudos, parts, rangs, départs) et, pour la manche
+## de bout en bout, les réactions de chaque joueur vues ici. Pas l'image
 ## de la ville : les mêmes tampons y sont dessinés à l'identique (smoke test), mais une coulure qui
 ## descend encore quand un tampon la recouvre passe dessus ou dessous selon le rythme de chaque poste.
 func _empreinte(main: Node, manche: Node, hote: bool) -> String:
@@ -869,9 +917,9 @@ func _empreinte(main: Node, manche: Node, hote: bool) -> String:
 	indices.sort()
 	for i: int in indices:
 		reactions.append("%d:%d,%d,%d" % [i, _reactions[i][0], _reactions[i][1], _reactions[i][2]])
-	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s niveau=%d reactions=%s" % [hash(proprietaires), territoire.scores(),
+	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s niveau=%d hud=%s reactions=%s" % [hash(proprietaires), territoire.scores(),
 		manche.tampons_diffuses if hote else manche.tampons_recus, manche.empreinte_tampons, ";".join(lions), ";".join(apparitions),
-		root.get_node("GameState").niveau_courant, ";".join(reactions)]
+		root.get_node("GameState").niveau_courant, main.hud_bataille.resume(), ";".join(reactions)]
 
 
 ## Fige la manche chez l'hôte (`terminer_partie` : l'arbre se met en pause, la manche diffuse encore)
@@ -1129,19 +1177,24 @@ func _animer_latence_hote(main: Node, manche: Node, gs: Node) -> void:
 		if l == main.lion:
 			continue
 		var c: Commandes = l.commandes
-		print("COMMANDES %s appliquees=%d sautees=%d numero=%d file_max=%d profondeur_moyenne=%.2f" %
-			[l.joueur.pseudo, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue, c.profondeur_moyenne()])
+		print("COMMANDES %s appliquees=%d rattrapees=%d perdues=%d numero=%d file_max=%d profondeur_moyenne=%.2f" %
+			[l.joueur.pseudo, c.appliquees, c.rattrapees, c.perdues, c.numero_applique, c.file_max_vue, c.profondeur_moyenne()])
 		# `rejouees` (M1, revue finale phase 16) fait vraiment échouer ce test si une commande était
 		# rejouée : l'égalité seule peut rester vraie même dans ce cas (`sautees` peut descendre au
 		# lieu de monter).
 		# I1 (revue finale phase 16) : un vrai accroc réseau (SEUIL_RATTRAPAGE) fait maintenant compter
 		# quelques commandes sautées là où l'ancien code avançait en silence (l'erreur de prédiction
-		# baissait sans que rien ne l'atteste) ; marge à 3 % (mesuré : redondance seule sous 1 %, un
-		# accroc bien réel encore sous 2 %).
+		# baissait sans que rien ne l'atteste).
+		# I2 (revue finale phase 17, désync-report) : un accroc hôte (donc plus fréquent sur un runner CI
+		# lent) fait délester des commandes exprès (`rattrapees`) pour ne pas garder de retard ; ce n'est
+		# pas une perte réseau, seule `perdues` (jamais arrivées à temps malgré la redondance, sous 5 % de
+		# pertes simulées) l'est. Seule `perdues` a un seuil strict (1 %, mesuré : la redondance seule le
+		# couvre largement) ; `rattrapees` n'est qu'une mesure, gardée sous une borne large de bon sens
+		# (15 %) pour attraper une régression grossière sans faire échouer le test au moindre accroc hôte.
 		_check(c.rejouees == 0 and c.sautees >= 0 and c.numero_applique > 600 and c.appliquees + c.sautees == c.numero_applique
-			and c.sautees * 33 <= c.numero_applique,
-			"les commandes de %s : aucune appliquée deux fois (%d rejouée(s)), %d sautées sur %d (redondance et accrocs)"
-				% [l.joueur.pseudo, c.rejouees, c.sautees, c.numero_applique])
+			and c.perdues * 100 <= c.numero_applique and c.rattrapees * 100 <= c.numero_applique * 15,
+			"les commandes de %s : aucune appliquée deux fois (%d rejouée(s)), %d perdues sur %d (perte réseau au-delà de la redondance), %d rattrapées par le délestage volontaire (mesure)"
+				% [l.joueur.pseudo, c.rejouees, c.perdues, c.numero_applique, c.rattrapees])
 	_check(await _figer_au_repos(main, gs), "chaque lion au repos depuis %d ticks quand l'hôte fige la manche" % TICKS_REPOS_AVANT_GEL)
 	await _pause(1.0)
 	print("EMPREINTE %s" % _empreinte(main, manche, true))
@@ -1191,6 +1244,61 @@ func _animer_latence_client(main: Node, manche: Node) -> void:
 	_check(prediction.erreurs_au_dela(16.0) * 10 <= etats, "l'erreur de prédiction dépasse rarement 16 px (%d fois sur %d)" % [prediction.erreurs_au_dela(16.0), etats])
 	_check(apres >= 0.0 and apres < ECART_PREDICTION, "150 ms après l'arrêt de ses commandes, l'erreur de prédiction reste sous %.0f px (%.2f px)" % [ECART_PREDICTION, apres])
 	await _finir_manche_client(main, manche)
+
+
+## Rôles « chrono-hote » et « chrono-client » (phase 17, voir l'en-tête) : une manche courte que le
+## chrono de l'hôte termine ; chaque poste la voit finir sur le même HUD, puis l'hôte sort par Échap et
+## ses clients le voient partir.
+func _jouer_chrono(hote: bool) -> void:
+	var duree := float(_option("duree-manche", "10"))
+	var script_regles: Script = load("res://Scripts/ReglesBataille.gd")
+	script_regles.duree_manche = duree
+	var main := await _rejoindre_la_manche(hote)
+	if main != null:
+		await _finir_au_chrono(main, hote, duree)
+	script_regles.duree_manche = ReglesBataille.DUREE_MANCHE
+	_effacer_scores()
+
+
+func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
+	var gs: Node = root.get_node("GameState")
+	var manche: Node = main.get_node("Manche")
+	var hud: CanvasLayer = main.hud_bataille
+	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	print("INTRO")
+	_check(hud != null and hud.vignettes.size() == gs.joueurs.size() and gs.joueurs.size() == 3
+		and hud.vignettes[gs.joueur_local().index].badge.text == "TOI",
+		"le HUD de la bataille : une vignette par joueur (1 hôte et 2 clients), « TOI » sur celle de ce poste")
+	_check(await _peindre_jusquau_gong(main, int(_option("sens", "1")), gs, duree + 10.0),
+		"la manche se termine (peinte sans s'arrêter jusqu'au gong, I2 : des tampons et une case de territoire en vol quand la fin part)")
+	if hote:
+		_check(manche.finie and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
+			"le chrono de l'hôte termine la manche à %.0f s (%.3f s)" % [duree, gs.temps_ecoule])
+	else:
+		print("ECART_CHRONO %.3f" % manche.ecart_chrono_fin)
+		_check(manche.finie and absf(manche.ecart_chrono_fin) <= ECART_CHRONO and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
+			"la fin de l'hôte termine la manche de ce client, son chrono pris sur celui de l'hôte (%.3f s, écart %.3f s)" % [gs.temps_ecoule, manche.ecart_chrono_fin])
+	var tics_attendus := mini(ReglesBataille.SECONDES_TIC, ceili(duree) - 1)
+	_check(paused and hud.fin.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
+		"tout se fige sur le panneau de fin, le chrono à 0:00, %d tics sur %d attendus" % [hud.tics_joues, tics_attendus])
+	print("FIN %s" % hud.resume())
+	if hote:
+		var rester := _option("rester", "")
+		print("HOTE RESTE")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+		var echap := InputEventAction.new()
+		echap.action = &"pause"
+		echap.pressed = true
+		root.push_input(echap)
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
+			"Échap, la manche finie : l'hôte revient au titre, hors réseau")
+	else:
+		_check(await _attendre(func() -> bool: return _issue == "hote_perdu"), "l'hôte finit par partir")
+		_check(main.get_node_or_null("HotePerdu/Message") != null and not hud.fin.visible,
+			"« L'hôte a quitté la partie » à la place du panneau de fin")
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
+			"puis retour au titre, hors réseau")
 
 
 ## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).
