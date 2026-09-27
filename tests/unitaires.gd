@@ -40,6 +40,8 @@ func _run() -> void:
 	_tester_reseau_manche()
 	_tester_deplacement_lion()
 	_tester_commandes_reseau()
+	_tester_etat_lion()
+	_tester_interpolation_lion()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1816,6 +1818,80 @@ func _recevoir_paquet(c: Commandes, dernier: int, commandes: Array) -> int:
 		if c.recevoir(commande.numero, commande.direction, commande.vomir):
 			neuves += 1
 	return neuves
+
+
+## Phase 16 : l'état d'un lion chez l'hôte, au format réseau (ce que recopie son `Synchro`).
+func _tester_etat_lion() -> void:
+	print("-- État d'un lion au format réseau (phase 16)")
+	var octets := EtatLion.encoder(123456, 789, Vector2(512.5, -30.25), Vector2(350, -12.5), Vector2(-700, 0), -1)
+	var e := EtatLion.decoder(octets)
+	_check(octets.size() == EtatLion.TAILLE and e.instant == 123456 and e.commande == 789 and e.position == Vector2(512.5, -30.25)
+		and e.vitesse == Vector2(350, -12.5) and e.recul == Vector2(-700, 0) and e.direction == -1,
+		"instant, dernière commande appliquée, position, vitesse commandée, recul et orientation font l'aller-retour (%d octets)" % octets.size())
+	var nan := EtatLion.encoder(1, 0, Vector2(NAN, 0), Vector2.ZERO, Vector2.ZERO, 1)
+	var sans_sens := EtatLion.encoder(1, 0, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, 0)
+	_check(EtatLion.decoder(nan).is_empty() and EtatLion.decoder(sans_sens).is_empty() and EtatLion.decoder(octets.slice(1)).is_empty()
+		and EtatLion.decoder("état").is_empty(), "un état non fini, sans orientation, tronqué ou d'un autre type est refusé")
+
+
+## Phase 16 : un lion distant sur un client, interpolé entre les états reçus avec RETARD ticks de
+## retard ; ici sous une gigue de ±1,2 tick (±20 ms) autour de 3 ticks de latence et 5 % de pertes.
+func _tester_interpolation_lion() -> void:
+	print("-- Interpolation d'un lion distant (phase 16)")
+	var interp := InterpolationLion.new(60)
+	interp.avancer(1.0)
+	_check(interp.echantillon().is_empty(), "sans état reçu, rien à afficher (le lion garde sa place)")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 16
+	var vitesse := 350.0
+	var en_route: Array = []  # [tick d'arrivée, instant de l'hôte]
+	var xs: Array[float] = []
+	var retards: Array[float] = []
+	for t in range(600):
+		if rng.randf() >= 0.05:
+			en_route.append([t + 3.0 + rng.randf_range(-1.2, 1.2), t])
+		for m: Array in en_route:
+			if m[0] <= t:
+				interp.ajouter(m[1], Vector2(m[1] * vitesse / 60.0, 100.0), Vector2(vitesse, 0.0), 1)
+		en_route = en_route.filter(func(m: Array) -> bool: return m[0] > t)
+		interp.avancer(1.0)
+		var vu := interp.echantillon()
+		if not vu.is_empty():
+			xs.append(vu.position.x)
+			retards.append(t - vu.position.x * 60.0 / vitesse)
+	var pas_min := INF
+	var pas_max := -INF
+	for i in range(120, xs.size()):
+		pas_min = minf(pas_min, xs[i] - xs[i - 1])
+		pas_max = maxf(pas_max, xs[i] - xs[i - 1])
+	var retard_moyen := 0.0
+	for i in range(120, retards.size()):
+		retard_moyen += retards[i] / (retards.size() - 120)
+	_check(pas_min > 0.8 * vitesse / 60.0 and pas_max < 1.2 * vitesse / 60.0,
+		"sous la gigue et les pertes, le lion affiché avance d'un pas régulier, sans recul ni saut (%.2f à %.2f px par tick, pour %.2f)" % [pas_min, pas_max, vitesse / 60.0])
+	_check(retard_moyen > InterpolationLion.RETARD + 1.0 and retard_moyen < InterpolationLion.RETARD + 5.0,
+		"avec %.1f ticks de retard en moyenne sur l'hôte (le retard d'affichage et la latence)" % retard_moyen)
+	var fin := xs[-1]
+	for t in range(30):
+		interp.avancer(1.0)
+	var arret: Vector2 = interp.echantillon().position
+	interp.avancer(1.0)
+	_check(arret == interp.echantillon().position and arret.x <= 599 * vitesse / 60.0 + InterpolationLion.EXTRAPOLATION_MAX * vitesse / 60.0 + 0.01 and arret.x > fin,
+		"plus aucun état : le lion continue sur sa vitesse %d ticks au plus, puis s'arrête" % int(InterpolationLion.EXTRAPOLATION_MAX))
+	var desordre := InterpolationLion.new(60)
+	desordre.ajouter(10, Vector2(0, 0), Vector2.ZERO, 1)
+	desordre.ajouter(12, Vector2(20, 0), Vector2.ZERO, -1)
+	desordre.ajouter(11, Vector2(100, 0), Vector2.ZERO, 1)  # arrivé après le 12
+	desordre.ajouter(11, Vector2(999, 0), Vector2.ZERO, 1)  # doublon
+	for t in range(int(InterpolationLion.RETARD)):
+		desordre.avancer(1.0)
+	var horloge := 12.0 - desordre.retard()
+	var milieu: Dictionary = desordre.echantillon()
+	_check(horloge > 10.0 and horloge < 11.0 and is_equal_approx(milieu.position.x, (horloge - 10.0) * 100.0) and milieu.direction == 1,
+		"un état arrivé en retard se range à son instant, un doublon est ignoré (x = %.1f à l'instant %.2f)" % [milieu.position.x, horloge])
+	desordre.ajouter(200, Vector2(200, 0), Vector2.ZERO, 1)
+	desordre.avancer(1.0)
+	_check(is_equal_approx(desordre.retard(), InterpolationLion.RETARD), "un saut de plus d'ECART_MAX ticks (un poste figé) recale l'horloge d'un coup")
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
