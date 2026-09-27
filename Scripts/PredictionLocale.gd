@@ -166,6 +166,7 @@ func _recaler(etat: Dictionary, delta: float) -> void:
 	_lion.deplacement.vitesse = etat.vitesse
 	_lion.deplacement.recul = etat.recul
 	_lion.direction_du_lion = etat.direction
+	_lion.pare_chocs.en_rejeu = true
 	for i in range(_historique.size()):
 		var c: Dictionary = _historique[i]
 		_lion.deplacement.vitesse += c.choc_vitesse
@@ -173,6 +174,7 @@ func _recaler(etat: Dictionary, delta: float) -> void:
 		if i == _historique.size() - 1:
 			break  # la commande de ce tick : son pas suit, dans `_physics_process`
 		_lion.avancer(_lion.direction_pour(c.direction), delta)
+	_lion.pare_chocs.en_rejeu = false
 	rejeu_max = maxi(rejeu_max, _historique.size() - 1)
 	var ecart := avant - _lion.position
 	if ecart.length() > SEUIL_RECALAGE:

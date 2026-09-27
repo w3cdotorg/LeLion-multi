@@ -121,6 +121,10 @@ func _run() -> void:
 	GS = root.get_node("GameState")
 	await _scenario_parcours("lien parfait", 0.0, 0.0, 0.0)
 	await _scenario_parcours("80 ms, 40 ms de gigue, 5 % de pertes", 80.0, 40.0, 5.0)
+	await _scenario_etourdissement()
+	await _scenario_choc()
+	await _scenario_ecarts()
+	await _scenario_hote_fige()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false
@@ -334,4 +338,161 @@ func _scenario_parcours(titre: String, latence: float, gigue: float, pertes: flo
 		"(%s) le lion distant (interpolé) court d'un pas régulier, sans recul ni saut (%.2f à %.2f px par tick, pour %.2f)" % [titre, pas_min, pas_max, PAS])
 	await _verifier_convergence(titre, arret, 90)
 	_verifier_commandes(titre, h1.commandes.numero_applique / 100)
+	await _liberer()
+
+
+## Un ennemi étourdit le lion du client chez l'hôte pendant qu'il court : la prédiction suit l'hôte
+## (commandes ignorées, même règle que l'hôte), sans appliquer le recul deux fois, puis repart dès la
+## fin de l'étourdissement reçue.
+func _scenario_etourdissement() -> void:
+	print("-- Étourdissement décidé par l'hôte, sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(300, 150), Vector2(400, 500), 80.0, 40.0, 5.0, 1700)
+	_presser(Vector2.RIGHT)
+	var j_hote: Joueur = GS.joueurs[1]
+	var j_client: Joueur = _joueurs_client[1]
+	var tick_etourdi := -1
+	var tick_fin := -1
+	var repart := -1
+	var bouge_etourdi := 0.0
+	var x_etourdi := 0.0
+	var recul_hote := 0.0
+	var numero_suivi := -1
+	var numero_fin := -1
+	for i in range(420):
+		if _tick == 60:
+			GS.regles.lion_touche_par_ennemi(j_hote, h1.global_position + h1.CENTRE + Vector2(-80, 0))
+			recul_hote = h1.deplacement.recul.x
+		await _pas()
+		if tick_etourdi < 0 and j_client.est_etourdi():
+			tick_etourdi = _tick
+			x_etourdi = c1.position.x
+		if tick_etourdi >= 0 and _tick == tick_etourdi + 2:
+			numero_suivi = c1.prediction.numero
+		if tick_etourdi >= 0 and tick_fin < 0 and j_client.est_etourdi():
+			bouge_etourdi = c1.position.x - x_etourdi
+		if tick_etourdi >= 0 and tick_fin < 0 and not j_client.est_etourdi():
+			tick_fin = _tick
+			numero_fin = c1.prediction.numero
+		if tick_fin >= 0 and repart < 0 and c1.deplacement.vitesse.x > 0.0:
+			repart = _tick - tick_fin
+	_relacher()
+	var arret := _prochain_numero()
+	var p: Node = c1.prediction
+	# Les commandes lues pendant l'étourdissement connu de ce poste, sauf les 12 dernières : la fin de
+	# l'étourdissement arrive ici avec un aller simple de retard, et l'hôte applique déjà les commandes
+	# que ce poste croit encore ignorées (un écart attendu, qu'absorbe le recalage).
+	var pendant: float = p.erreur_max(numero_suivi, numero_fin - 12)
+	print("MESURE étourdissement : reçu au tick %d, fini au tick %d, recul de l'hôte %.0f px/s ; le lion du client recule de %.1f px pendant l'étourdissement ; erreur max %.2f px, %.2f px pendant l'étourdissement ; recalages %d ; à-coups %d"
+		% [tick_etourdi, tick_fin, recul_hote, bouge_etourdi, p.erreur_max(), pendant, p.recalages, _a_coups])
+	_check(tick_etourdi > 60 and tick_fin > tick_etourdi, "(pré-condition) l'étourdissement de l'hôte arrive au client, puis sa fin")
+	# Le recul de l'hôte (700 px/s, amorti en 0,19 s) arrive dans ses états ; rejoué une seconde fois
+	# par le client, ou ses commandes suivies malgré l'étourdissement, le lion prédit partirait devant.
+	_check(numero_suivi > 0 and pendant >= 0.0 and pendant < ECART_MAX and p.recalages == 0 and p.erreur_max() < 30.0,
+		"étourdi, le lion du client suit l'hôte : un seul recul, ses commandes ignorées (erreur au plus %.2f px pendant l'étourdissement, %.2f px en tout), sans recalage" % [pendant, p.erreur_max()])
+	_check(repart >= 0 and repart <= 2, "la fin de l'étourdissement reçue, le lion repart aussitôt à ses commandes (%d tick(s))" % repart)
+	await _verifier_convergence("étourdissement", arret, 90)
+	_verifier_commandes("étourdissement", h1.commandes.numero_applique / 100)
+	await _liberer()
+
+
+## Le lion du client percute celui de l'hôte, arrêté sur sa route : le choc est simulé tout de suite
+## contre le lion affiché (interpolé), sans attendre l'hôte ; l'hôte le compte ; la prédiction converge.
+func _scenario_choc() -> void:
+	print("-- Choc contre un lion distant, sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(1200, 500), Vector2(700, 500), 80.0, 40.0, 5.0, 1800)
+	for i in range(30):
+		await _pas()  # le lion distant s'affiche à sa place
+	_presser(Vector2.RIGHT)
+	var tick_client := -1
+	var tick_hote := -1
+	var arret := -1
+	var x_min := INF
+	var rebond := 0.0
+	for i in range(150):
+		await _pas()
+		if tick_client < 0 and c1.deplacement.recul.x < 0.0:
+			tick_client = _tick
+			_relacher()  # le joueur lâche tout au choc : son lion repart en arrière, puis s'arrête
+			arret = _prochain_numero()
+		if tick_hote < 0 and h1.deplacement.recul.x < 0.0:
+			tick_hote = _tick
+		if tick_client >= 0:
+			x_min = minf(x_min, c1.position.x)
+			rebond = maxf(rebond, c1.position.x - x_min)
+	var p: Node = c1.prediction
+	print("MESURE choc : simulé chez le client au tick %d, chez l'hôte au tick %d ; erreur max %.2f px ; rebond de l'affichage %.2f px ; recalages %d ; à-coups %d"
+		% [tick_client, tick_hote, p.erreur_max(), rebond, p.recalages, _a_coups])
+	_check(tick_client > 0 and tick_hote > 0 and tick_client <= tick_hote and GS.joueurs[1].chocs >= 1,
+		"le choc est simulé chez le client sans attendre l'hôte (tick %d, l'hôte au tick %d), et l'hôte le compte" % [tick_client, tick_hote])
+	# Le lion repart en arrière et s'arrête, sans revenir vers le lion percuté : le choc simulé, noté,
+	# est rejoué tant que l'hôte ne l'a pas (oublié, le lion reviendrait avant de repartir).
+	_check(p.recalages == 0 and rebond < ECART_MAX and p.erreur_max() < ECART_MAX,
+		"le choc ne fait ni recalage ni aller-retour visible (rebond de %.2f px ; erreur au plus %.2f px)" % [rebond, p.erreur_max()])
+	await _verifier_convergence("choc", arret, 90)
+	await _liberer()
+
+
+## L'hôte déplace le lion du client : de 60 px, le lion glisse jusqu'à lui en 100 à 150 ms
+## (correction douce) ; de plus de 200 px (téléportation), il est recalé d'un coup, sans glisser.
+func _scenario_ecarts() -> void:
+	print("-- Écarts imposés par l'hôte (correction douce, recalage), sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(300, 150), Vector2(700, 600), 80.0, 40.0, 5.0, 1900)
+	for i in range(30):
+		await _pas()
+	h1.global_position += Vector2(60, 0)
+	var debut := -1
+	var pas_max := 0.0
+	var ecart_apres := -1.0
+	for i in range(40):
+		var avant: Vector2 = c1.position
+		await _pas()
+		var pas: float = c1.position.distance_to(avant)
+		if debut < 0 and pas > 0.0:
+			debut = _tick
+		pas_max = maxf(pas_max, pas)
+		if debut >= 0 and _tick == debut + TICKS_CONVERGENCE:
+			ecart_apres = c1.position.distance_to(h1.position)
+	print("MESURE écarts : 60 px résorbés en glissant, %.1f px au plus par tick, %.2f px restants 150 ms après" % [pas_max, ecart_apres])
+	_check(c1.prediction.recalages == 0 and debut > 0 and pas_max < 30.0 and ecart_apres >= 0.0 and ecart_apres < ECART_MAX,
+		"un écart de 60 px se résorbe en douceur : le lion glisse vers celui de l'hôte (%.1f px par tick au plus) et l'a rejoint 150 ms après (%.2f px)" % [pas_max, ecart_apres])
+	h1.global_position += Vector2(500, -300)
+	var saut := 0.0
+	for i in range(30):
+		var avant: Vector2 = c1.position
+		await _pas()
+		saut = maxf(saut, c1.position.distance_to(avant))
+	var p: Node = c1.prediction
+	_check(p.recalages == 1 and saut > 500.0 and c1.position.distance_to(h1.position) < ECART_MAX and p.decalage() == Vector2.ZERO,
+		"au-delà de %.0f px, le lion est recalé d'un coup sur l'hôte (%d recalage, un saut de %.0f px), sans glisser jusqu'à lui" % [p.SEUIL_RECALAGE, p.recalages, saut])
+	await _liberer()
+
+
+## L'hôte se fige 2 s (gel, fin de manche) pendant que le client joue : aucun rejeu pendant le gel (le
+## même état revient, jamais rejoué), un historique borné, puis un recalage franc sur l'hôte.
+func _scenario_hote_fige() -> void:
+	print("-- Hôte figé pendant que le client joue, sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(300, 150), Vector2(400, 600), 80.0, 40.0, 5.0, 2000)
+	for i in range(30):
+		await _pas()
+	_vue_hote.process_mode = Node.PROCESS_MODE_DISABLED
+	for i in range(10):
+		await _pas()  # les derniers états d'avant le gel arrivent
+	var etats_avant: int = c1.prediction.etats_recus
+	var rejeu_avant: int = c1.prediction.rejeu_max
+	_presser(Vector2.RIGHT)
+	for i in range(110):
+		await _pas()
+	_relacher()
+	var etats_pendant: int = c1.prediction.etats_recus - etats_avant
+	for i in range(20):
+		await _pas()
+	_vue_hote.process_mode = Node.PROCESS_MODE_INHERIT
+	var arret := _prochain_numero()
+	await _verifier_convergence("hôte figé", arret, 60)
+	var p: Node = c1.prediction
+	print("MESURE hôte figé : %d états neufs pendant le gel, rejeu le plus long %d pas (avant le gel %d), %d recalage(s)"
+		% [etats_pendant, p.rejeu_max, rejeu_avant, p.recalages])
+	_check(etats_pendant == 0 and p.rejeu_max <= p.HISTORIQUE_MAX and p.recalages == 1,
+		"pendant le gel, le même état ne se rejoue pas ; l'historique reste borné (%d pas au plus) ; au dégel, un recalage franc" % p.rejeu_max)
+	_verifier_commandes("hôte figé", h1.commandes.numero_applique)
 	await _liberer()

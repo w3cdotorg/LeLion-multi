@@ -33,6 +33,10 @@ signal choc_simule(vitesse: Vector2, recul: Vector2)
 @onready var rayon: float = ($CollisionShape2D.shape as CircleShape2D).radius
 @onready var _lion: Lion = get_parent()
 
+## Vrai pendant qu'une prédiction rejoue des pas passés du lion (`PredictionLocale`) : `bloquer` ne
+## voit que les contacts présents, qu'il ne compte alors qu'aux positions rejouées où les deux
+## pare-chocs se touchent (un pas rejoué d'avant le contact ne doit pas buter contre lui).
+var en_rejeu := false
 ## Instant (`Lion.temps`, en secondes de jeu) du dernier choc compté avec chaque autre lion, par
 ## identifiant d'instance du lion ; entrées des lions libérés nettoyées à la volée. Le temps de jeu,
 ## pas l'horloge murale : une frame qui rame ou un test en `--fixed-fps` ne change rien au décompte.
@@ -49,6 +53,8 @@ func bloquer(v: Vector2) -> Vector2:
 	for zone in get_overlapping_areas():
 		var autre := zone.get_parent() as Lion
 		if autre == null or autre == _lion:
+			continue
+		if en_rejeu and global_position.distance_to(autre.pare_chocs.global_position) > 2.0 * rayon:
 			continue
 		var normale := _normale_de_choc(autre)
 		var vers_autre := v.dot(-normale)
