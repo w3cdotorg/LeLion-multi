@@ -72,6 +72,7 @@ func _run() -> void:
 	await _tester_reglage_territoire()
 	await _tester_manche()
 	await _tester_hud()
+	await _tester_resultats()
 	await _tester_retour_au_titre()
 	await _tester_solo_apres_bataille()
 	GS.configurer_solo()
@@ -778,9 +779,6 @@ func _tester_hud() -> void:
 	await _frames(1)
 	_check(hud.vignettes[2].etat.text == "", "la fin de la gerbe XXL efface ses secondes")
 	_check(hud.vignettes[3].cadre.modulate.a < 0.5 and hud.vignettes[3].badge.text == "PARTI", "un joueur parti reste au classement, en grisé")
-	_check(hud.texte_gagnant(PackedStringArray()) == "Personne n'a peint la ville." and hud.texte_gagnant(PackedStringArray(["Zoé"])) == "Zoé gagne la manche !"
-		and hud.texte_gagnant(PackedStringArray(["Anna", "Bruno"])) == "Égalité : Anna, Bruno !",
-		"le panneau de fin nomme le gagnant, les ex æquo, ou personne")
 	# Les dix dernières secondes : le chrono rougit et tique, jusqu'à la fin au chrono
 	GS.temps_ecoule = ReglesBataille.DUREE_MANCHE - 10.5
 	await _frames(1)
@@ -795,35 +793,190 @@ func _tester_hud() -> void:
 		"le chrono à zéro termine la manche et fige tout (%.3f s)" % GS.temps_ecoule)
 	_check(hud.tics_joues - tics_avant == ReglesBataille.SECONDES_TIC and hud.chrono.text == "0:00" and hud.chrono.modulate != Color.WHITE,
 		"dix tics dans les dix dernières secondes (%d), le chrono rouge à 0:00" % (hud.tics_joues - tics_avant))
-	_check(hud.fin.visible and hud.gagnant.text == "Joueur 2 gagne la manche !" and not main.menu_pause.visible
-		and main.menu_pause.process_mode == Node.PROCESS_MODE_DISABLED,
-		"le panneau de fin nomme le gagnant (%s) ; le menu local se tait" % hud.gagnant.text)
-	# Espace (vomir, valider) encore tenu au gong ne quitte pas la partie : le bouton ne prend pas le focus
+	var resultats: CanvasLayer = main.resultats
+	_check(resultats != null and resultats.visible and not hud.visible and resultats.gagnant.text == "Joueur 2 gagne la manche !"
+		and not main.menu_pause.visible and main.menu_pause.process_mode == Node.PROCESS_MODE_DISABLED,
+		"phase 18 : l'écran Résultats remplace le HUD et nomme le gagnant (%s) ; le menu local se tait"
+			% ("" if resultats == null else resultats.gagnant.text))
+	# Espace (vomir, valider) appuyé au gong ne quitte pas la partie : aucun bouton ne prend le focus
 	for action: StringName in [&"vomir", &"ui_accept"]:
 		var appui := InputEventAction.new()
 		appui.action = action
 		appui.pressed = true
 		root.push_input(appui)
 	await _frames(3)
-	_check(current_scene == main and hud.fin.visible and root.gui_get_focus_owner() == null,
-		"Espace tenu au gong (vomir, valider) ne quitte pas la partie : rien n'a le focus")
+	_check(current_scene == main and resultats.visible and resultats.choix.is_empty() and root.gui_get_focus_owner() == null,
+		"Espace appuyé au gong (vomir, valider) ne choisit rien et ne quitte pas la partie : rien n'a le focus")
 	var scores: Node = root.get_node("Scores")
 	scores.chemin = "user://scores_test_bataille.cfg"  # l'écran titre enregistre ses préférences
 	var echap := InputEventAction.new()
-	echap.action = &"pause"
+	echap.action = &"ui_cancel"
 	echap.pressed = true
+	root.push_input(echap)  # extra (décision utilisateur) : l'hôte, un premier Échap ne fait que demander confirmation
+	await _frames(1)
+	echap.pressed = false
 	root.push_input(echap)
+	await _frames(1)
+	echap.pressed = true
+	root.push_input(echap)  # un second Échap valide : « Quitter la partie pour tout le monde ? »
 	for f in range(300):
 		if current_scene != null and current_scene.scene_file_path == "res://Scenes/Titre.tscn" and current_scene.is_node_ready():
 			break
 		await process_frame
 	_check(current_scene != null and current_scene.scene_file_path == "res://Scenes/Titre.tscn" and not paused and GS.regles is ReglesSolo,
-		"Échap, la manche finie : retour au titre (le solo), en attendant les résultats de la phase 18")
+		"Échap, sur l'écran Résultats : retour au titre (le solo), un second Échap ayant confirmé")
 	current_scene.free()
 	await _frames(1)
 	scores.effacer()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(scores.chemin))
 	GS.configurer_bataille(NB_LIONS)  # la section suivante part d'une bataille
+
+
+## Phase 18 : l'écran Résultats d'une bataille locale (le bilan de ce poste) : classement, parts,
+## statistiques, titres et choix, au clavier comme à la souris ; Niveau suivant puis Revanche relancent
+## une manche neuve (territoire, Spawner, chrono), avec les mêmes joueurs.
+func _tester_resultats() -> void:
+	print("-- Écran Résultats (phase 18)")
+	var main := await _charger_bataille(0)
+	var ville: Node2D = main.get_node("Ville")
+	var t: Territoire = ville.territoire
+	await _attendre_depart()
+	var bas: float = ville.position.y + ville.tex_size.y / 2.0 - 30.0
+	for k in range(3):
+		ville.peindre(Vector2(500, bas), 30, GS.joueurs[1])
+		ville.peindre(Vector2(1500, bas), 20, GS.joueurs[3])
+	await _frames(1)
+	var cellules: Array[int] = [t.cellules_de(0), t.cellules_de(1), t.cellules_de(2), t.cellules_de(3)]
+	_check(cellules[1] > cellules[3] and cellules[3] > 0 and cellules[0] == 0 and cellules[2] == 0,
+		"(pré-condition) les joueurs 2 et 4 ont peint, le 2 plus que le 4 (%s)" % [cellules])
+	GS.joueurs[0].etourdissements_infliges = 2
+	GS.joueurs[2].etourdissements_infliges = 2
+	GS.joueurs[3].cellules_volees = 40
+	GS.joueurs[1].chocs = 5
+	Input.action_press("vomir")  # Espace tenu au gong
+	GS.terminer_partie(true)
+	await _frames(1)
+	var r: CanvasLayer = main.resultats
+	_check(r != null and r.visible and not main.hud_bataille.visible and paused, "la manche finie, l'écran Résultats remplace le HUD, tout figé")
+	var parts := ReglesBataille.parts(cellules)
+	_check(r.lignes.map(func(l: Dictionary) -> int: return l.index) == [1, 3, 0, 2]
+		and r.lignes.map(func(l: Dictionary) -> int: return l.cible) == [parts[1], parts[3], 0, 0] and parts[1] + parts[3] == 100,
+		"le classement : le plus de cellules d'abord, les joueurs sans cellule à la fin, par index ; les parts font 100 %% (%s)" % [parts])
+	_check(r.lignes[0].rang.text == "1er" and r.lignes[1].rang.text == "2e" and r.lignes[2].rang.text == "–"
+		and r.lignes[0].couronne.visible and not r.lignes[1].couronne.visible and r.gagnant.text == "Joueur 2 gagne la manche !",
+		"rangs, couronne du meneur et gagnant (%s)" % r.gagnant.text)
+	_check(r.lignes[2].stats.map(func(e: Label) -> String: return e.text) == ["2", "0", "0"]
+		and r.lignes[1].stats.map(func(e: Label) -> String: return e.text) == ["0", "40", "0"] and r.lignes[2].badge.text == "TOI",
+		"chaque ligne : étourdissements infligés, cellules volées, chocs ; « TOI » sur celle de ce poste")
+	_check(r.cartes_titres[0].nom.text == "Joueur 1\nJoueur 3" and r.cartes_titres[0].valeur.text == "Étourdissements infligés : 2"
+		and r.cartes_titres[1].nom.text == "Joueur 4" and r.cartes_titres[2].nom.text == "Joueur 2" and r.cartes_titres[2].valeur.text == "Chocs : 5",
+		"les trois titres, ex æquo compris : le plus vicieux, le voleur, l'auto-tamponneur")
+	_check(r.texte_gagnant(PackedStringArray()) == "Personne n'a peint la ville." and r.texte_gagnant(PackedStringArray(["Zoé"])) == "Zoé gagne la manche !"
+		and r.texte_gagnant(PackedStringArray(["Anna", "Bruno"])) == "Égalité : Anna, Bruno !",
+		"la ligne du gagnant nomme le gagnant, les ex æquo, ou personne")
+	var pseudo: Label = r.lignes[0].pseudo
+	var largeur_w: float = pseudo.get_theme_font("font").get_string_size("WWWWWWWWWWWW", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		pseudo.get_theme_font_size("font_size")).x + 2 * pseudo.get_theme_constant("outline_size")
+	_check(largeur_w <= pseudo.size.x and r.tableau.get_combined_minimum_size().x <= TAILLE_BATAILLE.x,
+		"12 caractères larges (%d px) tiennent dans la colonne des pseudos (%d px) ; le tableau dans l'écran (%d px)"
+			% [largeur_w, pseudo.size.x, r.tableau.get_combined_minimum_size().x])
+	_check(r.bouton_revanche.visible and r.bouton_suivant.visible and not r.bouton_salon.visible and r.bouton_quitter.visible
+		and not r.bouton_revanche.disabled and r.bouton_suivant.text == "Niveau suivant : Métropole" and r.etat.text == ""
+		and [r.bouton_revanche, r.bouton_suivant, r.bouton_quitter].all(func(b: Button) -> bool: return b.focus_mode == Control.FOCUS_NONE),
+		"en bataille locale : Revanche, Niveau suivant (Métropole) et Quitter, sans Retour au salon ; aucun ne prend le focus")
+	# Au clavier : Espace tenu depuis le gong n'agit pas ; un appui termine l'animation ; un choix n'est pris
+	# qu'une seconde après
+	await _appuyer(&"vomir", true)  # un événement de plus de la touche tenue
+	_check(not r.animation_finie and r.choix.is_empty(), "Espace tenu depuis le gong ne coupe pas l'animation et ne choisit rien")
+	await _appuyer(&"vomir", false)
+	Input.action_release("vomir")
+	await _appuyer(&"deplacer_droite", true)
+	await _appuyer(&"deplacer_droite", false)
+	_check(r.animation_finie and r.selection == &"revanche", "un appui pendant l'animation la termine, sans changer le choix sélectionné")
+	await _appuyer(&"deplacer_droite", true)
+	await _appuyer(&"deplacer_droite", false)
+	_check(r.selection == &"revanche", "juste après l'animation, un appui ne choisit encore rien (Espace martelé au gong)")
+	await _frames(int(r.DELAI_CHOIX * Engine.physics_ticks_per_second) + 5)
+	await _appuyer(&"deplacer_droite", true)
+	await _appuyer(&"deplacer_droite", false)
+	_check(r.selection == &"suivant", "puis droite sélectionne Niveau suivant")
+	var avant := main.get_instance_id()
+	await _appuyer(&"vomir", true)
+	var suivante: Node = await _attendre_nouvelle_scene(avant)
+	await _appuyer(&"vomir", false)
+	await _verifier_manche_neuve(suivante, 1, "Niveau suivant")
+	# Revanche, à la souris : le même niveau
+	GS.terminer_partie(true)
+	await _frames(1)
+	suivante.resultats.choisir(&"revanche")
+	var revanche: Node = await _attendre_nouvelle_scene(suivante.get_instance_id())
+	await _verifier_manche_neuve(revanche, 1, "Revanche")
+	# Extra (décision utilisateur, 27/09) : l'hôte, sur l'écran Résultats, ne quitte qu'après
+	# confirmation (« Quitter la partie pour tout le monde ? ») ; un client n'en a pas besoin (hors
+	# de cette section, en bataille locale, ce poste est toujours l'hôte)
+	GS.terminer_partie(true)
+	await _frames(1)
+	var r2: CanvasLayer = revanche.resultats
+	_check(r2.hote, "(pré-condition) en bataille locale, ce poste est l'hôte : Échap y demande confirmation")
+	await _appuyer(&"ui_cancel", true)
+	await _appuyer(&"ui_cancel", false)
+	_check(current_scene == revanche and r2.confirmation_quitter and r2.choix.is_empty(),
+		"un premier Échap ne quitte pas : il demande confirmation à l'hôte (« Quitter la partie pour tout le monde ? »)")
+	_check(r2.etat.text == tr("RESULTATS_QUITTER_CONFIRMATION"), "la question de confirmation s'affiche (%s)" % r2.etat.text)
+	await _appuyer(&"deplacer_droite", true)
+	await _appuyer(&"deplacer_droite", false)
+	_check(not r2.confirmation_quitter and r2.choix.is_empty() and current_scene == revanche,
+		"une autre touche (Non) annule la confirmation, sans quitter ni rien choisir d'autre")
+	await _appuyer(&"ui_cancel", true)
+	await _appuyer(&"ui_cancel", false)
+	_check(r2.confirmation_quitter, "(pré-condition) la confirmation redemandée")
+	var avant_titre := revanche.get_instance_id()  # capturé avant : le second Échap va libérer la scène
+	await _appuyer(&"ui_cancel", true)
+	var apres_confirmation: Node = await _attendre_nouvelle_scene(avant_titre)
+	await _appuyer(&"ui_cancel", false)
+	_check(apres_confirmation != null and apres_confirmation.scene_file_path == "res://Scenes/Titre.tscn",
+		"un second Échap valide la confirmation : retour au titre")
+	apres_confirmation.free()
+	await _frames(1)
+	GS.niveau_courant = 0
+
+
+## La scène de jeu qui remplace celle d'identifiant `avant` (rechargée), une fois prête ; null au-delà de
+## 300 images.
+func _attendre_nouvelle_scene(avant: int) -> Node:
+	for f in range(300):
+		if current_scene != null and current_scene.get_instance_id() != avant and current_scene.is_node_ready():
+			return current_scene
+		await process_frame
+	return null
+
+
+## Une manche relancée depuis l'écran Résultats (`titre`) : sur le niveau `niveau`, les mêmes joueurs,
+## tout neuf : aucune cellule, chrono à 1:30, ni écran Résultats ni pause, statistiques à zéro, et le
+## Spawner qui repart après l'intro.
+func _verifier_manche_neuve(main: Node, niveau: int, titre: String) -> void:
+	_check(main != null and main.scene_file_path == "res://Scenes/Main.tscn", "(%s) la scène de jeu est rechargée" % titre)
+	if main == null:
+		return
+	var t: Territoire = main.get_node("Ville").territoire
+	_check(GS.niveau_courant == niveau and main.lions.size() == NB_LIONS and GS.joueurs.size() == NB_LIONS
+		and range(NB_LIONS).all(func(i: int) -> bool: return t.cellules_de(i) == 0) and t.cellules_de(Territoire.PERSONNE) == t.nb_peignables,
+		"(%s) niveau %d, les mêmes 4 joueurs, un territoire vierge" % [titre, niveau])
+	_check(not paused and GS.partie_en_cours and GS.temps_ecoule == 0.0 and main.hud_bataille.visible and main.hud_bataille.chrono.text == "1:30"
+		and main.resultats == null and GS.joueurs.all(func(j: Joueur) -> bool: return j.chocs == 0 and j.cellules_volees == 0 and j.etourdissements_infliges == 0 and j.crans == 1),
+		"(%s) le chrono repart de 1:30, sans écran Résultats ni pause, statistiques et crans remis à zéro" % titre)
+	await _attendre_depart()
+	var spawner: Node = main.get_node("Spawner")
+	_check(GS.pret and spawner._demarre and spawner._timer_soucoupe != null, "(%s) après l'intro, le Spawner repart" % titre)
+
+
+## Un appui (ou un relâchement) de `action`, comme le clavier ou la manette l'envoient au jeu.
+func _appuyer(action: StringName, appuye: bool) -> void:
+	var evenement := InputEventAction.new()
+	evenement.action = action
+	evenement.pressed = appuye
+	root.push_input(evenement)
+	await process_frame
 
 
 func _tester_retour_au_titre() -> void:

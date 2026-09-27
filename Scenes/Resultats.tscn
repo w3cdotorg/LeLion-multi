@@ -1,0 +1,133 @@
+[gd_scene load_steps=2 format=3 uid="uid://dlelionresult0"]
+
+[ext_resource type="Script" path="res://Scripts/Resultats.gd" id="1_resultats"]
+
+[node name="Resultats" type="CanvasLayer"]
+process_mode = 3
+layer = 8
+script = ExtResource("1_resultats")
+
+[node name="Fond" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.05, 0.03, 0.1, 0.8)
+
+[node name="Centre" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Colonne" type="VBoxContainer" parent="Centre"]
+layout_mode = 2
+theme_override_constants/separation = 18
+alignment = 1
+
+[node name="Titre" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.05, 0.15, 1)
+theme_override_constants/outline_size = 14
+theme_override_font_sizes/font_size = 96
+text = "BATAILLE_FIN"
+horizontal_alignment = 1
+
+[node name="Gagnant" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_outline_color = Color(0.1, 0.05, 0.15, 1)
+theme_override_constants/outline_size = 10
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+
+[node name="Tableau" type="VBoxContainer" parent="Centre/Colonne"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 8
+
+[node name="Titres" type="HBoxContainer" parent="Centre/Colonne"]
+layout_mode = 2
+theme_override_constants/separation = 24
+alignment = 1
+
+[node name="Boutons" type="HBoxContainer" parent="Centre/Colonne"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Revanche" type="Button" parent="Centre/Colonne/Boutons"]
+custom_minimum_size = Vector2(300, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+text = "RESULTATS_REVANCHE"
+
+[node name="Suivant" type="Button" parent="Centre/Colonne/Boutons"]
+custom_minimum_size = Vector2(420, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+auto_translate_mode = 2
+
+[node name="Salon" type="Button" parent="Centre/Colonne/Boutons"]
+custom_minimum_size = Vector2(320, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+text = "RESULTATS_SALON"
+
+[node name="Quitter" type="Button" parent="Centre/Colonne/Boutons"]
+custom_minimum_size = Vector2(240, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+text = "RESULTATS_QUITTER"
+
+[node name="ConfirmationQuitter" type="HBoxContainer" parent="Centre/Colonne"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Oui" type="Button" parent="Centre/Colonne/ConfirmationQuitter"]
+custom_minimum_size = Vector2(200, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+text = "RESULTATS_OUI"
+
+[node name="Non" type="Button" parent="Centre/Colonne/ConfirmationQuitter"]
+custom_minimum_size = Vector2(200, 68)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 30
+text = "RESULTATS_NON"
+
+[node name="Etat" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.05, 0.15, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
+[node name="Aide" type="Label" parent="Centre/Colonne"]
+layout_mode = 2
+auto_translate_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.7)
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
+
+[connection signal="pressed" from="Centre/Colonne/Boutons/Revanche" to="." method="choisir" binds= [&"revanche"]]
+[connection signal="pressed" from="Centre/Colonne/Boutons/Suivant" to="." method="choisir" binds= [&"suivant"]]
+[connection signal="pressed" from="Centre/Colonne/Boutons/Salon" to="." method="choisir" binds= [&"salon"]]
+[connection signal="pressed" from="Centre/Colonne/Boutons/Quitter" to="." method="choisir" binds= [&"quitter"]]
+[connection signal="pressed" from="Centre/Colonne/ConfirmationQuitter/Oui" to="." method="choisir" binds= [&"quitter"]]
+[connection signal="pressed" from="Centre/Colonne/ConfirmationQuitter/Non" to="." method="annuler_confirmation_quitter"]

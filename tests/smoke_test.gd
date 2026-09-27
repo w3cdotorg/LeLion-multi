@@ -2171,9 +2171,11 @@ func _tester_manche_reseau() -> void:
 		var bilans_vus: Array = []
 		manche.bilan_recu.connect(func(b: RefCounted) -> void: bilans_vus.append(b))
 		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
-		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
+		# derniers tampons et le territoire), tout se fige, l'écran Résultats remplace le HUD
 		GS.terminer_partie(true)
-		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
+		var resultats: CanvasLayer = main.resultats
+		_check(manche.finie and paused and resultats != null and resultats.visible and not hud.visible and not menu.visible,
+			"la fin de manche chez l'hôte : la manche la diffuse, tout se fige, l'écran Résultats remplace le HUD")
 		_check(manche.envois_ordre == ([&"_recevoir_tampons", &"_recevoir_territoire", &"_recevoir_fin_manche"] as Array[StringName]),
 			"I2 : les derniers tampons et le territoire partent avant la fin, sur le même canal (%s)" % [manche.envois_ordre])
 		# Phase 18 : la fin porte le bilan de l'hôte : cellules, crans, statistiques, départs, l'état final
@@ -2187,11 +2189,15 @@ func _tester_manche_reseau() -> void:
 				% ("" if bilan == null else bilan.resume()))
 		_check(bilan != null and BilanManche.decoder(bilan.encoder(), 2) != null and BilanManche.decoder(bilan.encoder(), 2).resume() == bilan.resume(),
 			"le bilan envoyé se relit à l'identique chez un client")
+		_check(resultats != null and resultats.hote and resultats.en_reseau and resultats.bouton_salon.visible and resultats.partis == [false, true]
+			and resultats.bouton_revanche.disabled and resultats.bouton_suivant.disabled and not resultats.bouton_salon.disabled
+			and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
+			"l'écran Résultats de l'hôte en réseau : Retour au salon ; Bob parti, Revanche et Niveau suivant attendent deux joueurs")
 		# Un hôte perdu (chez un client) : message, tout se fige
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not hud.fin.visible,
-			"l'hôte perdu : « L'hôte a quitté la partie » (à la place du panneau de fin), la partie se fige")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige")
 		paused = false
 		main.free()
 		await _frames(1)

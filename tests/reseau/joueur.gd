@@ -117,13 +117,13 @@ extends SceneTree
 ##   une manche courte de --duree-manche=S secondes (`ReglesBataille.duree_manche`, sur chaque poste),
 ##   sur le niveau --niveau=L choisi par l'hôte. Chaque poste fait sa passe de peinture (--sens), puis
 ##   attend la fin : chez l'hôte par son chrono, chez un client par la fin reçue de l'hôte (son chrono
-##   pris sur celui de l'hôte : « ECART_CHRONO <s> », l'écart qu'il avait) ; tout se fige sur le panneau
-##   de fin, 0:00, les tics des dernières secondes comptés ; « FIN <HUD> » (chrono, pseudos, parts,
+##   pris sur celui de l'hôte : « ECART_CHRONO <s> », l'écart qu'il avait) ; tout se fige, l'écran
+##   Résultats à la place du HUD, 0:00, les tics des dernières secondes comptés ; « FIN <HUD> » (chrono, pseudos, parts,
 ##   rangs : la même ligne sur chaque poste).
 ##   Chrono-hôte : --clients=N, --niveau=L, --duree-manche=S, --rester=chemin (« HOTE RESTE », puis,
-##   ce fichier créé, sort par Échap : le titre, hors réseau).
+##   ce fichier créé, sort par Échap, confirmé d'un second Échap : le titre, hors réseau).
 ##   Chrono-client : --sens=1|-1, --duree-manche=S ; attend le départ de l'hôte (« L'hôte a quitté la
-##   partie » à la place du panneau de fin, puis le titre).
+##   partie » à la place de l'écran Résultats, puis le titre).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -1280,23 +1280,30 @@ func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
 		_check(manche.finie and absf(manche.ecart_chrono_fin) <= ECART_CHRONO and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
 			"la fin de l'hôte termine la manche de ce client, son chrono pris sur celui de l'hôte (%.3f s, écart %.3f s)" % [gs.temps_ecoule, manche.ecart_chrono_fin])
 	var tics_attendus := mini(ReglesBataille.SECONDES_TIC, ceili(duree) - 1)
-	_check(paused and hud.fin.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
-		"tout se fige sur le panneau de fin, le chrono à 0:00, %d tics sur %d attendus" % [hud.tics_joues, tics_attendus])
+	_check(await _attendre(func() -> bool: return main.resultats != null) and paused and main.resultats.visible and not hud.visible
+		and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
+		"tout se fige, l'écran Résultats à la place du HUD (le chrono à 0:00, %d tics sur %d attendus)" % [hud.tics_joues, tics_attendus])
 	print("FIN %s bilan=%s lions=%s" % [hud.resume(), manche.bilan.resume() if manche.bilan != null else "", _lions_affiches(main)])
 	if hote:
 		var rester := _option("rester", "")
 		print("HOTE RESTE")
 		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
-		var echap := InputEventAction.new()
-		echap.action = &"pause"
-		echap.pressed = true
-		root.push_input(echap)
+		# Échap ouvre la confirmation (« Quitter la partie pour tout le monde ? »), un second Échap la valide
+		var confirmation_vue := false
+		for appui in [true, false, true, false]:
+			var echap := InputEventAction.new()
+			echap.action = &"ui_cancel"
+			echap.pressed = appui
+			root.push_input(echap)
+			await process_frame
+			confirmation_vue = confirmation_vue or (is_instance_valid(main) and main.resultats.confirmation_quitter)
+		_check(confirmation_vue, "le premier Échap de l'hôte demande confirmation avant de ramener tout le monde au titre")
 		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
-			"Échap, la manche finie : l'hôte revient au titre, hors réseau")
+			"Échap, sur l'écran Résultats, confirmé d'un second Échap : l'hôte revient au titre, hors réseau")
 	else:
 		_check(await _attendre(func() -> bool: return _issue == "hote_perdu"), "l'hôte finit par partir")
-		_check(main.get_node_or_null("HotePerdu/Message") != null and not hud.fin.visible,
-			"« L'hôte a quitté la partie » à la place du panneau de fin")
+		_check(main.get_node_or_null("HotePerdu/Message") != null and not main.resultats.visible,
+			"« L'hôte a quitté la partie » à la place de l'écran Résultats")
 		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
 			"puis retour au titre, hors réseau")
 

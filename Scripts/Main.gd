@@ -7,7 +7,8 @@ extends Node2D
 ## leur donnant joueur et commandes avant l'ajout), comme les ennemis et les pastilles que fait
 ## apparaître le Spawner de l'hôte ; lions, Spawner et intro attendent la barrière de chargement.
 ## Échap y ouvre un menu local qui ne met pas la partie en pause ; un hôte perdu ramène au titre
-## après son message.
+## après son message. Une bataille finie (phase 18) montre l'écran Résultats (`Resultats`) sur le bilan
+## de l'hôte, et suit le choix qu'on y fait.
 
 @export var game_over_scene: PackedScene
 
@@ -21,6 +22,7 @@ const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const SCRIPT_PILOTE := preload("res://Scripts/Pilote.gd")
 const SCENE_LION := preload("res://Scenes/Lion.tscn")
 const SCENE_HUD_BATAILLE := preload("res://Scenes/HUDBataille.tscn")
+const SCENE_RESULTATS := preload("res://Scenes/Resultats.tscn")
 ## Temps pendant lequel « L'hôte a quitté la partie » reste affiché avant le retour au titre.
 const DELAI_HOTE_PERDU := 2.5
 
@@ -41,6 +43,8 @@ var lions: Array[Lion] = []
 var en_reseau := false
 ## Le HUD d'une bataille (phase 17), à la place de celui du solo ; null en solo.
 var hud_bataille: CanvasLayer
+## L'écran Résultats d'une bataille finie (phase 18) ; null avant la fin, et en solo.
+var resultats: CanvasLayer
 
 var _tremblement_restant := 0.0
 var _demo_restant := 0.0
@@ -53,6 +57,9 @@ const ACTIONS_DE_JEU := ["deplacer_gauche", "deplacer_droite", "deplacer_haut", 
 ## le peintre et les apparitions la taille de l'écran. Les règles du mode sont branchées AVANT le
 ## changement de scène (`GameState.configurer_solo` / `configurer_bataille`), jamais ici.
 func _enter_tree() -> void:
+	# Une manche relancée depuis l'écran Résultats (phase 18) arrive l'arbre encore en pause (la fin l'a
+	# figé) : la scène de jeu part toujours dépausée, comme le titre (`Titre._ready`).
+	get_tree().paused = false
 	for action in ACTIONS_DE_JEU:
 		Input.action_release(action)
 	Regles.appliquer_ecran(get_tree(), GameState.regles.taille_ecran())
@@ -103,7 +110,8 @@ func _preparer_manche_en_reseau() -> void:
 	apparitions.spawned.connect(_sur_apparition)
 	manche.barriere_passee.connect(_sur_barriere_passee)
 	manche.joueur_parti.connect(_sur_joueur_parti)
-	manche.depart_vu.connect(hud_bataille.marquer_parti)
+	manche.depart_vu.connect(_sur_depart_vu)
+	manche.bilan_recu.connect(_afficher_resultats)
 	menu_pause.visibility_changed.connect(_suspendre_commandes)
 	# M2 (revue finale) : `Reseau.hote_perdu` peut aussi partir chez l'hôte (son propre pair ENet en
 	# erreur, N4 de `Reseau.gd`) ; sans ce branchement, l'hôte continuait seul une manche que
@@ -174,6 +182,14 @@ func _sur_joueur_parti(index: int) -> void:
 			l.queue_free()
 
 
+## Sur chaque poste : le joueur d'index `index` a quitté la manche (en pleine manche, ou sur l'écran
+## Résultats) : le HUD et l'écran Résultats le grisent.
+func _sur_depart_vu(index: int) -> void:
+	hud_bataille.marquer_parti(index)
+	if resultats != null:
+		resultats.marquer_parti(index)
+
+
 ## Menu local ouvert pendant une manche en réseau : les commandes de ce poste valent le repos.
 func _suspendre_commandes() -> void:
 	if lion != null:
@@ -189,8 +205,8 @@ func _sur_hote_perdu() -> void:
 	# solo) puis un second Échap dépauserait l'arbre en le refermant, repartant la ville figée.
 	menu_pause.hide()
 	menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
-	if hud_bataille != null:
-		hud_bataille.fin.hide()  # une manche finie : le message remplace le panneau de fin et sa sortie
+	if resultats != null:
+		resultats.hide()  # une manche finie : le message remplace l'écran Résultats
 	var couche := CanvasLayer.new()
 	couche.name = "HotePerdu"
 	couche.layer = 10
@@ -359,12 +375,15 @@ func _on_partie_terminee(victoire: bool) -> void:
 		get_tree().create_timer(2.5, true).timeout.connect(quitter_demo)
 		return
 	if GameState.regles.compte_le_territoire():
-		# Bataille : tout se fige, scores compris ; le HUD de la bataille montre la fin et sa sortie
-		# (Échap : retour au titre) jusqu'à l'écran Résultats de la phase 18. Le menu local se ferme et
-		# se tait : Échap est à la sortie.
+		# Bataille : tout se fige, scores compris. Le menu local se ferme et se tait (Échap est à l'écran
+		# Résultats). En réseau, l'écran Résultats attend le bilan de l'hôte (`Manche.bilan_recu`, juste
+		# après : chez l'hôte, sa manche le relève ; chez un client, il est arrivé avec la fin) ; hors
+		# réseau, ce poste le relève lui-même.
 		menu_pause.hide()
 		menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
 		get_tree().paused = true
+		if not en_reseau:
+			_afficher_resultats(_bilan_local())
 		return
 	if not victoire:
 		lion.hide()
@@ -372,3 +391,41 @@ func _on_partie_terminee(victoire: bool) -> void:
 	add_child(overlay)
 	overlay.afficher(victoire, GameState.progression, GameState.temps_ecoule)
 	get_tree().paused = true
+
+
+## Bataille locale : le bilan de la manche, relevé sur ce poste (son territoire, ses joueurs) : ni départ
+## ni lion à poser (aucun client).
+func _bilan_local() -> BilanManche:
+	var cellules: Array[int] = []
+	for j in GameState.joueurs:
+		cellules.append(ville.territoire.cellules_de(j.index))
+	return BilanManche.relever(GameState.joueurs, cellules, [] as Array[int], {} as Dictionary[int, PackedByteArray], GameState.temps_ecoule)
+
+
+## Une bataille finie : l'écran Résultats sur le bilan `bilan` (celui de l'hôte), à la place du HUD de la
+## bataille, les pseudos des lions remis à leur place finale. Une fois.
+func _afficher_resultats(bilan: BilanManche) -> void:
+	if resultats != null:
+		return
+	if not lions.is_empty():
+		_placer_pseudos()
+	hud_bataille.hide()
+	resultats = SCENE_RESULTATS.instantiate()
+	resultats.choix_fait.connect(_sur_choix_resultats)
+	add_child(resultats)
+	resultats.afficher(bilan, multiplayer.is_server(), en_reseau)
+
+
+## Le choix fait sur l'écran Résultats. Quitter : le titre (qui quitte le réseau ; l'hôte qui part ramène
+## ses clients au titre, « L'hôte a quitté la partie »). Hors réseau, Revanche et Niveau suivant
+## rechargent la scène de jeu, sur le même niveau ou le suivant (en boucle), avec les mêmes joueurs : un
+## territoire, un Spawner, un chrono tout neufs.
+func _sur_choix_resultats(choix: StringName) -> void:
+	match choix:
+		&"quitter":
+			get_tree().change_scene_to_file(SCENE_TITRE)
+		&"revanche", &"suivant":
+			if not en_reseau:
+				if choix == &"suivant":
+					GameState.niveau_courant = posmod(GameState.niveau_courant + 1, GameState.NIVEAUX.size())
+				get_tree().reload_current_scene()
