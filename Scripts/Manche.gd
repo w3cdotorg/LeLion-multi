@@ -256,23 +256,15 @@ func _verifier_barriere() -> void:
 		_envoyer(&"_recevoir_depart", [index])
 
 
-## Chez l'hôte : `id` n'a pas chargé sa scène à temps. Il est déconnecté (proprement : il le voit
-## comme un hôte perdu, et son départ arrive ici par `Reseau.joueur_parti`).
+## Chez l'hôte : `id` n'a pas chargé sa scène à temps. Il apprend son exclusion, puis il est déconnecté
+## (`Reseau.exclure` : il voit « exclu », pas « L'hôte a quitté la partie ») ; son départ arrive ici par
+## `Reseau.joueur_parti`.
 func _exclure(id: int) -> void:
 	if _exclus.has(id):
 		return
 	_exclus.append(id)
 	push_warning("Manche : le joueur %d n'a pas chargé sa scène à temps, exclu" % id)
-	if multiplayer.get_peers().has(id):
-		# I1 (revue finale phase 14) : un pair figé (chargement, compilation des shaders) n'acquitte
-		# jamais le DISCONNECT ; sans ceci, ENet ne l'abandonne qu'à son propre silence de
-		# chargement (SILENCE_CHARGEMENT, 20 à 30 s), et la barrière l'attend tout ce temps. Un
-		# silence court (1 à 2 s) avant `disconnect_peer` (sans `force`) : le départ arrive quand
-		# même par `peer_disconnected`, puis `Reseau.joueur_parti`, comme un pair réactif.
-		var pair := multiplayer.multiplayer_peer as ENetMultiplayerPeer
-		if pair != null:
-			pair.get_peer(id).set_timeout(Reseau.ESSAIS_SILENCE, 1000, 2000)
-		multiplayer.multiplayer_peer.disconnect_peer(id)
+	Reseau.exclure(id)
 
 
 ## Chez un client : la barrière est passée chez l'hôte.

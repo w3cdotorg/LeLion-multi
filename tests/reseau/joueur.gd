@@ -79,7 +79,7 @@ extends SceneTree
 ##   le départ de l'hôte (« L'hôte a quitté la partie », puis le titre).
 ##   Manche-muet : rejoint l'hôte sans scène (pas de salon ni de scène de jeu), se dit prêt, reçoit le
 ##   lancement de la manche mais ne charge jamais sa scène : l'hôte doit l'exclure après le délai de
-##   la barrière (« EXCLU »). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
+##   la barrière (« EXCLU », avec la raison de la perte de l'hôte : exclu, phase 18). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
 ##   reçu, fige tout le processus S secondes (« FIGE_MUET ») avant de reprendre et sortir en 0, sans
 ##   rien vérifier lui-même : son ENet ne peut acquitter aucun DISCONNECT pendant ce temps, comme un
 ##   poste dont le fil principal compile ses shaders.
@@ -1032,9 +1032,11 @@ func _jouer_muet() -> void:
 	while _issue != "inscrit+hote_perdu" and Time.get_ticks_msec() < fin:
 		await process_frame
 	var apres: float = (Time.get_ticks_msec() - lancee[0]) / 1000.0
-	print("EXCLU apres=%.1f s" % apres)
+	print("EXCLU apres=%.1f s raison=%s" % [apres, reseau.raison_perte])
 	_check(_issue == "inscrit+hote_perdu" and apres >= float(_option("delai-chargement", "0")),
 		"l'hôte l'exclut après le délai de la barrière (%.1f s)" % apres)
+	_check(reseau.raison_perte == reseau.PERTE_EXCLU,
+		"phase 18 : l'exclu l'apprend de l'hôte avant d'être déconnecté (%s, pas « L'hôte a quitté la partie »)" % reseau.raison_perte)
 
 
 ## Rôles « bout-hote » et « bout-client » (phase 15, voir l'en-tête) : une manche entière à 1 hôte et

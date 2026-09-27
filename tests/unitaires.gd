@@ -1723,6 +1723,18 @@ func _tester_reseau_manche() -> void:
 	_check(reseau.scenes_chargees == [1] and chargees == [1], "chez l'hôte, sa scène chargée est notée et signalée une fois")
 	reseau.scene_chargee.disconnect(sur_scene)
 	reseau.manche_lancee.disconnect(sur_lancement)
+	# Phase 18 : un exclu de la barrière apprend son exclusion avant d'être déconnecté ; la perte de
+	# l'hôte qui suit le dit (`raison_perte`), une fois
+	var raisons: Array[String] = []
+	var sur_perte := func() -> void: raisons.append(reseau.raison_perte)
+	reseau.hote_perdu.connect(sur_perte)
+	reseau._recevoir_exclusion()
+	reseau._fermer_puis_emettre(&"hote_perdu", [], reseau._generation)
+	reseau._fermer_puis_emettre(&"hote_perdu", [], reseau._generation)
+	reseau.hote_perdu.disconnect(sur_perte)
+	_check(raisons == [reseau.PERTE_EXCLU, reseau.PERTE_HOTE] and not reseau._exclu,
+		"l'hôte perdu après une exclusion : « exclu » ; la perte suivante, de nouveau « l'hôte a quitté la partie » (%s)" % [raisons])
+	_check(reseau.heberger(17788) == OK, "(pré-condition) l'hôte écoute de nouveau")
 	reseau.definir_silence(reseau.SILENCE_SESSION)
 	_check(reseau.silence == reseau.SILENCE_SESSION, "fin du chargement : silence de session")
 	reseau.quitter()

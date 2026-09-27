@@ -62,7 +62,8 @@ signal refuse(raison: String, version_hote: String)
 ## est déjà revenu hors réseau quand le signal part.
 signal connexion_echouee()
 ## Chez le client : l'hôte a quitté la partie ou ne répond plus. Le poste est déjà revenu hors
-## réseau quand le signal part. N4 : si le pair ENet de l'hôte tombe lui-même en erreur, ce même
+## réseau quand le signal part ; `raison_perte` dit pourquoi (phase 18 : un joueur exclu par la barrière
+## de chargement le sait). N4 : si le pair ENet de l'hôte tombe lui-même en erreur, ce même
 ## signal part aussi chez l'hôte (server_disconnected n'y distingue pas les deux cas) ; personne ne
 ## l'écoute encore côté hôte à cette phase, mais un futur appelant ne doit pas supposer « jamais
 ## chez l'hôte ».
@@ -101,6 +102,13 @@ const REFUS_VERSION := "RESEAU_REFUS_VERSION"
 const REFUS_PLEIN := "RESEAU_REFUS_PLEIN"
 const REFUS_MANCHE := "RESEAU_REFUS_MANCHE"
 const REFUS_DEMANDE := "RESEAU_REFUS_DEMANDE"
+## Pourquoi l'hôte est perdu (`raison_perte`), en clés de traduction : il est parti (ou ne répond
+## plus), ou il a exclu ce poste (barrière de chargement, phase 18).
+const PERTE_HOTE := "RESEAU_HOTE_PERDU"
+const PERTE_EXCLU := "RESEAU_EXCLU"
+## Entre l'annonce de son exclusion à un joueur et sa déconnexion, en secondes : le temps que
+## l'annonce arrive, renvoyée au besoin par ENet (une déconnexion vide la file d'envoi).
+const DELAI_EXCLUSION := 0.5
 ## Pourquoi l'hôte ne peut pas encore démarrer la partie (`raison_attente`), en clés de traduction.
 const ATTENTE_JOUEURS := "SALON_ATTENTE_JOUEURS"
 const ATTENTE_ARRIVEE := "SALON_ATTENTE_ARRIVEE"
@@ -153,6 +161,13 @@ var table_salon: Array[Dictionary] = []
 var niveau_salon := 0
 ## Places de la partie (`places` de l'hôte), diffusées avec la table.
 var places_salon := EtatPartie.NB_JOUEURS_MAX
+## Places seulement réservées (une poignée de main en cours, pas encore de carte), diffusées avec la
+## table (phase 18, M2 de la revue finale 13 : sans elles, un client lisait « l'hôte peut démarrer »
+## pendant qu'un joueur arrivait, le bouton de l'hôte grisé).
+var places_reservees := 0
+## Chez un client : pourquoi l'hôte a été perdu la dernière fois (PERTE_HOTE ou PERTE_EXCLU), posé juste
+## avant `hote_perdu` ; ce que montrent la scène de jeu et le salon.
+var raison_perte := PERTE_HOTE
 ## Index et couleur de ce poste, attribués par l'hôte (-1 et transparente hors réseau).
 var index_local := -1
 var couleur_locale := Color.TRANSPARENT
@@ -176,6 +191,9 @@ var _delai: Timer
 ## "paquets": Array (ses ENetPacketPeer), "fin": int (ms)}`, servies par `_process` jusqu'à ce que
 ## chaque autre poste ait accusé réception, ou jusqu'à `fin`, puis fermées.
 var _partants: Array[Dictionary] = []
+## Chez un client : vrai une fois son exclusion annoncée par l'hôte (`_recevoir_exclusion`), jusqu'à la
+## perte de l'hôte qui suit.
+var _exclu := false
 
 
 func _ready() -> void:
@@ -261,6 +279,8 @@ func quitter() -> void:
 	silence = SILENCE_SESSION
 	niveau_salon = 0
 	places_salon = EtatPartie.NB_JOUEURS_MAX
+	places_reservees = 0
+	_exclu = false
 	index_local = -1
 	couleur_locale = Color.TRANSPARENT
 	manche_en_cours = false
@@ -316,6 +336,48 @@ func definir_silence(bornes: Vector2i) -> void:
 		for p: ENetPacketPeer in pair.host.get_peers():
 			if p.get_state() == ENetPacketPeer.STATE_CONNECTED:
 				p.set_timeout(ESSAIS_SILENCE, bornes.x, bornes.y)
+
+
+## Chez l'hôte : le joueur `id` n'a pas chargé sa scène de jeu à temps (la barrière de la manche,
+## `Manche._exclure`) : il apprend son exclusion (`_recevoir_exclusion` : il verra PERTE_EXCLU, pas
+## « L'hôte a quitté la partie »), puis il est déconnecté DELAI_EXCLUSION plus tard (proprement : son
+## départ arrive par `joueur_parti`). I1 (revue finale phase 14) : un pair figé (chargement,
+## compilation des shaders) n'acquitte jamais ni l'annonce ni le DISCONNECT ; sans un silence court
+## (1 à 2 s, posé tout de suite), ENet ne l'abandonnerait qu'à son silence de chargement
+## (SILENCE_CHARGEMENT, 20 à 30 s), et la barrière l'attendrait tout ce temps.
+func exclure(id: int) -> void:
+	if not multiplayer.is_server() or not multiplayer.get_peers().has(id):
+		return
+	var pair := multiplayer.multiplayer_peer as ENetMultiplayerPeer
+	if pair != null:
+		pair.get_peer(id).set_timeout(ESSAIS_SILENCE, 1000, 2000)
+	_recevoir_exclusion.rpc_id(id)
+	get_tree().create_timer(DELAI_EXCLUSION, true).timeout.connect(_deconnecter.bind(id, _generation))
+
+
+## Chez l'hôte : déconnecte l'exclu `id`, s'il l'est encore, dans la même session (`generation`).
+func _deconnecter(id: int, generation: int) -> void:
+	if generation == _generation and multiplayer.get_peers().has(id):
+		multiplayer.multiplayer_peer.disconnect_peer(id)
+
+
+## Chez un client : l'hôte l'exclut de la manche (sa scène de jeu pas chargée à temps) ; la perte de
+## l'hôte qui suit le dira (`raison_perte`).
+@rpc("authority", "call_remote", "reliable")
+func _recevoir_exclusion() -> void:
+	_exclu = true
+
+
+## Les fiches dont dépend le démarrage (`raison_attente`) : chez l'hôte, ses inscrits (places réservées
+## comprises) ; chez un client, la table du salon, plus une fiche d'arrivant pas encore là par place
+## réservée que l'hôte annonce (phase 18, M2 de la revue finale 13).
+func fiches_attente() -> Array:
+	if multiplayer.is_server():
+		return inscrits.values()
+	var fiches: Array = table_salon.duplicate()
+	for i in range(places_reservees):
+		fiches.append({"arrive": false, "pret": false})
+	return fiches
 
 
 ## La scène de jeu de ce poste est chargée (appelé par la manche, chez chaque joueur) : chez l'hôte,
@@ -655,8 +717,9 @@ func _diffuser_salon() -> void:
 	if not multiplayer.is_server():
 		return
 	table_salon = table_de(inscrits)
+	places_reservees = inscrits.size() - table_salon.size()
 	if en_ligne():
-		_recevoir_salon.rpc(table_salon, niveau_salon, places_salon)
+		_recevoir_salon.rpc(table_salon, niveau_salon, places_salon, places_reservees)
 	salon_change.emit()
 
 
@@ -674,24 +737,27 @@ func _demande_pret(pret: Variant) -> void:
 		definir_pret(multiplayer.get_remote_sender_id(), pret)
 
 
-## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible).
+## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible), avec le
+## niveau, les places et les places seulement réservées.
 @rpc("authority", "call_remote", "reliable")
-func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
-	if not _poser_salon(table, niveau, nb_places):
+func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant) -> void:
+	if not _poser_salon(table, niveau, nb_places, reservees):
 		push_warning("Reseau : table du salon illisible, ignorée")
 
 
-## Chez un client : pose la table du salon reçue de l'hôte, son niveau et ses places ; ce poste y lit
-## son index et sa couleur, puis `salon_change`. Faux, sans rien changer, pour une table illisible
-## (`lire_table`) ou des valeurs hors plage.
-func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant) -> bool:
+## Chez un client : pose la table du salon reçue de l'hôte, son niveau, ses places et ses places
+## seulement réservées ; ce poste y lit son index et sa couleur, puis `salon_change`. Faux, sans rien
+## changer, pour une table illisible (`lire_table`) ou des valeurs hors plage.
+func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant) -> bool:
 	var lue := lire_table(table)
 	if lue.is_empty() or not (niveau is int) or niveau < 0 or niveau >= EtatPartie.NIVEAUX.size() \
-			or not (nb_places is int) or nb_places < EtatPartie.NB_JOUEURS_MIN or nb_places > EtatPartie.NB_JOUEURS_MAX:
+			or not (nb_places is int) or nb_places < EtatPartie.NB_JOUEURS_MIN or nb_places > EtatPartie.NB_JOUEURS_MAX \
+			or not (reservees is int) or reservees < 0 or reservees > EtatPartie.NB_JOUEURS_MAX - lue.size():
 		return false
 	table_salon = lue
 	niveau_salon = niveau
 	places_salon = nb_places
+	places_reservees = reservees
 	for fiche in lue:
 		if fiche.id == multiplayer.get_unique_id():
 			index_local = fiche.index
@@ -705,7 +771,7 @@ func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant) -> bool:
 ## précéder). Le chargement commence : silence toléré SILENCE_CHARGEMENT.
 @rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
 func _recevoir_manche(table: Variant, niveau: Variant) -> void:
-	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id()) if _poser_salon(table, niveau, places_salon) else [] as Array[Dictionary]
+	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id()) if _poser_salon(table, niveau, places_salon, 0) else [] as Array[Dictionary]
 	if fiches.is_empty():
 		push_warning("Reseau : lancement de manche sur une table illisible, ignoré")
 		return
@@ -719,7 +785,7 @@ func _recevoir_manche(table: Variant, niveau: Variant) -> void:
 ## pendant une manche). Une table illisible est signalée, le retour a lieu quand même.
 @rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
 func _recevoir_retour_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
-	if not _poser_salon(table, niveau, nb_places):
+	if not _poser_salon(table, niveau, nb_places, 0):
 		push_warning("Reseau : table du retour au salon illisible, ignorée")
 	manche_en_cours = false
 	definir_silence(SILENCE_SESSION)
@@ -782,7 +848,7 @@ func _repondre(id: int, demande: Variant) -> void:
 	var reponse := examiner_demande(demande)
 	if reponse.accepte:
 		inscrits[id] = {"index": reponse.index, "couleur": reponse.couleur, "pseudo": reponse.pseudo, "arrive": false, "pret": false}
-		salon_change.emit()  # une place réservée : le bouton Démarrer de l'hôte se grise
+		_diffuser_salon()  # une place réservée : le bouton Démarrer de l'hôte se grise, ses clients le savent
 	_api().send_auth(id, var_to_bytes(reponse))
 	# Un refusé n'est pas déconnecté ici : ENet viderait sa file d'envoi, réponse comprise, et le
 	# client ne saurait jamais pourquoi. Il part de lui-même en lisant le refus ; sinon le délai de
@@ -808,7 +874,7 @@ func _lire_reponse(reponse: Variant) -> void:
 ## lui avait été attribuée ; il n'était jamais « arrivé », il ne « part » donc pas.
 func _sur_echec_poignee_de_main(id: int) -> void:
 	if multiplayer.is_server() and inscrits.erase(id):
-		salon_change.emit()  # la place réservée se libère : le bouton de l'hôte peut revenir
+		_diffuser_salon()  # la place réservée se libère : le bouton de l'hôte peut revenir, chez ses clients aussi
 
 
 ## Chez l'hôte : un accepté a fini sa poignée de main. Il est désormais arrivé : sa carte apparaît
@@ -867,5 +933,8 @@ func _decider(nom: StringName, arguments: Array = []) -> void:
 func _fermer_puis_emettre(nom: StringName, arguments: Array, generation: int) -> void:
 	if generation != _generation:
 		return
+	var exclu := _exclu
 	quitter()
+	if nom == &"hote_perdu":
+		raison_perte = PERTE_EXCLU if exclu else PERTE_HOTE
 	callv("emit_signal", [nom] + arguments)

@@ -1864,9 +1864,14 @@ func _tester_salon(params: Node) -> void:
 	reseau.pseudo = "MMMMMMMMMMMM"  # 12 caractères larges : ils doivent tenir dans la carte
 	GS.niveau_courant = 1
 	_check(reseau.heberger(17797) == OK, "(pré-condition) ce poste héberge")
+	Input.action_press("deplacer_droite")  # phase 18 (M3, revue finale 13) : un stick déjà penché en arrivant
 	var salon: Control = load("res://Scenes/Salon.tscn").instantiate()
 	root.add_child(salon)
 	await process_frame
+	await _appuyer(&"deplacer_droite", true)  # un événement de plus du stick toujours penché
+	_check(reseau.inscrits[1].couleur == palette[0], "M3 : un stick déjà penché à l'ouverture du salon n'y change pas la couleur")
+	await _appuyer(&"deplacer_droite", false)
+	Input.action_release("deplacer_droite")
 
 	# L'hôte seul : sa carte, les places libres, le niveau du titre, ses adresses ; aucun focus
 	var c0: Dictionary = salon.cartes[0]
@@ -1887,6 +1892,11 @@ func _tester_salon(params: Node) -> void:
 		"le niveau choisi au titre, l'aide de l'hôte, ses adresses, Démarrer grisé : « Il faut au moins 2 joueurs pour démarrer. »")
 	_check(root.gui_get_focus_owner() == null and salon.bouton_retour.focus_mode == Control.FOCUS_NONE,
 		"aucun contrôle ne prend le focus : flèches, croix, stick, vomir et démarrer vont au salon")
+	var adresses_lues: PackedStringArray = salon._adresses_hote
+	salon._adresses_hote = PackedStringArray(["10.9.9.9"])
+	reseau.salon_change.emit()
+	_check(salon.adresses.text.contains("10.9.9.9"), "M4 : les adresses de l'hôte sont relevées une fois, à l'ouverture, pas à chaque changement du salon")
+	salon._adresses_hote = adresses_lues
 
 	# Une place réservée (poignée de main en cours) n'a pas de carte ; un joueur arrivé a la sienne
 	reseau.inscrits[7] = {"index": 2, "couleur": palette[2], "pseudo": "Rita", "arrive": false, "pret": false}
@@ -1895,6 +1905,7 @@ func _tester_salon(params: Node) -> void:
 	_check(salon.cartes[1].pseudo.text == "Bob" and salon.cartes[1].badge.text == " " and salon.cartes[2].pseudo.text == tr("SALON_LIBRE")
 		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1, 5],
 		"une place seulement réservée n'a pas de carte (M4) ; un joueur arrivé a la sienne")
+	_check(reseau.places_reservees == 1, "phase 18 : la table part avec le nombre de places seulement réservées (%d)" % reseau.places_reservees)
 
 	# Couleurs : la voisine libre (celle d'une place réservée est prise) ; une seule par appui
 	salon.changer_couleur(1)
@@ -1996,9 +2007,14 @@ func _tester_salon(params: Node) -> void:
 	reseau.salon_change.emit()
 	var attente_client: String = salon_client.etat.text
 	reseau.table_salon[1].pret = true
+	reseau.places_reservees = 1  # comme la table de l'hôte pendant qu'un joueur arrive
 	reseau.salon_change.emit()
-	_check(attente_client == tr("SALON_ATTENTE_PRETS") and salon_client.etat.text == tr("SALON_ATTENTE_HOTE"),
-		"un client voit pourquoi la partie attend, puis « l'hôte peut démarrer » (%s | %s)" % [attente_client, salon_client.etat.text])
+	var attente_arrivee: String = salon_client.etat.text
+	reseau.places_reservees = 0
+	reseau.salon_change.emit()
+	_check(attente_client == tr("SALON_ATTENTE_PRETS") and attente_arrivee == tr("SALON_ATTENTE_ARRIVEE") and salon_client.etat.text == tr("SALON_ATTENTE_HOTE"),
+		"un client voit pourquoi la partie attend (un joueur pas prêt ; M2 : un joueur qui arrive), puis « l'hôte peut démarrer » (%s | %s | %s)"
+			% [attente_client, attente_arrivee, salon_client.etat.text])
 	reseau.quitter()
 	reseau.hote_perdu.emit()
 	var ecran: Node = await _attendre_scene("res://Scenes/EcranReseau.tscn")
@@ -2100,6 +2116,13 @@ func _tester_manche_reseau() -> void:
 			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
 			_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].badge.text == "PARTI",
 				"(absent) l'exclu reste au classement, en grisé ; son départ sera annoncé aux clients en passant la barrière")
+			# Phase 18 : chez l'exclu, la perte de l'hôte dit pourquoi
+			reseau.raison_perte = reseau.PERTE_EXCLU
+			main._sur_hote_perdu()
+			_check(main.get_node("HotePerdu/Message").text == "RESEAU_EXCLU",
+				"chez un exclu, le message dit qu'il a été exclu (sa partie trop longue à charger), pas « L'hôte a quitté la partie »")
+			reseau.raison_perte = reseau.PERTE_HOTE
+			paused = false
 			main.free()
 			await _frames(1)
 			reseau.quitter()
@@ -2194,11 +2217,14 @@ func _tester_manche_reseau() -> void:
 			and resultats.bouton_revanche.disabled and resultats.bouton_suivant.disabled and not resultats.bouton_salon.disabled
 			and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
 			"l'écran Résultats de l'hôte en réseau : Retour au salon ; Bob parti, Revanche et Niveau suivant attendent deux joueurs")
-		# Un hôte perdu (chez un client) : message, tout se fige
+		# Un hôte perdu (chez un client) : message, tout se fige ; M5 (revue finale phase 17) : la boucle du
+		# vomi d'un joueur qui tenait Espace s'arrête
+		var audio: Node = root.get_node("Audio")
+		audio.demarrer_vomi()
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible,
-			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible and not audio._vomi.playing,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige, la boucle du vomi s'arrête")
 		paused = false
 		main.free()
 		await _frames(1)

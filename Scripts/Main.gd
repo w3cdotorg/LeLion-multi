@@ -222,9 +222,13 @@ func _suspendre_commandes() -> void:
 
 
 ## L'hôte est parti, vu d'un client, ou son propre pair ENet en erreur chez l'hôte lui-même (M2 de
-## la revue finale) : ce poste est déjà hors réseau. Tout se fige sous le message, puis retour au
-## titre (spec §9).
+## la revue finale) : ce poste est déjà hors réseau. Tout se fige sous le message (« L'hôte a quitté la
+## partie », ou l'exclusion de ce poste par la barrière de chargement : `Reseau.raison_perte`, phase 18),
+## puis retour au titre (spec §9).
 func _sur_hote_perdu() -> void:
+	# M5 (revue finale phase 17) : l'arbre se fige avant qu'aucun lion n'arrête la boucle du vomi d'un
+	# joueur qui tenait Espace ; elle continuerait sur le titre.
+	Audio.arreter_vomi()
 	# M1 (revue finale) : ce poste est déjà hors réseau (`Reseau.en_ligne()` est faux) ; sans ceci,
 	# Échap ouvrirait le menu local par-dessus le message (il se croit encore hors ligne comme en
 	# solo) puis un second Échap dépauserait l'arbre en le refermant, repartant la ville figée.
@@ -238,7 +242,7 @@ func _sur_hote_perdu() -> void:
 	couche.process_mode = Node.PROCESS_MODE_ALWAYS
 	var message := Label.new()
 	message.name = "Message"
-	message.text = "RESEAU_HOTE_PERDU"
+	message.text = Reseau.raison_perte
 	message.add_theme_font_size_override("font_size", 56)
 	message.add_theme_color_override("font_outline_color", Color(0.1, 0.05, 0.15))
 	message.add_theme_constant_override("outline_size", 10)
