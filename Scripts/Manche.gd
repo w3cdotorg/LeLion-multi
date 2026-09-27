@@ -11,12 +11,16 @@ extends Node
 ##   chez chaque client) les lions apparaissent, le Spawner démarre et l'intro se lance chez tous.
 ## - Commandes (phase 16) : chaque client envoie à chaque tick physique la commande que la prédiction
 ##   de son lion vient de lire, numérotée, avec les 3 précédentes (`PredictionLocale.paquet`, RPC
-##   `unreliable_ordered`) ; l'hôte met chaque numéro neuf dans la file des commandes manuelles de ce
-##   lion (`Commandes.recevoir`), qui en applique une par tick, dans l'ordre, jamais deux fois, et
-##   renvoie le numéro de la dernière appliquée dans l'état du lion (`Lion.etat_reseau`) ; il remet le
-##   lion au repos après SILENCE_COMMANDES de temps de jeu sans paquet (pas l'horloge murale, M4 de la
-##   revue finale : un rattrapage de ticks physiques après un gel de l'hôte ne doit pas se lire comme
-##   un silence).
+##   `unreliable`, non ordonnée : un Wi-Fi ou un relais qui réordonne une rafale de rattrapage ne doit
+##   pas faire jeter par ENet un paquet plus récent arrivé en premier) ; l'hôte met chaque numéro
+##   supérieur à la dernière commande appliquée et pas déjà en file dans la file des commandes
+##   manuelles de ce lion, à sa place (`Commandes.recevoir`), qui en applique une par tick, dans
+##   l'ordre, jamais deux fois, et renvoie le numéro de la dernière appliquée dans l'état du lion
+##   (`Lion.etat_reseau`) ; si le numéro attendu manque encore à son tick, il est sauté (compté,
+##   jamais appliqué en retard) : seules la redondance (3 précédentes par paquet) et l'insertion dans
+##   le désordre le couvrent. Il remet le lion au repos après SILENCE_COMMANDES de temps de jeu sans
+##   paquet (pas l'horloge murale, M4 de la revue finale : un rattrapage de ticks physiques après un
+##   gel de l'hôte ne doit pas se lire comme un silence).
 ## - Tampons : chaque tampon de la ville de l'hôte (`Ville.tampon_peint`) est diffusé, regroupé par
 ##   tick physique, sur le canal fiable 1 (`Peinture.encoder_tampons`) ; un client le dessine
 ##   (`Ville.peindre_tampon_recu`).
@@ -255,7 +259,7 @@ func _envoyer_commandes() -> void:
 
 
 ## Chez l'hôte : un paquet de commandes d'un client, pour son lion.
-@rpc("any_peer", "call_remote", "unreliable_ordered")
+@rpc("any_peer", "call_remote", "unreliable")
 func _recevoir_commandes(octets: Variant) -> void:
 	if not _hote:
 		return

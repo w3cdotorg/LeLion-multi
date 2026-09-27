@@ -1807,9 +1807,39 @@ func _tester_commandes_reseau() -> void:
 	c.appliquer_suivante()
 	_check(c.numero_applique == 30 - Commandes.FILE_MAX + 1 and c.appliquees + c.sautees == c.numero_applique,
 		"les plus anciennes sont sautées, comptées, jamais appliquées (reprise à la %d)" % c.numero_applique)
-	c.remettre_au_repos()
-	_check(c.en_attente() == 0 and c.direction() == Vector2.ZERO and not c.vomir() and not c.recevoir(30, Vector2.RIGHT, true)
-		and c.recevoir(31, Vector2.RIGHT, true), "client muet : repos, file vidée ; les numéros déjà reçus restent refusés, les suivants passent")
+
+	# Protocole des commandes (scénario 12, désync-report) : au-delà de la redondance, un client qui
+	# rattrape une rafale après une image longue peut voir ses paquets réordonnés par le Wi-Fi (ou le
+	# relais de test) ; l'hôte doit combler les trous dans l'ordre des numéros, pas de leur arrivée,
+	# et ne refuser qu'un numéro déjà appliqué (jamais un numéro seulement vu passer avant lui).
+	var c2 := Commandes.manuelles()
+	for n in range(1, 6):
+		c2.recevoir(n, Vector2.RIGHT, false)
+	for i in range(5):
+		c2.appliquer_suivante()
+	_check(c2.numero_applique == 5 and c2.appliquees == 5 and c2.sautees == 0, "(base) cinq commandes reçues et appliquées dans l'ordre")
+	_check(not c2.recevoir(5, Vector2.LEFT, true) and not c2.recevoir(3, Vector2.LEFT, true) and c2.en_attente() == 0,
+		"un numéro au plus grand déjà appliqué est ignoré (5 et 3, la dernière appliquée est la 5), même s'il n'a jamais été vu avant")
+	_check(c2.recevoir(9, Vector2.UP, false) and c2.recevoir(7, Vector2.DOWN, false) and c2.recevoir(6, Vector2.LEFT, false)
+		and not c2.recevoir(7, Vector2.DOWN, false) and c2.en_attente() == 3,
+		"9, 7 puis 6 arrivées dans le désordre entrent quand même dans la file ; un doublon tardif du 7, déjà en file, est ignoré")
+	_check(c2.recevoir(8, Vector2.RIGHT, true) and c2.en_attente() == 4,
+		"le 8 manquant, arrivé en dernier, comble le trou entre 6 et 9")
+	for i in range(4):
+		c2.appliquer_suivante()
+	_check(c2.numero_applique == 9 and c2.sautees == 0 and c2.appliquees == 9 and c2.direction() == Vector2.UP,
+		"une fois le trou comblé, la file applique dans l'ordre des numéros (6, 7, 8, 9), pas de leur arrivée : aucune sautée malgré le désordre")
+	for n in range(29, 9, -1):
+		c2.recevoir(n, Vector2.RIGHT, false)
+	_check(c2.en_attente() == Commandes.FILE_MAX and c2.file_max_vue == Commandes.FILE_MAX,
+		"un rattrapage de 20 commandes reçues à l'envers (29 à 10) garde quand même les %d plus récentes" % Commandes.FILE_MAX)
+	c2.appliquer_suivante()
+	_check(c2.numero_applique == 29 - Commandes.FILE_MAX + 1 and c2.appliquees + c2.sautees == c2.numero_applique,
+		"les plus petites sont sautées, comptées, jamais appliquées (reprise à la %d), même reçues en dernier" % c2.numero_applique)
+	c2.remettre_au_repos()
+	_check(c2.en_attente() == 0 and c2.direction() == Vector2.ZERO and not c2.vomir()
+		and not c2.recevoir(c2.numero_applique, Vector2.RIGHT, true) and c2.recevoir(c2.numero_applique + 1, Vector2.RIGHT, true) and c2.en_attente() == 1,
+		"client muet : repos, file vidée ; seul un numéro déjà appliqué reste refusé, un numéro seulement vidé par le repos redevient acceptable")
 
 
 func _recevoir_paquet(c: Commandes, dernier: int, commandes: Array) -> int:

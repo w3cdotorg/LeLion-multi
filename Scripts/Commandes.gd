@@ -72,15 +72,25 @@ func vomir() -> bool:
 	return vomir_voulu
 
 
-## Chez l'hôte : la commande `numero` d'un client entre dans la file, si elle est neuve (plus grande
-## que toutes celles déjà reçues) et finie. Faux sinon (déjà vue, ou refusée).
+## Chez l'hôte : la commande `numero` d'un client entre dans la file, à sa place (triée par numéro),
+## si son numéro dépasse la dernière appliquée et qu'elle n'y est pas déjà (un doublon tardif, ou un
+## paquet redondant qui la recouvre) ; sa direction doit être finie. Un Wi-Fi qui réordonne les
+## paquets d'une rafale de rattrapage (scénario 12, désync-report) ne fait donc plus sauter les
+## numéros manquants faute d'avoir été refusés à tort : ils comblent le trou en arrivant, dans
+## n'importe quel ordre, tant qu'ils ne sont pas déjà appliqués. Faux sinon (déjà appliquée, déjà en
+## file, ou non finie).
 func recevoir(numero: int, direction_recue: Vector2, vomir_recu: bool) -> bool:
-	if numero <= dernier_recu or not direction_recue.is_finite():
+	if numero <= numero_applique or not direction_recue.is_finite():
 		return false
-	dernier_recu = numero
-	_file.append({"numero": numero, "direction": direction_recue, "vomir": vomir_recu})
+	var i := 0
+	while i < _file.size() and (_file[i].numero as int) < numero:
+		i += 1
+	if i < _file.size() and (_file[i].numero as int) == numero:
+		return false  # déjà en file : doublon tardif d'un paquet redondant
+	_file.insert(i, {"numero": numero, "direction": direction_recue, "vomir": vomir_recu})
+	dernier_recu = maxi(dernier_recu, numero)
 	while _file.size() > FILE_MAX:
-		_file.pop_front()  # sautée : l'écart de numéros est compté par `appliquer_suivante`
+		_file.pop_front()  # la plus ancienne (numéro le plus bas) : sautée, comptée par `appliquer_suivante`
 	file_max_vue = maxi(file_max_vue, _file.size())
 	return true
 
