@@ -2337,6 +2337,26 @@ func _tester_resultats_reseau() -> void:
 	_check(reseau.manche_lancee.get_connections().is_empty() and reseau.salon_rouvert.get_connections().is_empty()
 		and reseau.hote_perdu.get_connections().is_empty(),
 		"les scènes de jeu fermées et le salon ne laissent aucune connexion aux autoloads")
+	# Revue de la tâche 5 (phase 18) : un pair parti dans l'image entre l'ancienne manche (désabonnée de
+	# `Reseau.joueur_parti` dans son `_exit_tree`) et la neuve (abonnée seulement à `demarrer`, une image
+	# plus tard) n'était jamais marqué parti : Bob quitte `Reseau.inscrits` avant même l'ajout du nouveau
+	# `Main`, comme s'il était parti pendant cette image-là.
+	reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+	GS.niveau_courant = 0
+	GS.configurer_bataille_reseau([{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[0]},
+		{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[3]}] as Array[Dictionary])
+	reseau.inscrits.erase(7)
+	var main3: Node = load("res://Scenes/Main.tscn").instantiate()
+	root.add_child(main3)
+	current_scene = main3
+	await _frames(2)
+	var manche3: Node = main3.get_node("Manche")
+	var hud3: CanvasLayer = main3.hud_bataille
+	_check(manche3.barriere and manche3._partis == [1] and main3.lions.size() == 1
+		and hud3.partis == [false, true] and hud3.vignettes[1].badge.text == "PARTI",
+		"revue de la tâche 5 : un pair parti dans l'image entre deux manches est marqué parti dès la manche neuve, sans attendre la barrière")
+	main3.free()
+	await _frames(1)
 	reseau.quitter()
 	reseau.pseudo = ""
 	GS.configurer_solo()

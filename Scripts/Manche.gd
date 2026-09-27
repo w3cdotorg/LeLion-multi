@@ -153,6 +153,14 @@ func demarrer(ville: Node2D) -> void:
 		Reseau.scene_chargee.connect(_sur_scene_chargee)
 		Reseau.joueur_parti.connect(_sur_depart_reseau)
 		GameState.partie_terminee.connect(_sur_fin_de_partie)
+		# Revue de la tâche 5 (phase 18) : l'ancienne manche s'est désabonnée de `Reseau.joueur_parti`
+		# dans son `_exit_tree`, cette manche neuve ne s'y abonne qu'ici, une image plus tard ; un pair
+		# parti entre-temps n'a déclenché ni l'une ni l'autre. Le même chemin qu'un départ normal le
+		# rattrape, pour que les clients l'apprennent en passant la barrière, comme les départs d'avant
+		# elle (`_partis`, plus bas).
+		for j in GameState.joueurs:
+			if not Reseau.inscrits.has(j.id_reseau):
+				_sur_depart_reseau(j.id_reseau)
 	Reseau.signaler_scene_chargee()
 	if _hote:
 		_verifier_barriere()
