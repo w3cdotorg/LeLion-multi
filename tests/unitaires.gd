@@ -39,6 +39,7 @@ func _run() -> void:
 	_tester_joueur_replique()
 	_tester_reseau_manche()
 	_tester_deplacement_lion()
+	_tester_commandes_reseau()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1753,6 +1754,68 @@ func _tester_deplacement_lion() -> void:
 		a.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
 		b.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
 	_check(a.vitesse == b.vitesse and a.recul == b.recul, "les mêmes commandes donnent les mêmes pas (ce que rejouera la prédiction)")
+
+
+## Phase 16 : les commandes d'un client, numérotées et redondantes (la dernière et les 3 précédentes
+## dans chaque paquet) ; chez l'hôte, une file dont le lion applique une commande par tick, dans
+## l'ordre, jamais deux fois.
+func _tester_commandes_reseau() -> void:
+	print("-- Commandes numérotées et redondantes (phase 16)")
+	var octets := Commandes.encoder_paquet(7, [[Vector2(0.5, 0.0), false], [Vector2(1, 0), true], [Vector2(0, -1), false], [Vector2(0.6, 0.8), true]])
+	var paquet := Commandes.decoder_paquet(octets)
+	_check(octets.size() == Commandes.TAILLE_ENTETE + 4 * Commandes.TAILLE_COMMANDE and paquet.size() == 4
+		and paquet.map(func(c: Dictionary) -> int: return c.numero) == [4, 5, 6, 7]
+		and paquet[3].direction == Vector2(0.6, 0.8) and paquet[3].vomir and paquet[1].vomir and not paquet[0].vomir,
+		"un paquet porte la dernière commande et les 3 précédentes, numérotées, de la plus ancienne à la dernière (%d octets)" % octets.size())
+	var cinq: Array = []
+	for i in range(5):
+		cinq.append([Vector2.ZERO, false])
+	_check(Commandes.decoder_paquet(octets.slice(0, octets.size() - 1)).is_empty() and Commandes.decoder_paquet(Commandes.encoder_paquet(9, cinq)).is_empty()
+		and Commandes.decoder_paquet(Commandes.encoder_paquet(3, [[Vector2(INF, 0), false]])).is_empty()
+		and Commandes.decoder_paquet(Commandes.encoder_paquet(0, [[Vector2.ZERO, false]])).is_empty()
+		and Commandes.decoder_paquet("paquet").is_empty() and Commandes.decoder_paquet(PackedByteArray()).is_empty(),
+		"un paquet tronqué, trop long, non fini, numéroté sous 1 ou d'un autre type est refusé")
+
+	var c := Commandes.manuelles()
+	_check(_recevoir_paquet(c, 2, [[Vector2.RIGHT, false], [Vector2.DOWN, true]]) == 2 and _recevoir_paquet(c, 4, [[Vector2.RIGHT, false],
+		[Vector2.DOWN, true], [Vector2.LEFT, false], [Vector2.UP, true]]) == 2 and c.en_attente() == 4 and c.numero_applique == 0,
+		"deux paquets qui se chevauchent : chaque commande entre une fois dans la file (4 en attente)")
+	_check(_recevoir_paquet(c, 3, [[Vector2.RIGHT, false], [Vector2.DOWN, true], [Vector2.LEFT, false]]) == 0 and c.en_attente() == 4,
+		"un paquet en retard, déjà couvert par un plus récent, n'ajoute rien")
+	var vues: Array[int] = []
+	for i in range(4):
+		c.appliquer_suivante()
+		vues.append(c.numero_applique)
+	_check(vues == [1, 2, 3, 4] and c.direction() == Vector2.UP and c.vomir() and c.appliquees == 4 and c.sautees == 0,
+		"une commande par tick, dans l'ordre (%s)" % [vues])
+	c.appliquer_suivante()
+	_check(c.numero_applique == 4 and c.direction() == Vector2.UP and c.appliquees == 4,
+		"file vide (commande en retard) : la dernière appliquée tient encore un tick, sans être comptée deux fois")
+	_recevoir_paquet(c, 10, [[Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2(3, 4), true]])
+	for i in range(4):
+		c.appliquer_suivante()
+	_check(c.numero_applique == 10 and c.sautees == 2 and c.appliquees + c.sautees == c.numero_applique
+		and c.direction().is_equal_approx(Vector2(0.6, 0.8)),
+		"trois paquets perdus de suite (5 à 9) : 5 et 6 manquent, sautés et comptés ; aucune commande n'est appliquée deux fois ; la direction reçue reste bornée")
+	var neuves := 0
+	for dernier in range(14, 31, 4):
+		neuves += _recevoir_paquet(c, dernier, [[Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, true]])
+	_check(c.en_attente() == Commandes.FILE_MAX and neuves == 20 and c.file_max_vue == Commandes.FILE_MAX,
+		"un rattrapage d'un coup (20 commandes neuves) : la file garde les %d plus récentes" % Commandes.FILE_MAX)
+	c.appliquer_suivante()
+	_check(c.numero_applique == 30 - Commandes.FILE_MAX + 1 and c.appliquees + c.sautees == c.numero_applique,
+		"les plus anciennes sont sautées, comptées, jamais appliquées (reprise à la %d)" % c.numero_applique)
+	c.remettre_au_repos()
+	_check(c.en_attente() == 0 and c.direction() == Vector2.ZERO and not c.vomir() and not c.recevoir(30, Vector2.RIGHT, true)
+		and c.recevoir(31, Vector2.RIGHT, true), "client muet : repos, file vidée ; les numéros déjà reçus restent refusés, les suivants passent")
+
+
+func _recevoir_paquet(c: Commandes, dernier: int, commandes: Array) -> int:
+	var neuves := 0
+	for commande in Commandes.decoder_paquet(Commandes.encoder_paquet(dernier, commandes)):
+		if c.recevoir(commande.numero, commande.direction, commande.vomir):
+			neuves += 1
+	return neuves
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
