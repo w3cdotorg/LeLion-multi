@@ -71,6 +71,10 @@ var joueur: Joueur:
 ## Chez l'hôte, un lion de client applique une commande reçue par tick (`Commandes.appliquer_suivante`) ;
 ## sur un client, le lion local a des commandes manuelles, que remplit sa prédiction.
 var commandes: Commandes
+## Sur un client, la prédiction du lion du joueur local (phase 16) : donnée par `Main` avant l'ajout à
+## l'arbre, ajoutée par `_ready` comme enfant du lion. Nulle ailleurs (hôte, solo, bataille locale, lions
+## distants).
+var prediction: PredictionLocale
 ## Vrai sur un client (fixé dans `_ready`) : les états reçus de l'hôte y sont gardés pour le prochain
 ## tick physique.
 var _replique := false
@@ -107,7 +111,7 @@ var _rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	_rng.randomize()
 	_replique = not multiplayer.is_server()
-	if _replique:
+	if _replique and prediction == null:
 		_interpolation = InterpolationLion.new(Engine.physics_ticks_per_second)
 	if joueur == null:
 		joueur = GameState.joueur_local()
@@ -123,12 +127,18 @@ func _ready() -> void:
 	_appliquer_direction()
 	gerbe.reconstruire()
 	appliquer_apparence()
+	if prediction != null:
+		prediction.name = "Prediction"
+		add_child(prediction)
 
 
 func _physics_process(delta: float) -> void:
 	temps += delta
 	if not multiplayer.is_server():
-		_suivre_l_hote(delta)
+		if prediction == null:
+			_suivre_l_hote(delta)
+		else:
+			_animer_deplacement(delta)  # le pas de ce tick est déjà fait, par la prédiction (priorité -10)
 		return
 	commandes.appliquer_suivante()
 	avancer(_direction_voulue(), delta)
@@ -215,6 +225,17 @@ func _suivre_l_hote(delta: float) -> void:
 	_animer_deplacement(delta)
 
 
+## Sur un client, pour la prédiction : le plus récent des états reçus de l'hôte depuis le dernier appel
+## (vide s'il n'en est arrivé aucun).
+func dernier_etat_recu() -> Dictionary:
+	var dernier := {}
+	for etat in _etats_recus:
+		if dernier.is_empty() or etat.instant > dernier.instant:
+			dernier = etat
+	_etats_recus.clear()
+	return dernier
+
+
 ## La direction que suit le lion pour la commande `voulue` : aucune avant la fin de l'intro ni pendant
 ## un étourdissement (commandes ignorées). La même règle chez l'hôte et dans la prédiction d'un client,
 ## qui rejoue ses commandes avec elle.
@@ -226,9 +247,10 @@ func _direction_voulue() -> Vector2:
 	return direction_pour(commandes.direction())
 
 
-## Sur un client, la réplique vomit quand le lion de l'hôte vomit.
+## Un lion étourdi ne vomit plus. Sur un client, un lion distant vomit quand le lion de l'hôte vomit ;
+## le lion local, prédit, dès l'appui (particules seulement : la peinture reste décidée par l'hôte).
 func _veut_vomir() -> bool:
-	if not multiplayer.is_server():
+	if not multiplayer.is_server() and prediction == null:
 		return vomi_de_l_hote
 	return GameState.pret and not joueur.est_etourdi() and commandes.vomir()
 

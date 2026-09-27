@@ -2037,16 +2037,21 @@ func _tester_manche_reseau() -> void:
 		_check(lion_bob.joueur == GS.joueurs[1] and lion_bob.commandes.source == Commandes.Source.MANUELLES
 			and lion_bob.position.x < main.lion.position.x + 2000.0 and lion_bob.position.y == main.lion.position.y,
 			"le lion de Bob porte son joueur et des commandes manuelles, à sa place de départ")
-		# Commandes reçues de Bob, numérotées, puis son silence
+		# Commandes reçues de Bob, numérotées et redondantes (phase 16), puis son silence
 		var maintenant := Time.get_ticks_msec()
-		_check(manche.recevoir_commandes_de(1, 5, Vector2(0.5, 0.0), true, maintenant) and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0)
-			and lion_bob.commandes.vomir_voulu, "une commande de Bob est écrite dans les commandes de son lion")
-		_check(not manche.recevoir_commandes_de(1, 4, Vector2(-1, 0), false, maintenant) and not manche.recevoir_commandes_de(1, 5, Vector2(-1, 0), false, maintenant)
-			and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0),
-			"une commande plus ancienne ou déjà vue est ignorée")
-		_check(not manche.recevoir_commandes_de(1, 6, "gauche", false, maintenant) and not manche.recevoir_commandes_de(1, 6, Vector2(INF, 0), false, maintenant)
-			and not manche.recevoir_commandes_de(0, 6, Vector2(1, 0), false, maintenant) and main.lion.commandes.direction() == Vector2.ZERO,
-			"une commande mal formée, non finie ou pour le lion de l'hôte est refusée")
+		var paquet_bob := Commandes.encoder_paquet(5, [[Vector2(-1, 0), false], [Vector2(0.5, 0.0), true]])
+		_check(manche.recevoir_paquet_de(1, paquet_bob, maintenant) == 2 and lion_bob.commandes.en_attente() <= 2,
+			"un paquet de Bob (ses commandes 4 et 5) entre dans la file des commandes de son lion")
+		_check(manche.recevoir_paquet_de(1, paquet_bob, maintenant) == 0, "le même paquet reçu deux fois n'ajoute rien")
+		_check(manche.recevoir_paquet_de(1, "gauche", maintenant) == -1
+			and manche.recevoir_paquet_de(1, Commandes.encoder_paquet(6, [[Vector2(INF, 0), false]]), maintenant) == -1
+			and manche.recevoir_paquet_de(0, Commandes.encoder_paquet(6, [[Vector2(1, 0), false]]), maintenant) == -1
+			and main.lion.commandes.direction() == Vector2.ZERO,
+			"un paquet mal formé, non fini ou pour le lion de l'hôte est refusé")
+		await _frames(3)
+		_check(lion_bob.commandes.numero_applique == 5 and lion_bob.commandes.appliquees == 2 and lion_bob.commandes.direction_voulue == Vector2(0.5, 0.0)
+			and lion_bob.commandes.vomir_voulu and EtatLion.decoder(lion_bob.etat_reseau).commande == 5,
+			"le lion de Bob applique une commande par tick, dans l'ordre (la 4, puis la 5), et son état accuse la 5")
 		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES - 10)
 		_check(lion_bob.commandes.vomir_voulu, "pas encore de silence : la dernière commande tient")
 		manche.verifier_silences(maintenant + manche.SILENCE_COMMANDES + 10)

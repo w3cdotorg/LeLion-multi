@@ -9,12 +9,14 @@ extends Node
 ##   plus `delai_chargement` secondes de jeu, puis exclut les absents (il les déconnecte : leur
 ##   départ est un départ comme un autre) ; alors seulement (`barriere_passee`, chez l'hôte puis
 ##   chez chaque client) les lions apparaissent, le Spawner démarre et l'intro se lance chez tous.
-## - Commandes : chaque client envoie à chaque tick physique la direction et l'envie de vomir de son
-##   lion (RPC `unreliable_ordered`, numérotées : l'hôte ignore un numéro déjà vu, en attendant la
-##   redondance de la phase 16) ; l'hôte les écrit dans les commandes manuelles de ce lion, et les
-##   remet au repos après SILENCE_COMMANDES de temps de jeu sans nouvelle commande (pas l'horloge
-##   murale, M4 de la revue finale : un rattrapage de ticks physiques après un gel de l'hôte ne doit
-##   pas se lire comme un silence).
+## - Commandes (phase 16) : chaque client envoie à chaque tick physique la commande que la prédiction
+##   de son lion vient de lire, numérotée, avec les 3 précédentes (`PredictionLocale.paquet`, RPC
+##   `unreliable_ordered`) ; l'hôte met chaque numéro neuf dans la file des commandes manuelles de ce
+##   lion (`Commandes.recevoir`), qui en applique une par tick, dans l'ordre, jamais deux fois, et
+##   renvoie le numéro de la dernière appliquée dans l'état du lion (`Lion.etat_reseau`) ; il remet le
+##   lion au repos après SILENCE_COMMANDES de temps de jeu sans paquet (pas l'horloge murale, M4 de la
+##   revue finale : un rattrapage de ticks physiques après un gel de l'hôte ne doit pas se lire comme
+##   un silence).
 ## - Tampons : chaque tampon de la ville de l'hôte (`Ville.tampon_peint`) est diffusé, regroupé par
 ##   tick physique, sur le canal fiable 1 (`Peinture.encoder_tampons`) ; un client le dessine
 ##   (`Ville.peindre_tampon_recu`).
@@ -40,7 +42,8 @@ signal joueur_parti(index: int)
 const DELAI_CHARGEMENT := 20.0
 ## Sans commande d'un client depuis ce délai (ms de temps de jeu, pas l'horloge murale : M4 de la
 ## revue finale), l'hôte remet son lion au repos (point de vigilance des phases 14 et 16 : un client
-## planté ne laisse pas son lion filer ou vomir).
+## planté ne laisse pas son lion filer ou vomir). Bien au-dessus de la latence du Wi-Fi simulée par
+## les tests (40 ms ± 20 ms par sens) et de trois paquets perdus de suite, que la redondance couvre.
 const SILENCE_COMMANDES := 500
 ## Période de diffusion du territoire (cellules changées et scores), en secondes (spec §6).
 const INTERVALLE_TERRITOIRE := 0.2
@@ -68,8 +71,8 @@ var _ville: Node2D
 ## Hôte : les commandes manuelles du lion de chaque client, par index de joueur. Client : les
 ## commandes de son lion (celles de ce poste), à l'index de son joueur.
 var _commandes: Dictionary[int, Commandes] = {}
-## Hôte : par index de joueur, la dernière commande reçue `{"numero": int, "a": int (ms)}`.
-var _recues: Dictionary[int, Dictionary] = {}
+## Hôte : par index de joueur, l'instant (ms de temps de jeu) du dernier paquet de commandes reçu.
+var _recues: Dictionary[int, int] = {}
 ## Hôte : les clients dont la scène est chargée, destinataires de tout ce que diffuse la manche.
 var _prets: Array[int] = []
 ## Hôte : les clients exclus par la barrière, qui partent.
@@ -86,12 +89,14 @@ var _temps_chargement := 0.0
 ## réseau du même `process` ; comptés à l'horloge murale, ce rattrapage se lirait comme un silence
 ## des commandes et remettrait chaque lion distant au repos pour rien.
 var _temps_manche := 0.0
-## Client : numéro de la dernière commande envoyée.
-var _numero := 0
+## Client : la prédiction du lion de ce poste, qui lit ses commandes et les numérote.
+var _prediction: PredictionLocale
 
 
 func _ready() -> void:
-	# Après les lions et leurs traceuses (priorité 0) : les tampons d'un tick partent dans ce tick.
+	# Après les lions et leurs traceuses (priorité 0) : les tampons d'un tick partent dans ce tick ; et
+	# après la prédiction du lion local d'un client (priorité -10) : la commande de ce tick part dans ce
+	# tick.
 	process_physics_priority = 100
 
 
@@ -121,12 +126,14 @@ func _exit_tree() -> void:
 
 
 ## Le lion `lion` vient d'apparaître sur ce poste (appelé par `Main`) : chez l'hôte, les commandes
-## manuelles du lion d'un client y seront écrites ; chez un client, les commandes de son propre lion
-## partiront vers l'hôte.
+## manuelles du lion d'un client y seront écrites ; chez un client, les commandes de son propre lion,
+## lues et numérotées par sa prédiction, partiront vers l'hôte.
 func suivre_lion(lion: Lion) -> void:
 	var local := lion.joueur == GameState.joueur_local()
 	if (_hote and not local) or (not _hote and local):
 		_commandes[lion.joueur.index] = lion.commandes
+	if not _hote and local:
+		_prediction = lion.prediction
 
 
 ## Chez l'hôte : vrai si le joueur d'index `index` est encore dans la manche (inscrit, ni parti ni
@@ -235,49 +242,51 @@ func _lancer_intro() -> void:
 # --- Commandes -------------------------------------------------------------------------------------
 
 
-## Chez un client : les commandes de son lion, une fois par tick physique.
+## Chez un client : la commande de ce tick, lue par la prédiction du lion de ce poste, avec les 3
+## précédentes, une fois par tick physique.
 func _envoyer_commandes() -> void:
-	if not barriere or _commandes.is_empty():
+	if not barriere or _prediction == null or not is_instance_valid(_prediction):
 		return
-	var c: Commandes = _commandes.values()[0]
-	_numero += 1
-	_recevoir_commandes.rpc_id(MultiplayerPeer.TARGET_PEER_SERVER, _numero, c.direction(), c.vomir())
+	var octets := _prediction.paquet()
+	if not octets.is_empty():
+		_recevoir_commandes.rpc_id(MultiplayerPeer.TARGET_PEER_SERVER, octets)
 
 
-## Chez l'hôte : les commandes d'un client, pour son lion.
+## Chez l'hôte : un paquet de commandes d'un client, pour son lion.
 @rpc("any_peer", "call_remote", "unreliable_ordered")
-func _recevoir_commandes(numero: Variant, direction: Variant, vomir: Variant) -> void:
+func _recevoir_commandes(octets: Variant) -> void:
 	if not _hote:
 		return
 	var id := multiplayer.get_remote_sender_id()
 	for j in GameState.joueurs:
 		if j.id_reseau == id:
-			recevoir_commandes_de(j.index, numero, direction, vomir, int(_temps_manche * 1000.0))
+			recevoir_paquet_de(j.index, octets, int(_temps_manche * 1000.0))
 			return
 
 
-## Chez l'hôte : écrit la commande `numero` du joueur d'index `index` dans les commandes de son lion,
-## reçue à `maintenant` (ms de temps de jeu). Refusée (faux) pour un lion inconnu, des arguments
-## d'un autre type ou non finis, ou un numéro déjà vu.
-func recevoir_commandes_de(index: int, numero: Variant, direction: Variant, vomir: Variant, maintenant: int) -> bool:
+## Chez l'hôte : le paquet de commandes `octets` du joueur d'index `index` (la dernière et jusqu'à 3
+## précédentes, `Commandes.encoder_paquet`), reçu à `maintenant` (ms de temps de jeu) : chaque
+## commande neuve entre dans la file des commandes de son lion, qui en applique une par tick. Renvoie
+## le nombre de commandes neuves, ou -1 pour un lion inconnu ou un paquet mal formé.
+func recevoir_paquet_de(index: int, octets: Variant, maintenant: int) -> int:
 	var c: Commandes = _commandes.get(index)
-	if c == null or not (numero is int) or not (direction is Vector2) or not (vomir is bool) or not direction.is_finite():
-		return false
-	if numero <= _recues.get(index, {"numero": 0}).numero:
-		return false
-	c.direction_voulue = direction  # bornée à une longueur de 1 par `Commandes.direction()`
-	c.vomir_voulu = vomir
-	_recues[index] = {"numero": numero, "a": maintenant}
-	return true
+	var paquet := Commandes.decoder_paquet(octets)
+	if c == null or paquet.is_empty():
+		return -1
+	var neuves := 0
+	for commande in paquet:
+		if c.recevoir(commande.numero, commande.direction, commande.vomir):
+			neuves += 1
+	_recues[index] = maintenant
+	return neuves
 
 
-## Chez l'hôte : le lion d'un client dont aucune commande n'est arrivée depuis SILENCE_COMMANDES ms
-## de temps de jeu (à `maintenant`) revient au repos.
+## Chez l'hôte : le lion d'un client dont aucun paquet de commandes n'est arrivé depuis
+## SILENCE_COMMANDES ms de temps de jeu (à `maintenant`) revient au repos, sa file vidée.
 func verifier_silences(maintenant: int) -> void:
 	for index: int in _recues:
-		if maintenant - int(_recues[index].a) > SILENCE_COMMANDES and _commandes.has(index):
-			_commandes[index].direction_voulue = Vector2.ZERO
-			_commandes[index].vomir_voulu = false
+		if maintenant - _recues[index] > SILENCE_COMMANDES and _commandes.has(index):
+			_commandes[index].remettre_au_repos()
 
 
 # --- Tampons et territoire -------------------------------------------------------------------------

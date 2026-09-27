@@ -701,9 +701,12 @@ func _jouer_manche(hote: bool) -> void:
 			"les clients chargés sont prêts, le muet est exclu (%s, %s)" % [manche._prets, exclus])
 	_check(await _attendre(func() -> bool: return main.lions.size() == gs.joueurs.size() - 1), "un lion par joueur resté (%d)" % main.lions.size())
 	var moi: Joueur = gs.joueur_local()
-	_check(main.lion != null and main.lion.joueur == moi and main.lion.commandes.source == Commandes.Source.LOCALES
-		and main.lions.all(func(l: Node) -> bool: return l == main.lion or l.commandes.source == Commandes.Source.MANUELLES),
-		"le lion de ce poste lit ses commandes, les autres ont des commandes manuelles")
+	var lion_local_ok: bool = main.lion != null and main.lion.joueur == moi and (
+		main.lion.commandes.source == Commandes.Source.LOCALES and main.lion.prediction == null if hote
+		else main.lion.commandes.source == Commandes.Source.MANUELLES and main.lion.prediction != null)
+	_check(lion_local_ok and main.lions.all(func(l: Node) -> bool:
+			return l == main.lion or (l.commandes.source == Commandes.Source.MANUELLES and l.prediction == null)),
+		"le lion de ce poste lit ses commandes (hôte) ou les prédit (client, phase 16) ; les autres ont des commandes manuelles")
 	if not hote:
 		_check(root.multiplayer.get_peers() == PackedInt32Array([1]) and not root.multiplayer.is_server(),
 			"sans relais du serveur, un client ne voit que l'hôte parmi ses pairs (%s)" % [root.multiplayer.get_peers()])

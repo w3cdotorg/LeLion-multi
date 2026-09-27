@@ -96,8 +96,10 @@ func _preparer_manche_en_reseau() -> void:
 
 
 ## La `spawn_function` d'`apparitions`, sur chaque poste : le lion du joueur d'index `index`, avec
-## son joueur et ses commandes avant l'ajout à l'arbre (celles de ce poste pour le joueur local,
-## manuelles pour les autres), à sa place de départ.
+## son joueur et ses commandes avant l'ajout à l'arbre, à sa place de départ. Chez l'hôte, le lion du
+## joueur local lit les actions de ce poste, les autres des commandes manuelles (celles que chaque
+## client envoie) ; sur un client, le lion du joueur local est prédit (phase 16) : sa prédiction lit
+## les actions de ce poste une fois par tick et les écrit dans ses commandes manuelles.
 func _creer_lion(index: Variant) -> Node:
 	if not (index is int) or index < 0 or index >= GameState.joueurs.size():
 		push_error("Main : apparition d'un lion pour un index inconnu (%s)" % [index])
@@ -106,7 +108,10 @@ func _creer_lion(index: Variant) -> Node:
 	var nouveau: Lion = SCENE_LION.instantiate()
 	nouveau.name = "Lion%d" % (index + 1)
 	nouveau.joueur = joueur
-	nouveau.commandes = Commandes.locales() if joueur == GameState.joueur_local() else Commandes.manuelles()
+	var local := joueur == GameState.joueur_local()
+	nouveau.commandes = Commandes.locales() if local and multiplayer.is_server() else Commandes.manuelles()
+	if local and not multiplayer.is_server():
+		nouveau.prediction = PredictionLocale.new()
 	nouveau.position = _position_de_depart(index, GameState.joueurs.size())
 	return nouveau
 
