@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Test réseau du transport (phase 11), de la découverte (phase 12), du salon (phase 13), de la
-# manche synchronisée (phase 14) et de bout en bout (phase 15) : des postes headless sur localhost,
-# un processus Godot par poste (tests/reseau/joueur.gd), scénario après scénario.
+# manche synchronisée (phase 14), de bout en bout (phase 15) et de la prédiction sous latence
+# simulée (phase 16) : des postes headless sur localhost, un processus Godot par poste
+# (tests/reseau/joueur.gd), et pour le scénario 12 le simulateur de latence (tests/reseau/relais.gd),
+# scénario après scénario.
 #   tests/reseau/lancer.sh [port_de_base]
 # Le scénario n utilise le port port_de_base + n (défaut 17777 : jamais le 7777 d'une vraie partie)
-# et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778).
-# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40 ; le
-# scénario 11, une manche entière, a le sien : DUREE11 + 60),
+# et, pour les balises de découverte, port_de_base + 1000 + n (jamais le 7778) ; le relais du
+# scénario 12 écoute sur port_de_base + 2012.
+# Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40 ; les
+# scénarios 11 et 12, des manches jouées, ont le leur : DUREE11 + 60, DUREE12 + 50),
 # DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion : hors CI, où la diffusion n'a pas
 # été mesurée ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
 # Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
@@ -77,6 +80,16 @@ lancer() {
 	local nom="$1"
 	shift
 	timeout -k 5 "$DELAI" "$GODOT" --headless --script tests/reseau/joueur.gd -- "$@" >"$JOURNAUX/$nom.log" 2>&1 &
+	PIDS+=("$!")
+	NOMS+=("$nom")
+}
+
+# lancer_relais <nom> <arguments de relais.gd…> : le simulateur de latence en arrière-plan, borné
+# comme un poste.
+lancer_relais() {
+	local nom="$1"
+	shift
+	timeout -k 5 "$DELAI" "$GODOT" --headless --script tests/reseau/relais.gd -- "$@" >"$JOURNAUX/$nom.log" 2>&1 &
 	PIDS+=("$!")
 	NOMS+=("$nom")
 }
@@ -470,10 +483,52 @@ terminer "de bout en bout : manche entière à 1 hôte et 3 clients au clavier, 
 DELAI=$DELAI_AVANT11
 [ "$(for nom in hote11 $restes11; do grep -h "^EMPREINTE " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
 	&& [ "$(compter "^EMPREINTE " hote11 $restes11)" -eq 3 ] || echec "de bout en bout : l'hôte et les deux clients restés doivent finir avec la même empreinte"
+for nom in $restes11; do
+	grep -h "^PREDICTION " "$JOURNAUX/$nom.log" 2>/dev/null | sed 's/^/  (bout en bout) /'
+done
 ecart11=$(grep -o "ECART_DEPART [0-9]*" "$JOURNAUX/hote11.log" 2>/dev/null | head -1 | awk '{print $2}')
 echo "  (bout en bout) départ arraché vu par l'hôte au bout de ${ecart11:-?} ms"
 [ -n "$ecart11" ] && [ "$ecart11" -le 10000 ] 2>/dev/null \
 	|| echec "de bout en bout : départ arraché vu au bout de ${ecart11:-?} ms (attendu au plus 10000 : le silence de session d'ENet, 8 s au plus, et la marge d'une image)"
+
+# 12. Prédiction sous latence simulée (phase 16), par les vraies scènes : un hôte et deux clients, les
+#     clients derrière le relais (80 ms d'aller-retour, 40 ms de gigue, 5 % de pertes dans chaque
+#     sens). Chaque client joue au clavier son programme au hasard (graine), dans sa moitié de la bande
+#     de peinture : l'hôte reste immobile et écarte les ennemis. Au calme, chaque client vérifie sa
+#     prédiction (aucun recalage, l'erreur rarement au-delà de 16 px, sous 4 px 150 ms après l'arrêt de
+#     ses commandes), l'hôte les commandes reçues (aucune appliquée deux fois, presque aucune sautée) ;
+#     puis la même empreinte chez l'hôte et les deux clients. L'hôte part (ses clients le voient partir
+#     à travers le relais), puis le relais s'arrête.
+DUREE12=20
+P=$((PORT_BASE + 12))
+B=$((PORT_BASE + 1012))
+R=$((PORT_BASE + 2012))
+DELAI_AVANT12=$DELAI
+DELAI=$((DUREE12 + 50))
+lancer_relais relais12 --ecoute=$R --vers=$P --latence=80 --gigue=40 --pertes=5 --graine=12 --fin="$JOURNAUX/fin12"
+lancer hote12 --role=latence-hote --port=$P --port-balise=$B --pseudo=Hote12 --clients=2 --niveau=0 --duree=$DUREE12 \
+	--rester="$JOURNAUX/rester12"
+if attendre_ligne relais12 "RELAIS PRET" && attendre_hote hote12; then
+	lancer a12 --role=latence-client --port=$R --port-balise=$B --pseudo=Anna --graine=5 --moitie=0 --calme="$JOURNAUX/calme12" --fige="$JOURNAUX/fige12"
+	lancer b12 --role=latence-client --port=$R --port-balise=$B --pseudo=Bruno --graine=6 --moitie=1 --calme="$JOURNAUX/calme12" --fige="$JOURNAUX/fige12"
+	if attendre_ligne hote12 "INTRO" 30 && attendre_ligne hote12 "CALME" $((DUREE12 + 10)); then
+		touch "$JOURNAUX/calme12"
+		if attendre_ligne a12 "PREDICTION" && attendre_ligne b12 "PREDICTION" && attendre_ligne hote12 "FIGE" 30; then
+			touch "$JOURNAUX/fige12"
+			attendre_ligne a12 "EMPREINTE" && attendre_ligne b12 "EMPREINTE" && touch "$JOURNAUX/rester12"
+		fi
+	fi
+	touch "$JOURNAUX/calme12" "$JOURNAUX/fige12" "$JOURNAUX/rester12"
+	attendre_fin hote12
+	attendre_fin a12
+	attendre_fin b12
+fi
+touch "$JOURNAUX/fin12"
+terminer "prédiction sous latence simulée (80 ms, 40 ms de gigue, 5 % de pertes) : lion local prédit et recalé, commandes redondantes appliquées une fois, mêmes empreintes chez l'hôte et les clients"
+DELAI=$DELAI_AVANT12
+[ "$(for nom in hote12 a12 b12; do grep -h "^EMPREINTE " "$JOURNAUX/$nom.log"; done 2>/dev/null | sort -u | wc -l | tr -d ' ')" -eq 1 ] \
+	&& [ "$(compter "^EMPREINTE " hote12 a12 b12)" -eq 3 ] || echec "prédiction sous latence : l'hôte et les deux clients doivent finir avec la même empreinte"
+grep -hE "^PREDICTION |^COMMANDES |^RELAIS datagrammes" "$JOURNAUX/a12.log" "$JOURNAUX/b12.log" "$JOURNAUX/hote12.log" "$JOURNAUX/relais12.log" 2>/dev/null | sed 's/^/  (latence) /'
 
 echo "== $ECHECS échec(s) =="
 if [ "$ECHECS" -eq 0 ]; then

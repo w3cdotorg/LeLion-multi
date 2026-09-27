@@ -75,7 +75,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 14 bis | **Pastilles vers `body is Lion`** (exécutée avant la 14) : base commune des trois pastilles (garde hôte, `body is Lion`, premier arrivé, premier servi, une réplique ne se libère pas d'elle-même : `_expirer`), sons de ramassage par `Audio` et les signaux du joueur local (un par frame, le cran de bataille compris), recul du peintre horizontal (il pointait vers la ville), durcissements du smoke test de la revue 8 ter. | ➕ `Scripts/Pastille.gd` ✏️ `Scripts/ColorPickup.gd` ✏️ `Scripts/BonusPickup.gd` ✏️ `Scripts/CoeurPickup.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Boss.gd` ✏️ `tests/smoke_test.gd` | smoke vert, suites vertes 5 fois |
 | 15 | **Test réseau de bout en bout** : scénario 11 (les scénarios 9 et 10 restent) : 1 hôte + 3 clients jouent une manche entière de 45 s sur le Village au clavier, chacun selon un programme de commandes au hasard (graine) ; l'hôte orchestre les rencontres (pastilles ramassées au vol par chaque client, étoile, soucoupe, sa gerbe sur un client, la gerbe d'un client sur lui, un choc) ; un client arraché (KILL) est vu parti au bout du silence de session d'ENet (3,2 à 6,3 s mesurées, 10 s au plus), son lion disparaît chez tous, ses cellules restent ; même empreinte chez l'hôte et les deux clients restés (territoire, scores, suite des tampons, lions, apparitions, niveau, réactions de chaque joueur comptées sur chaque poste) ; jeux de tampons remesurés à 4 postes. `DUREE11=45` (décision de l'utilisateur : marge CI sous le `timeout 300`, pas 90) : test réseau ~110 s (~52 s pour le scénario 11), `ci.yml` inchangé. | ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | test vert 5 fois (bash 3.2 et 5), puis en CI |
 | 15 bis | **Découpage de `Lion.gd`** (avant la 16, à comportement identique) : `DeplacementLion` (logique pure : vitesse commandée, recul) et le pas `Lion.avancer`, seul chemin du déplacement sur l'hôte ; `PareChocs` (script du nœud `PareChocs` : chocs, délai anti-rafale, blocage) ; `GerbeLion` (nœud `Gerbe` : émetteurs, traceuse, zones de contact) ; `Lion` garde joueur, commandes, réplication, vomi et présentation (542 → 320 lignes). Outil de trace des lions (`tests/trace_lions.gd`, hors CI) : empreinte identique avant et après chaque étape. | ➕ `Scripts/DeplacementLion.gd` ➕ `Scripts/PareChocs.gd` ➕ `Scripts/GerbeLion.gd` ➕ `tests/trace_lions.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/GerbeTraceuse.gd` ✏️ `Scripts/Manche.gd` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/bataille_test.gd` | trace inchangée, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5) |
-| 16 | **Prédiction du lion local** (4 bis), après le découpage de `Lion.gd` (étape à part, voir les points de vigilance) : correction douce, commandes redondantes (la phase 14 les numérote déjà), numéro de la dernière commande traitée répliqué, interpolation, simulateur de latence. | ➕ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `tests/reseau/joueur.gd` | test vert sous 80 ms / 40 ms / 5 % |
+| 16 | **Prédiction du lion local** (4 bis) : sur un client, le lion local avance tout de suite (`PredictionLocale`, par `Lion.avancer`), se recale sur chaque état neuf de l'hôte et rejoue les commandes que l'hôte n'a pas encore appliquées (avec ses chocs simulés), décalage d'affichage amorti en 120 ms, recalage immédiat au-delà de 200 px ; commandes lues une fois par tick, numérotées, envoyées avec les 3 précédentes, appliquées par l'hôte une par tick dans l'ordre, jamais deux fois (`Commandes` : file) ; un seul état répliqué par lion (`Lion.etat_reseau`, `EtatLion` : instant, dernière commande appliquée, position, vitesse commandée, recul, orientation) ; lions distants interpolés avec 100 ms de retard (`InterpolationLion`) ; simulateur de latence en relais UDP (`tests/reseau/relais.gd`) ; banc de la prédiction dans un seul processus (`tests/prediction_test.gd`, en CI) ; scénario 12 du test réseau sous 80 ms / 40 ms / 5 % ; version 0.16. `Scripts/Reseau.gd` inchangé. | ➕ `Scripts/PredictionLocale.gd` ➕ `Scripts/EtatLion.gd` ➕ `Scripts/InterpolationLion.gd` ➕ `tests/prediction_test.gd` ➕ `tests/reseau/relais.gd` ✏️ `Scripts/Commandes.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/PareChocs.gd` ✏️ `Scenes/Lion.tscn` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Main.gd` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` ✏️ `.github/workflows/ci.yml` | trace inchangée, banc et scénario 12 verts sous 80 ms / 40 ms / 5 %, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5), ◉ partie à 2 fenêtres sous latence |
 
 ### D. Fin de manche et livraison
 
@@ -111,18 +111,16 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   (`Commandes.suspendues`). Hors du solo, la fenêtre prend le format 16:9
   (`Regles.appliquer_ecran`, 1400×788) ; **phase 19** : la taille de la fenêtre par défaut dans
   `project.godot` reste à régler ;
-- Phase 16 : `PredictionLocale` lit Input une seule fois par tick physique, l'écrit dans les
-  commandes MANUELLES du lion local et envoie exactement cette valeur, numérotée (direction et
-  vomir échantillonnés au même tick). La prédiction locale doit appliquer la même borne
-  `Lion._marge_haute()` que l'hôte (phase 10 ter) ; cela ne tient que si la visibilité de
-  l'étiquette (couleur et pseudo du joueur) est identique sur chaque machine. Depuis la phase 14,
-  c'est `Manche._envoyer_commandes` qui envoie, à chaque tick physique (priorité 100, après les
-  lions), les commandes du lion de ce poste (`LOCALES`) : `PredictionLocale` doit écrire avant
-  (priorité plus basse) et `Manche` envoyer ce qu'elle a écrit, avec les 3 précédentes (le numéro
-  existe déjà, `Manche._numero`, et l'hôte ignore un numéro déjà vu) ;
-- (résolu en phase 14) sans commande d'un client depuis `Manche.SILENCE_COMMANDES` (500 ms), l'hôte
-  remet son lion au repos (`Manche.verifier_silences`). **Phase 16** : garder ce délai au-dessus de
-  la latence simulée (80 ms + 40 ms de gigue) ;
+- (résolu en phase 16) `PredictionLocale` (priorité -10) lit les actions de ce poste une seule fois
+  par tick physique (direction et vomir au même tick), les numérote, les écrit dans les commandes
+  manuelles du lion local et les garde ; `Manche._envoyer_commandes` (priorité 100) envoie ce paquet
+  (`PredictionLocale.paquet` : la commande et les 3 précédentes). La prédiction passe par
+  `Lion.avancer`, donc par la même borne `Lion._marge_haute()` que l'hôte ; l'étiquette est visible
+  sur chaque poste au même titre (la même table des joueurs) : l'empreinte du test réseau la compte ;
+- (résolu en phases 14 et 16) sans paquet de commandes d'un client depuis `Manche.SILENCE_COMMANDES`
+  (500 ms), l'hôte remet son lion au repos et vide sa file (`Commandes.remettre_au_repos`) ; le délai
+  reste bien au-dessus de la latence simulée (40 ms ± 20 ms par aller) et de trois paquets perdus de
+  suite, que la redondance couvre ;
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
@@ -199,11 +197,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   17 à 61 ms chez l'hôte comme chez un client (lignes `MESURE`) ; la frame la plus longue tout
   court (18 à 70 ms) ne génère pas toujours (quatre processus Godot sur un Mac).
   Pas de pré-génération. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs ;
-- **phase 16** (temps de la CI, depuis la phase 15) : le test réseau prend ~110 s, dont ~52 s pour
-  le scénario 11 (la manche entière de 45 s, `DUREE11` dans `tests/reseau/lancer.sh` : décision de
-  l'utilisateur, pas 90 s, pour garder la marge sous le `timeout 300` du pas « Test réseau » de
-  `ci.yml`) ; le test sous latence simulée de la phase 16 doit tenir dans ce qui reste (ou
-  raccourcir encore `DUREE11`, ou relever ce `timeout` dans `ci.yml`) ;
+- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phase 16) : le test
+  réseau prend ~150 s sur ce Mac, dont ~52 s pour le scénario 11 (`DUREE11=45`, décision de
+  l'utilisateur) et ~38 s pour le scénario 12 (la manche sous latence simulée, `DUREE12=20`), sous le
+  `timeout 300` du pas « Test réseau » de `ci.yml` ; le banc de la prédiction (`tests/prediction_test.gd`)
+  a son propre pas, ~1 s. Au-delà de ~200 s, raccourcir un scénario ou relever ce `timeout` ;
 - **phase 17** (le peintre en bataille, vu en phase 15) : sur le Village, le peintre (421 px de haut,
   posé sur les toits) couvre toute la bande de peinture ; sans fuir, un joueur est étourdi sans
   relâche (le programme du scénario 11 sans fuite, mesuré à 90 s : 21 % de la ville peinte en 90 s
@@ -213,10 +211,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   `etourdissements_infliges`, `cellules_volees`) ne sont tenues que par l'hôte (règles) et ne sont
   pas répliquées : l'écran Résultats d'un client doit les recevoir de l'hôte (dans le message de fin
   de manche, par exemple) ;
-- **prochaine phase qui touche `tests/reseau/lancer.sh`** (vu en phase 15) : le scénario 10 arrête
-  ses postes par `tuer`, l'hôte n'efface donc pas `user://scores_reseau_Hote10.cfg` (fichier vide de
-  test laissé dans les données utilisateur) ; l'effacer comme le fait l'hôte du scénario 11 pour le
-  poste arraché ;
+- (résolu en phase 16) l'hôte du scénario 10 efface ses scores de test avant d'écrire la mesure
+  qui le fait arrêter (`ECART_EXCLUSION`) ;
 - (résolu en phase 14) un client qui part en cours de manche arrive chez l'hôte par
   `Reseau.joueur_parti(id)` : la manche retrouve son joueur par `Joueur.id_reseau`, oublie ses
   commandes et son lion disparaît chez tous (disparition répliquée) ; un hôte perdu arrive chez
@@ -281,60 +277,55 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - activer `rendering/viewport/hdr_2d` changerait les valeurs lues par `Shaders/Lion.gdshader` et
   décalerait ses seuils de masque (valeur, saturation) : refaire alors la planche de contrôle de la
   phase 7 et régler les seuils ;
-- (phase 14) sur un client, aucun lion ne se déplace de lui-même (`Lion._suivre_l_hote`) : position,
-  vitesse, orientation et vomi viennent du `Synchro` du lion (`velocity` comprise, que lit le calcul
-  d'approche des chocs) ; chaque réplique garde ses réactions visuelles (secousse du pare-chocs,
-  étoiles, barbouillage, clignotement). **Phase 16** : seul le lion local reprend son pas de
-  déplacement (`Lion.avancer` : `DeplacementLion`, `PareChocs.bloquer`, `move_and_slide`, bords de
-  l'écran, phase 15 bis), par sa prédiction ; les lions distants sont interpolés
-  (le `Synchro` réplique à 83 Hz au plus, `replication_interval` 0,012 s, sans interpolation en
-  phase 14) ;
+- (résolu en phase 16) sur un client, un lion distant ne se déplace pas de lui-même : il est interpolé
+  entre les états reçus avec 100 ms de retard (`Lion._suivre_l_hote`, `InterpolationLion` ; sa
+  `velocity`, que lit le calcul d'approche des chocs, est la vitesse interpolée) et garde ses réactions
+  visuelles ; seul le lion local reprend son pas de déplacement (`Lion.avancer`), par sa prédiction.
+  Le `Synchro` réplique un seul état par lion (`Lion.etat_reseau`, 33 octets, au plus toutes les
+  0,012 s) et le vomi ;
 - (résolu en phase 15 bis) `Lion.gd` est découpé : `DeplacementLion` (logique pure, que les tests
   unitaires nomment ; son état tient en deux vecteurs, `vitesse` et `recul`, que la prédiction pourra
   copier et restaurer pour rejouer ses commandes), `PareChocs`, `GerbeLion` ; le lion garde la
-  présentation et la réplication. **Phase 16** : garder `Lion.avancer` comme seul pas du déplacement
-  (l'hôte et la prédiction) ; `recul` et `vitesse` sont aussi modifiés par les réactions
-  (`_on_etourdi`, `_on_lion_touche`) et par le pare-chocs (`PareChocs._on_area_entered`), pas
-  seulement par `avancer`. Sur un client, `deplacement` n'est pas un état fiable : `vitesse` y reçoit
-  la vitesse totale de l'hôte (commandée, recul et blocage confondus, après le bornage), pas la
-  vitesse commandée, et `recul` ne s'amortit jamais (`vitesse_du_pas` ne tourne que sur l'hôte). À
-  chaque (re)prise de la prédiction, remettre `deplacement.recul` à zéro et repartir d'une `vitesse`
-  cohérente (commandée, pas la `velocity` reçue de l'hôte), sous peine d'appliquer un recul ou une
-  vitesse fantôme déjà joués par l'hôte. Repasser `tests/trace_lions.gd` avant et après chaque
-  modification du lion (deux passages consécutifs identiques ; les deux premiers après un import
-  peuvent différer, phase 15 bis, Écart 6 — cause non établie, voir plus bas) ;
-- **phase 16** (vu en phase 15 bis) : `avancer(direction, delta)` n'utilise son `delta` que pour la
-  vitesse commandée ; `move_and_slide()` intègre, lui, avec le delta du moteur (le delta physique
-  dans une image physique, le delta de traitement en dehors). Un rejeu de prédiction hors d'une
-  image physique (le signal `synchronized` du `MultiplayerSynchronizer` et les RPC arrivent pendant
-  le `poll` multijoueur, donc en image de traitement) déplace le lion d'un facteur
-  `delta traitement / delta physique` à chaque pas rejoué — une dérive silencieuse, sans erreur, que
-  la correction douce masquera en partie et qu'on attribuera à tort à la latence. Poser en phase 16
-  un garde-fou peu coûteux en tête de `avancer` : `if not Engine.is_in_physics_frame(): push_error(...)`.
-  Noter aussi que `pare_chocs.bloquer()` ne rejoue pas des contacts passés (il ne lit que l'état
-  physique et les positions actuelles au moment de l'appel), donc plusieurs pas rejoués dans une même
-  image voient tous les mêmes contacts, ceux du présent ;
-- **phase 16** (vu en phase 15 bis) : `direction_du_lion` est une propriété répliquée (mode « au
-  changement ») dont l'hôte fait foi. Un client qui prédit son lion et retourne son sprite à l'appui
-  de la touche le verra remis dans l'autre sens par chaque état en retard de l'hôte : sprite, bouche
-  et gerbe clignotent à chaque demi-tour, le temps d'un aller-retour réseau. À traiter en phase 16 :
-  soit ne plus répliquer l'orientation vers le lion local, soit ignorer l'orientation reçue tant que
-  la prédiction est active ;
-- **phase 16** (vu en phase 15 bis) : la simulation n'est pas reproductible bit à bit d'un
-  processus à l'autre dans tous les cas : l'ordre dans lequel la physique rapporte des contacts
+  présentation et la réplication. (Résolu en phase 16) `Lion.avancer` reste le seul pas du
+  déplacement (l'hôte et la prédiction). Le lion local d'un client part d'un déplacement neutre
+  (`PredictionLocale._ready`), puis repart à chaque état de l'hôte de sa vitesse commandée et de son
+  recul, répliqués tels quels (`EtatLion`), jamais de sa `velocity` : aucune vitesse ni aucun recul
+  fantôme. Les réactions décidées par l'hôte (étourdissement, recul) arrivent dans ses états, jamais
+  rejouées par le client ; seuls ses chocs simulés le sont (`PareChocs.choc_simule`). Repasser
+  `tests/trace_lions.gd` avant et après chaque modification du lion (deux passages consécutifs
+  identiques ; les deux premiers après un import peuvent différer, phase 15 bis, Écart 6) : la
+  phase 16 l'a laissée identique (bataille, solo, réplique) ;
+- (résolu en phase 16) les états de l'hôte arrivent pendant le sondage réseau : le setter de
+  `Lion.etat_reseau` ne fait que les garder, et la prédiction ne rejoue qu'au tick physique suivant ;
+  `Lion.avancer` refuse un pas hors d'une image physique (`push_error`, le lion ne bouge pas : ligne
+  `ERROR` attendue du smoke test). Pendant un rejeu (`PareChocs.en_rejeu`), `bloquer` ne compte un
+  contact présent qu'aux positions rejouées où les pare-chocs se touchent (mesuré au banc : sans
+  cela, un choc laisse 46,7 px d'erreur et un aller-retour de 16,4 px de l'affichage ; avec, 0,6 px et
+  aucun) ;
+- (résolu en phase 16) l'orientation n'est plus répliquée à part : elle voyage dans l'état de
+  l'hôte, avec la position et la dernière commande appliquée (`EtatLion`) ; le lion local la reprend
+  de l'état au recalage puis la refait en rejouant ses commandes (aucun clignotement : ◉, un tick par
+  demi-tour, le temps que la touche soit lue), un lion distant la prend de ses états interpolés ;
+- (vu en phase 15 bis, conclusion pratique reprise en phase 16 ci-dessous) : la simulation n'est pas
+  reproductible bit à bit d'un processus à l'autre dans tous les cas : l'ordre dans lequel la physique rapporte des contacts
   simultanés semble dépendre d'identifiants d'objets (rejouer la même bataille dans le même processus
   donne une autre empreinte) — cause non établie (Écart 6 de `global-constraints.md`), non reproduite
   en phase 15 bis (revue finale : 3 passages sur 3 identiques dès le premier, sur des copies neuves de
   `main` comme de HEAD). La conclusion pratique reste, elle, acquise : la prédiction d'un client ne
   peut pas compter sur une identité exacte avec l'hôte, même aux mêmes commandes : la correction douce
   (spec §4.1) doit absorber ces écarts, et les tests de prédiction mesurer des écarts de position, pas
-  des égalités ;
-- **phase 16** : seul le lion local simule son choc, par sa propre prédiction
-  (`PareChocs._on_area_entered` : recul, secousse ; phase 15 bis) ; un lion distant ne simule jamais de
-  choc localement (voir le point de la phase 14 ci-dessus), il ne fait que rejouer la réaction
-  visuelle reçue. Seul l'hôte signale le choc aux règles ; l'étourdissement, lui, ne vient que
-  des règles de l'hôte (`Joueur.etourdir`) : `PredictionLocale` suspend la prédiction tant que
-  `joueur.est_etourdi()` (spec §4.1) ;
+  des égalités. (Résolu en phase 16 : le banc et le scénario 12 mesurent l'erreur de prédiction, la
+  position de l'hôte après chaque commande accusée comparée à celle que le client avait prédite au tick
+  où il l'a lue ; seules les empreintes de fin de manche, lions au repos, sont des égalités : le client
+  y reprend exactement l'état de l'hôte) ;
+- (résolu en phase 16) seul le lion local simule son choc (`PareChocs._on_area_entered` : recul,
+  blocage, secousse), contre les lions affichés ; le choc part en signal (`PareChocs.choc_simule`), la
+  prédiction le note au tick où il arrive et le rejoue tant que l'hôte ne l'a pas. Un lion distant
+  ne fait que secouer son sprite (sa position vient de l'hôte). Seul l'hôte signale le choc aux
+  règles. Pendant un étourdissement, la prédiction applique la règle de l'hôte (`Lion.direction_pour` :
+  commandes ignorées) à ses pas comme à ses rejeux : le lion suit l'hôte (banc : 0 px d'erreur une fois
+  l'étourdissement connu ; environ 14 px à sa fin, qui arrive avec un aller de retard, absorbés par la
+  correction douce) ;
 - **phase 17 bis** : jouer le « boing » dans `PareChocs._on_area_entered` (à côté de `Lion.secouer`), sur chaque machine
   (pas seulement l'hôte) : c'est ce qui le rend immédiat pour le joueur local (spec §4.1) ;
 - **prochaine phase qui touche `Scripts/Regles.gd`** : `Titre._ready` applique aussi
@@ -357,7 +348,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   main est `application/config/version`, « 0.13 » depuis la phase 13, qui a introduit les premiers
   RPC (ceux du salon, sur l'autoload `Reseau`) : deux postes de phases différentes s'y refusent
   désormais « version différente ». Chaque phase qui change les RPC (14, 16, 18) doit encore
-  l'augmenter (« 0.14 »…) ; sinon un `.exe` de CI (Windows) et une version locale (Mac) de phases
+  l'augmenter (« 0.14 », « 0.16 »…) ; sinon un `.exe` de CI (Windows) et une version locale (Mac) de phases
   différentes s'accepteraient, puis échoueraient en silence sur des RPC ou des caches de nœuds
   incompatibles. Phase 19 : garder cette règle, ou la remplacer par une constante `PROTOCOLE`
   envoyée dans la demande et comparée avec le même refus `REFUS_VERSION` ;
@@ -423,13 +414,23 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 18** (retour au salon, revue finale 13, M2, M3, M4) : les clients ne voient pas les places
   réservées (pas encore arrivées) ; un stick déjà penché à l'entrée du salon agit une fois ;
   `IP.get_local_interfaces()` est relu à chaque `salon_change` (le mettre en cache à l'ouverture).
+- **phase 19** (essai sur la LAN, phase 16) : avant la prédiction, l'utilisateur a joué une manche à 3
+  sous Windows en Wi-Fi et trouvé que les commandes « suivent plutôt bien ». Refaire cet essai avec
+  l'`.exe` de la phase 16 : si le lion local paraît élastique, régler `PredictionLocale.DUREE_CORRECTION`
+  (0,04 s) ; si les lions distants saccadent, `InterpolationLion.RETARD` (6 ticks) ; le relais
+  (`tests/reseau/relais.gd`, `--gigue=100`, `--pertes=10`) reproduit un Wi-Fi plus mauvais sur ce Mac.
+  Les chocs contre un lion distant qui bouge sont prédits contre sa position affichée, en retard de
+  ~140 ms (100 ms d'interpolation et l'aller) : l'hôte fait foi, l'écart se résorbe en glissant
+  (spec §13) ;
 - **phase 17 bis** (sons de bataille, depuis la phase 8 bis) : chaque lion, local ou non, appelle
   `Audio.demarrer_vomi` / `arreter_vomi` : un lion qui arrête de vomir coupe la boucle du joueur
   local ; ne la jouer que pour le lion de `joueur_local()` (et un son spatialisé ou plus discret
   pour les autres) ;
-- **phase 16** (revue de la phase 14) : chez un client qui perd l'hôte, le moteur fait disparaître
-  les nœuds apparus par le `MultiplayerSpawner` (lions, ennemis, pastilles) : le message s'affiche
-  sur une ville sans lions (vu sur la capture ◉) ; sans conséquence, la scène revient au titre ;
+- **phase 19** (captures ; revue de la phase 14, vérifié en phase 16) : chez un client qui perd
+  l'hôte, le moteur fait disparaître les nœuds apparus par le `MultiplayerSpawner` (lions, ennemis,
+  pastilles) : le message s'affiche sur une ville sans lions. Sans conséquence pour la prédiction
+  (enfant du lion, elle part avec lui ; `Manche._envoyer_commandes` vérifie qu'elle existe encore) ni
+  pour le jeu (retour au titre) ; seulement visuel, à revoir avec les captures ;
 - **phase 19** (captures, phase 14) : le script jetable de la partie à 2 fenêtres (plan de la phase
   14, Task 9) est à verser avec les autres captures ; il force une fenêtre
   (`DisplayServer.window_set_mode`) : `Regles.appliquer_ecran` ne règle pas une fenêtre en plein
@@ -438,6 +439,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   l'hôte par `GameState.terminer_partie` ; les clients ne le savent pas (le chrono de la phase 17
   devra l'annoncer, et `Manche` diffuse déjà ses derniers tampons et son territoire l'arbre en
   pause) ;
+- **phase 18** (vu en phase 16, désync-report.md du scénario 11) : la fin de manche devra être une
+  décision de l'hôte, appliquée à réception chez chaque client, qui porte l'état final de chaque
+  lion. Par conception, la prédiction d'un client ne distingue pas un hôte figé d'un silence Wi-Fi et
+  continue (spec §4.1, YAGNI) : un client qui tient encore ses touches au gong voit son propre lion
+  continuer à bouger sur son écran après la fin, pendant que l'hôte et les autres postes le montrent
+  déjà arrêté ; sans ce message de fin, cet écart ne se résorbe jamais (le test réseau le contourne en
+  n'exigeant l'égalité des empreintes qu'une fois chaque lion au repos, `TICKS_REPOS_AVANT_GEL`, ce
+  qui n'est pas une garantie en jeu réel) ;
 - **phase 19** (M7 de la revue finale 14) : en fenêtré, la largeur du 16:9 est gardée et la hauteur
   recalculée (`Regles.appliquer_ecran`) ; sur un écran 1080p, une largeur élargie à 1920 px donne une
   zone client de 1920×1080 plus la barre de titre, qui dépasse la zone utile de Windows (barre des
@@ -457,4 +466,21 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   aucune fin n'est émise d'un seul côté, aucun écran solo ne s'ouvre) — à dire aux testeurs d'un
   essai LAN avant la phase 17. La fin devra être décidée par l'hôte et envoyée par RPC ; le chrono de
   chaque client démarre à la fin de **sa propre** intro, décalé de la latence : il ne doit rien
-  terminer lui-même.
+  terminer lui-même ;
+- **phase 18** (M2 de la revue finale 16, `Scripts/InterpolationLion.gd:90-92`) : pendant un accroc
+  Wi-Fi de 200 à 420 ms, le lion distant extrapole 3 ticks puis glisse en arrière (jusqu'à 2,8 px par
+  tick) avant de sauter en avant de 21 à 54 px à la reprise ; c'est le prix du correctif du lion figé
+  (désync-report du scénario 11), mais visible en jeu normal. À corriger en repoussant le glissement
+  arrière après un silence plus long (≥ 500 ms), ou en le rendant inutile par le message de fin de
+  manche de cette phase (les lions distants reçoivent alors directement leur état final) ;
+- **phase 18** (M5 de la revue finale 16) : la décision de fin de manche devra aussi arrêter
+  `PredictionLocale` chez chaque client (pas d'API aujourd'hui : se caler sur l'état final, remettre
+  `_decalage` à zéro, cesser de lire les actions de ce poste), en plus de donner leur état final aux
+  lions distants ; le point déjà noté ci-dessus sur la fin de manche (phase 18) couvre le besoin, pas
+  ce crochet côté prédiction ;
+- **phase 17** (M5 de la revue finale 16) : tout ce que le HUD ou des effets accrochent au lion local
+  doit suivre sa position affichée (`lion.position + lion.visuel.position`), pas son corps seul (le
+  décalage de correction, phase 16, ne bouge que l'affichage) ;
+- **phase 19** (M5 de la revue finale 16) : `PredictionLocale._journal` (jusqu'à 20 000 entrées par
+  manche) et ses statistiques ne sont que de l'instrumentation de test, livrée telle quelle dans le
+  jeu ; sans danger, mais à borner ou retirer.

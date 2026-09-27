@@ -6,9 +6,12 @@ extends Node2D
 ## plus) et la gerbe XXL ; les zones de contact le long de la parabole, avec la même physique que les
 ## particules, qui signalent aux règles de l'hôte les autres lions que la gerbe touche.
 ## Nœud posé à l'origine du lion : ses zones de contact (ses enfants, créées par le code) sont dans le
-## repère du lion, comme la bouche, les émetteurs et la traceuse (des nœuds du lion, que la scène lui
-## donne). Le lion la prépare (`preparer`), la réoriente (`orienter`), la reconstruit quand son joueur
-## débloque une couleur (`reconstruire`), la fait partir et l'arrête (`demarrer`, `arreter`).
+## repère du lion, comme la bouche et la traceuse (des nœuds du lion, que la scène lui donne) : elles
+## décident, jamais l'affichage. Les émetteurs (`vomi_container`), purement visuels, vivent sous
+## `Visuel` (M4, revue finale phase 16) : pendant une correction d'affichage (`PredictionLocale`), ils
+## suivent le même décalage que le sprite, sans quoi le jet partirait à côté de la bouche affichée. Le
+## lion la prépare (`preparer`), la réoriente (`orienter`), la reconstruit quand son joueur débloque
+## une couleur (`reconstruire`), la fait partir et l'arrête (`demarrer`, `arreter`).
 
 const ANGLE_GERBE_DEG := 45.0
 const ECART_EVENTAIL_DEG := 24.0

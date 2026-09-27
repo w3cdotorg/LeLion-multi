@@ -71,11 +71,11 @@ func _run() -> void:
 
 ## L'état observable d'un lion à ce tick, par les nœuds de sa scène.
 func _etat(l: Node) -> Array:
-	var sprite: Sprite2D = l.get_node("Sprite2D")
-	var etoiles: Node2D = l.get_node("Etoiles")
+	var sprite: Sprite2D = l.get_node("Visuel/Sprite2D")
+	var etoiles: Node2D = l.get_node("Visuel/Etoiles")
 	var traceuse: Area2D = l.get_node("GerbeTraceuse")
-	var conteneur: Node2D = l.get_node("VomiParticlesContainer")
-	var etiquette: Label = l.get_node("Pseudo")
+	var conteneur: Node2D = l.get_node("Visuel/VomiParticlesContainer")
+	var etiquette: Label = l.get_node("Visuel/Pseudo")
 	var j: Joueur = l.joueur
 	var etat: Array = [l.position, l.velocity, l.direction_du_lion, l.est_en_train_de_vomir, l.vomi_de_l_hote,
 		sprite.position, sprite.rotation, sprite.scale, sprite.modulate, sprite.texture.resource_path,
@@ -224,7 +224,7 @@ func _tracer_bataille() -> void:
 		await physics_frame
 		_tracer_tick(lions, ville)
 		for l: Node2D in lions:
-			if l.global_position.x == 0.0 or l.global_position.y == -(l.get_node("Pseudo") as Control).position.y:
+			if l.global_position.x == 0.0 or l.global_position.y == -(l.get_node("Visuel/Pseudo") as Control).position.y:
 				bords += 1
 		if l2.get_node("PareChocs").global_position.distance_to(l3.get_node("PareChocs").global_position) < 90.0:
 			chevauchements += 1
@@ -325,7 +325,7 @@ func _tracer_replique() -> void:
 			j.recevoir_fin_bonus()
 		await physics_frame
 		_tracer_tick([repl], null)
-		if repl.get_node("Etoiles").visible:
+		if repl.get_node("Visuel/Etoiles").visible:
 			etoiles_vues += 1
 		if repl.est_en_train_de_vomir:
 			emission_vue += 1

@@ -13,7 +13,7 @@ resource_name = "Idle"
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:texture")
+tracks/0/path = NodePath("Visuel/Sprite2D:texture")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -28,7 +28,7 @@ length = 0.001
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:texture")
+tracks/0/path = NodePath("Visuel/Sprite2D:texture")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -43,7 +43,7 @@ resource_name = "Vomit"
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sprite2D:texture")
+tracks/0/path = NodePath("Visuel/Sprite2D:texture")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -70,54 +70,25 @@ radius = 62.0725
 radius = 45.0
 
 [sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_synchro"]
-properties/0/path = NodePath(".:position")
-properties/0/spawn = true
+properties/0/path = NodePath(".:etat_reseau")
+properties/0/spawn = false
 properties/0/replication_mode = 1
-properties/1/path = NodePath(".:velocity")
+properties/1/path = NodePath(".:vomi_de_l_hote")
 properties/1/spawn = true
-properties/1/replication_mode = 1
-properties/2/path = NodePath(".:direction_du_lion")
-properties/2/spawn = true
-properties/2/replication_mode = 2
-properties/3/path = NodePath(".:vomi_de_l_hote")
-properties/3/spawn = true
-properties/3/replication_mode = 2
+properties/1/replication_mode = 2
 
 [node name="Lion" type="CharacterBody2D" groups=["lion"]]
 collision_mask = 0
 script = ExtResource("1_3r2l0")
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Visuel" type="Node2D" parent="."]
+
+[node name="Sprite2D" type="Sprite2D" parent="Visuel"]
 z_index = 1
 position = Vector2(68, 67)
 texture = ExtResource("1_kx51r")
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
-libraries = {
-&"": SubResource("AnimationLibrary_iklue")
-}
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
-position = Vector2(68, 66)
-shape = SubResource("CircleShape2D_3r2l0")
-
-[node name="VomiParticlesContainer" type="Node2D" parent="."]
-z_index = 2
-position = Vector2(89, 103)
-
-[node name="GerbeTraceuse" type="Area2D" parent="."]
-position = Vector2(225, 293)
-collision_mask = 8
-monitoring = false
-script = ExtResource("9_or3p1")
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="GerbeTraceuse"]
-shape = SubResource("CircleShape2D_03dqy")
-
-[node name="Bouche" type="Marker2D" parent="."]
-position = Vector2(89, 103)
-
-[node name="Pseudo" type="Label" parent="."]
+[node name="Pseudo" type="Label" parent="Visuel"]
 visible = false
 z_index = 3
 offset_left = -42.0
@@ -132,25 +103,50 @@ theme_override_font_sizes/font_size = 26
 horizontal_alignment = 1
 vertical_alignment = 2
 
-[node name="Etoiles" type="Node2D" parent="."]
+[node name="Etoiles" type="Node2D" parent="Visuel"]
 visible = false
 z_index = 3
 position = Vector2(68, 18)
 
-[node name="Etoile1" type="Sprite2D" parent="Etoiles"]
+[node name="Etoile1" type="Sprite2D" parent="Visuel/Etoiles"]
 modulate = Color(1, 0.9, 0.3, 1)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("10_etoile")
 
-[node name="Etoile2" type="Sprite2D" parent="Etoiles"]
+[node name="Etoile2" type="Sprite2D" parent="Visuel/Etoiles"]
 modulate = Color(1, 0.9, 0.3, 1)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("10_etoile")
 
-[node name="Etoile3" type="Sprite2D" parent="Etoiles"]
+[node name="Etoile3" type="Sprite2D" parent="Visuel/Etoiles"]
 modulate = Color(1, 0.9, 0.3, 1)
 scale = Vector2(0.35, 0.35)
 texture = ExtResource("10_etoile")
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+libraries = {
+&"": SubResource("AnimationLibrary_iklue")
+}
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(68, 66)
+shape = SubResource("CircleShape2D_3r2l0")
+
+[node name="VomiParticlesContainer" type="Node2D" parent="Visuel"]
+z_index = 2
+position = Vector2(89, 103)
+
+[node name="GerbeTraceuse" type="Area2D" parent="."]
+position = Vector2(225, 293)
+collision_mask = 8
+monitoring = false
+script = ExtResource("9_or3p1")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="GerbeTraceuse"]
+shape = SubResource("CircleShape2D_03dqy")
+
+[node name="Bouche" type="Marker2D" parent="."]
+position = Vector2(89, 103)
 
 [node name="PareChocs" type="Area2D" parent="."]
 position = Vector2(68, 66)
@@ -167,7 +163,7 @@ replication_config = SubResource("SceneReplicationConfig_synchro")
 
 [node name="Gerbe" type="Node2D" parent="." node_paths=PackedStringArray("vomi_container", "traceuse", "traceuse_shape", "bouche")]
 script = ExtResource("12_gerbe")
-vomi_container = NodePath("../VomiParticlesContainer")
+vomi_container = NodePath("../Visuel/VomiParticlesContainer")
 traceuse = NodePath("../GerbeTraceuse")
 traceuse_shape = NodePath("../GerbeTraceuse/CollisionShape2D")
 bouche = NodePath("../Bouche")

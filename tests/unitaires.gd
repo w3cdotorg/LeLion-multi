@@ -39,6 +39,10 @@ func _run() -> void:
 	_tester_joueur_replique()
 	_tester_reseau_manche()
 	_tester_deplacement_lion()
+	_tester_commandes_reseau()
+	_tester_commandes_dette()
+	_tester_etat_lion()
+	_tester_interpolation_lion()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1753,6 +1757,236 @@ func _tester_deplacement_lion() -> void:
 		a.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
 		b.vitesse_du_pas(Vector2(1, 1).normalized(), dt)
 	_check(a.vitesse == b.vitesse and a.recul == b.recul, "les mêmes commandes donnent les mêmes pas (ce que rejouera la prédiction)")
+
+
+## Phase 16 : les commandes d'un client, numérotées et redondantes (la dernière et les 3 précédentes
+## dans chaque paquet) ; chez l'hôte, une file dont le lion applique une commande par tick, dans
+## l'ordre, jamais deux fois.
+func _tester_commandes_reseau() -> void:
+	print("-- Commandes numérotées et redondantes (phase 16)")
+	var octets := Commandes.encoder_paquet(7, [[Vector2(0.5, 0.0), false], [Vector2(1, 0), true], [Vector2(0, -1), false], [Vector2(0.6, 0.8), true]])
+	var paquet := Commandes.decoder_paquet(octets)
+	_check(octets.size() == Commandes.TAILLE_ENTETE + 4 * Commandes.TAILLE_COMMANDE and paquet.size() == 4
+		and paquet.map(func(c: Dictionary) -> int: return c.numero) == [4, 5, 6, 7]
+		and paquet[3].direction == Vector2(0.6, 0.8) and paquet[3].vomir and paquet[1].vomir and not paquet[0].vomir,
+		"un paquet porte la dernière commande et les 3 précédentes, numérotées, de la plus ancienne à la dernière (%d octets)" % octets.size())
+	var cinq: Array = []
+	for i in range(5):
+		cinq.append([Vector2.ZERO, false])
+	_check(Commandes.decoder_paquet(octets.slice(0, octets.size() - 1)).is_empty() and Commandes.decoder_paquet(Commandes.encoder_paquet(9, cinq)).is_empty()
+		and Commandes.decoder_paquet(Commandes.encoder_paquet(3, [[Vector2(INF, 0), false]])).is_empty()
+		and Commandes.decoder_paquet(Commandes.encoder_paquet(0, [[Vector2.ZERO, false]])).is_empty()
+		and Commandes.decoder_paquet("paquet").is_empty() and Commandes.decoder_paquet(PackedByteArray()).is_empty(),
+		"un paquet tronqué, trop long, non fini, numéroté sous 1 ou d'un autre type est refusé")
+
+	var c := Commandes.manuelles()
+	_check(_recevoir_paquet(c, 2, [[Vector2.RIGHT, false], [Vector2.DOWN, true]]) == 2 and _recevoir_paquet(c, 4, [[Vector2.RIGHT, false],
+		[Vector2.DOWN, true], [Vector2.LEFT, false], [Vector2.UP, true]]) == 2 and c.en_attente() == 4 and c.numero_applique == 0,
+		"deux paquets qui se chevauchent : chaque commande entre une fois dans la file (4 en attente)")
+	_check(_recevoir_paquet(c, 3, [[Vector2.RIGHT, false], [Vector2.DOWN, true], [Vector2.LEFT, false]]) == 0 and c.en_attente() == 4,
+		"un paquet en retard, déjà couvert par un plus récent, n'ajoute rien")
+	var vues: Array[int] = []
+	for i in range(4):
+		c.appliquer_suivante()
+		vues.append(c.numero_applique)
+	_check(vues == [1, 2, 3, 4] and c.direction() == Vector2.UP and c.vomir() and c.appliquees == 4 and c.sautees == 0,
+		"une commande par tick, dans l'ordre (%s)" % [vues])
+	c.appliquer_suivante()
+	_check(c.numero_applique == 4 and c.direction() == Vector2.UP and c.appliquees == 4,
+		"file vide (commande en retard) : la dernière appliquée tient encore un tick, sans être comptée deux fois")
+	# La tenue ci-dessus a laissé une dette (I1) : remise à zéro pour garder ce trou-de-numéros isolé
+	# de la dette, testée séparément plus bas (`_tester_commandes_dette`).
+	c.remettre_au_repos()
+	_recevoir_paquet(c, 10, [[Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2.LEFT, false], [Vector2(3, 4), true]])
+	for i in range(4):
+		c.appliquer_suivante()
+	_check(c.numero_applique == 10 and c.sautees == 2 and c.appliquees + c.sautees == c.numero_applique
+		and c.direction().is_equal_approx(Vector2(0.6, 0.8)),
+		"trois paquets perdus de suite (5 à 9) : 5 et 6 manquent, sautés et comptés ; aucune commande n'est appliquée deux fois ; la direction reçue reste bornée")
+	var neuves := 0
+	for dernier in range(14, 31, 4):
+		neuves += _recevoir_paquet(c, dernier, [[Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, false], [Vector2.RIGHT, true]])
+	_check(c.en_attente() == Commandes.FILE_MAX and neuves == 20 and c.file_max_vue == Commandes.FILE_MAX,
+		"un rattrapage d'un coup (20 commandes neuves) : la file garde les %d plus récentes" % Commandes.FILE_MAX)
+	c.appliquer_suivante()
+	_check(c.numero_applique == 30 - Commandes.FILE_MAX + 1 and c.appliquees + c.sautees == c.numero_applique,
+		"les plus anciennes sont sautées, comptées, jamais appliquées (reprise à la %d)" % c.numero_applique)
+
+	# Protocole des commandes (scénario 12, désync-report) : au-delà de la redondance, un client qui
+	# rattrape une rafale après une image longue peut voir ses paquets réordonnés par le Wi-Fi (ou le
+	# relais de test) ; l'hôte doit combler les trous dans l'ordre des numéros, pas de leur arrivée,
+	# et ne refuser qu'un numéro déjà appliqué (jamais un numéro seulement vu passer avant lui).
+	var c2 := Commandes.manuelles()
+	for n in range(1, 6):
+		c2.recevoir(n, Vector2.RIGHT, false)
+	for i in range(5):
+		c2.appliquer_suivante()
+	_check(c2.numero_applique == 5 and c2.appliquees == 5 and c2.sautees == 0, "(base) cinq commandes reçues et appliquées dans l'ordre")
+	_check(not c2.recevoir(5, Vector2.LEFT, true) and not c2.recevoir(3, Vector2.LEFT, true) and c2.en_attente() == 0,
+		"un numéro au plus grand déjà appliqué est ignoré (5 et 3, la dernière appliquée est la 5), même s'il n'a jamais été vu avant")
+	_check(c2.recevoir(9, Vector2.UP, false) and c2.recevoir(7, Vector2.DOWN, false) and c2.recevoir(6, Vector2.LEFT, false)
+		and not c2.recevoir(7, Vector2.DOWN, false) and c2.en_attente() == 3,
+		"9, 7 puis 6 arrivées dans le désordre entrent quand même dans la file ; un doublon tardif du 7, déjà en file, est ignoré")
+	_check(c2.recevoir(8, Vector2.RIGHT, true) and c2.en_attente() == 4,
+		"le 8 manquant, arrivé en dernier, comble le trou entre 6 et 9")
+	for i in range(4):
+		c2.appliquer_suivante()
+	_check(c2.numero_applique == 9 and c2.sautees == 0 and c2.appliquees == 9 and c2.direction() == Vector2.UP,
+		"une fois le trou comblé, la file applique dans l'ordre des numéros (6, 7, 8, 9), pas de leur arrivée : aucune sautée malgré le désordre")
+	for n in range(29, 9, -1):
+		c2.recevoir(n, Vector2.RIGHT, false)
+	_check(c2.en_attente() == Commandes.FILE_MAX and c2.file_max_vue == Commandes.FILE_MAX,
+		"un rattrapage de 20 commandes reçues à l'envers (29 à 10) garde quand même les %d plus récentes" % Commandes.FILE_MAX)
+	c2.appliquer_suivante()
+	_check(c2.numero_applique == 29 - Commandes.FILE_MAX + 1 and c2.appliquees + c2.sautees == c2.numero_applique,
+		"les plus petites sont sautées, comptées, jamais appliquées (reprise à la %d), même reçues en dernier" % c2.numero_applique)
+	c2.remettre_au_repos()
+	_check(c2.en_attente() == 0 and c2.direction() == Vector2.ZERO and not c2.vomir()
+		and not c2.recevoir(c2.numero_applique, Vector2.RIGHT, true) and c2.recevoir(c2.numero_applique + 1, Vector2.RIGHT, true) and c2.en_attente() == 1,
+		"client muet : repos, file vidée ; seul un numéro déjà appliqué reste refusé, un numéro seulement vidé par le repos redevient acceptable")
+
+
+## I1 (revue finale de la phase 16, `Commandes.appliquer_suivante`) : une file vide (l'hôte tient la
+## dernière commande) laisse une dette de tenues ; le rattrapage qui suit doit la rembourser en
+## sautant une commande de plus par tick tant que la file dépasse SEUIL_RATTRAPAGE (un vrai accroc, pas
+## la gigue courante), pour que le numéro appliqué ne reste pas durablement en retard sur le temps
+## réel, et sans qu'aucune commande ne soit appliquée deux fois (direction tenue constante : aucun
+## mouvement en trop, spec §10).
+func _tester_commandes_dette() -> void:
+	print("-- Dette de tenues et rattrapage (I1, revue finale phase 16)")
+	var sans_accroc := Commandes.manuelles()  # référence : jamais de tenue, reçoit à l'heure
+	var c := Commandes.manuelles()  # l'hôte testé : subit l'accroc réseau
+	var appliquer := func(cmd: Commandes, numero: int) -> void:
+		cmd.recevoir(numero, Vector2.RIGHT, false)
+		cmd.appliquer_suivante()
+
+	# Dix ticks sans accroc, des deux côtés : la référence et l'hôte testé restent synchronisés.
+	for n in range(1, 11):
+		appliquer.call(sans_accroc, n)
+		appliquer.call(c, n)
+	_check(c.numero_applique == 10 and c.dette() == 0 and c.en_attente() == 0 and c.rejouees == 0,
+		"(dette) en régime permanent, sans tenue, la file reste vide")
+
+	# Accroc réseau de 6 tenues (host hitch, revue finale) : la file de l'hôte testé reste vide (rien
+	# n'arrive), mais la dette grandit ; la référence continue de recevoir ses commandes à l'heure (le
+	# joueur, lui, n'a pas cessé de jouer).
+	for n in range(11, 17):
+		appliquer.call(sans_accroc, n)
+		c.appliquer_suivante()
+	_check(c.numero_applique == 10 and c.dette() == 6 and c.en_attente() == 0 and c.appliquees == 10,
+		"(dette) un accroc de 6 tenues : la dette grandit, sans rien appliquer deux fois ni en trop")
+
+	# Rattrapage : les 6 commandes en retard (11 à 16) arrivent d'un coup chez l'hôte testé, en même
+	# temps que celle de ce tick (17, elle, arrivée à l'heure) ; puis le réseau continue, une commande
+	# neuve par tick, sans plus aucune tenue.
+	for n in range(11, 17):
+		c.recevoir(n, Vector2.RIGHT, false)
+	appliquer.call(sans_accroc, 17)
+	c.recevoir(17, Vector2.RIGHT, false)
+	c.appliquer_suivante()
+	for n in range(18, 24):
+		appliquer.call(sans_accroc, n)
+		appliquer.call(c, n)
+	_check(sans_accroc.numero_applique == 23, "(pré-condition) sans accroc, 23 ticks appliquent 23 commandes")
+	_check(c.rejouees == 0 and c.appliquees + c.sautees == c.numero_applique,
+		"(dette) aucune commande appliquée deux fois pendant le rattrapage (%d appliquées, %d sautées, jusqu'à la %d)"
+			% [c.appliquees, c.sautees, c.numero_applique])
+	_check(sans_accroc.numero_applique - c.numero_applique < 23 - 10,
+		"(dette) le chemin appliqué se rapproche de celui sans accroc (%d contre %d), pas le plein retard de l'accroc (resterait à %d sans la dette)"
+			% [c.numero_applique, sans_accroc.numero_applique, 10])
+	_check(c.en_attente() <= Commandes.SEUIL_RATTRAPAGE,
+		"(dette) la file revient sous son seuil de rattrapage (%d au plus) dans les ticks qui suivent (%d en attente)" % [Commandes.SEUIL_RATTRAPAGE, c.en_attente()])
+	_check(c.direction() == Vector2.RIGHT and not c.vomir(), "(dette) la direction tenue constante reste correcte de bout en bout")
+
+
+func _recevoir_paquet(c: Commandes, dernier: int, commandes: Array) -> int:
+	var neuves := 0
+	for commande in Commandes.decoder_paquet(Commandes.encoder_paquet(dernier, commandes)):
+		if c.recevoir(commande.numero, commande.direction, commande.vomir):
+			neuves += 1
+	return neuves
+
+
+## Phase 16 : l'état d'un lion chez l'hôte, au format réseau (ce que recopie son `Synchro`).
+func _tester_etat_lion() -> void:
+	print("-- État d'un lion au format réseau (phase 16)")
+	var octets := EtatLion.encoder(123456, 789, Vector2(512.5, -30.25), Vector2(350, -12.5), Vector2(-700, 0), -1)
+	var e := EtatLion.decoder(octets)
+	_check(octets.size() == EtatLion.TAILLE and e.instant == 123456 and e.commande == 789 and e.position == Vector2(512.5, -30.25)
+		and e.vitesse == Vector2(350, -12.5) and e.recul == Vector2(-700, 0) and e.direction == -1,
+		"instant, dernière commande appliquée, position, vitesse commandée, recul et orientation font l'aller-retour (%d octets)" % octets.size())
+	var nan := EtatLion.encoder(1, 0, Vector2(NAN, 0), Vector2.ZERO, Vector2.ZERO, 1)
+	var sans_sens := EtatLion.encoder(1, 0, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, 0)
+	_check(EtatLion.decoder(nan).is_empty() and EtatLion.decoder(sans_sens).is_empty() and EtatLion.decoder(octets.slice(1)).is_empty()
+		and EtatLion.decoder("état").is_empty(), "un état non fini, sans orientation, tronqué ou d'un autre type est refusé")
+
+
+## Phase 16 : un lion distant sur un client, interpolé entre les états reçus avec RETARD ticks de
+## retard ; ici sous une gigue de ±1,2 tick (±20 ms) autour de 3 ticks de latence et 5 % de pertes.
+func _tester_interpolation_lion() -> void:
+	print("-- Interpolation d'un lion distant (phase 16)")
+	var interp := InterpolationLion.new(60)
+	interp.avancer(1.0)
+	_check(interp.echantillon().is_empty(), "sans état reçu, rien à afficher (le lion garde sa place)")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 16
+	var vitesse := 350.0
+	var en_route: Array = []  # [tick d'arrivée, instant de l'hôte]
+	var xs: Array[float] = []
+	var retards: Array[float] = []
+	var dernier_recu := -1
+	for t in range(600):
+		if rng.randf() >= 0.05:
+			en_route.append([t + 3.0 + rng.randf_range(-1.2, 1.2), t])
+		for m: Array in en_route:
+			if m[0] <= t:
+				interp.ajouter(m[1], Vector2(m[1] * vitesse / 60.0, 100.0), Vector2(vitesse, 0.0), 1)
+				dernier_recu = maxi(dernier_recu, m[1])
+		en_route = en_route.filter(func(m: Array) -> bool: return m[0] > t)
+		interp.avancer(1.0)
+		var vu := interp.echantillon()
+		if not vu.is_empty():
+			xs.append(vu.position.x)
+			retards.append(t - vu.position.x * 60.0 / vitesse)
+	var pas_min := INF
+	var pas_max := -INF
+	for i in range(120, xs.size()):
+		pas_min = minf(pas_min, xs[i] - xs[i - 1])
+		pas_max = maxf(pas_max, xs[i] - xs[i - 1])
+	var retard_moyen := 0.0
+	for i in range(120, retards.size()):
+		retard_moyen += retards[i] / (retards.size() - 120)
+	_check(pas_min > 0.8 * vitesse / 60.0 and pas_max < 1.2 * vitesse / 60.0,
+		"sous la gigue et les pertes, le lion affiché avance d'un pas régulier, sans recul ni saut (%.2f à %.2f px par tick, pour %.2f)" % [pas_min, pas_max, vitesse / 60.0])
+	_check(retard_moyen > InterpolationLion.RETARD + 1.0 and retard_moyen < InterpolationLion.RETARD + 5.0,
+		"avec %.1f ticks de retard en moyenne sur l'hôte (le retard d'affichage et la latence)" % retard_moyen)
+	# Plus aucun état (un hôte figé, en fin de manche) : le lion va un peu plus loin sur sa vitesse, puis
+	# revient sur le dernier état reçu, à l'arrêt, au pixel près (celui de l'hôte figé).
+	var dernier_etat := Vector2(dernier_recu * vitesse / 60.0, 100.0)
+	var plus_loin := -INF
+	for t in range(30):
+		interp.avancer(1.0)
+		plus_loin = maxf(plus_loin, interp.echantillon().position.x)
+	var arret: Dictionary = interp.echantillon()
+	interp.avancer(1.0)
+	_check(plus_loin > dernier_etat.x and plus_loin <= dernier_etat.x + InterpolationLion.EXTRAPOLATION_MAX * vitesse / 60.0 + 0.01,
+		"plus aucun état : le lion continue sur sa vitesse %d ticks au plus (%.2f px au-delà du dernier état)" % [int(InterpolationLion.EXTRAPOLATION_MAX), plus_loin - dernier_etat.x])
+	_check(arret.position == dernier_etat and arret.vitesse == Vector2.ZERO and interp.echantillon().position == dernier_etat,
+		"puis revient sur le dernier état reçu, à l'arrêt, et y reste : un hôte figé laisse le lion là où il l'a chez lui (x = %.2f pour %.2f)" % [arret.position.x, dernier_etat.x])
+	var desordre := InterpolationLion.new(60)
+	desordre.ajouter(10, Vector2(0, 0), Vector2.ZERO, 1)
+	desordre.ajouter(12, Vector2(20, 0), Vector2.ZERO, -1)
+	desordre.ajouter(11, Vector2(100, 0), Vector2.ZERO, 1)  # arrivé après le 12
+	desordre.ajouter(11, Vector2(999, 0), Vector2.ZERO, 1)  # doublon
+	for t in range(int(InterpolationLion.RETARD)):
+		desordre.avancer(1.0)
+	var horloge := 12.0 - desordre.retard()
+	var milieu: Dictionary = desordre.echantillon()
+	_check(horloge > 10.0 and horloge < 11.0 and is_equal_approx(milieu.position.x, (horloge - 10.0) * 100.0) and milieu.direction == 1,
+		"un état arrivé en retard se range à son instant, un doublon est ignoré (x = %.1f à l'instant %.2f)" % [milieu.position.x, horloge])
+	desordre.ajouter(200, Vector2(200, 0), Vector2.ZERO, 1)
+	desordre.avancer(1.0)
+	_check(is_equal_approx(desordre.retard(), InterpolationLion.RETARD), "un saut de plus d'ECART_MAX ticks (un poste figé) recale l'horloge d'un coup")
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

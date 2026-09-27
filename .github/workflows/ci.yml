@@ -53,7 +53,14 @@ jobs:
           timeout 300 godot --headless --fixed-fps 60 --script tests/bataille_test.gd 2>&1 | tee bataille_test.log
           if grep -nE "SCRIPT ERROR|SHADER ERROR" bataille_test.log; then echo "::error::erreur de script dans le test de bataille"; exit 1; fi
 
-      - name: Test réseau (transport, plusieurs processus sur localhost)
+      - name: Banc de la prédiction (latence simulée, un seul processus)
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 300 godot --headless --fixed-fps 60 --script tests/prediction_test.gd 2>&1 | tee prediction_test.log
+          if grep -nE "SCRIPT ERROR|SHADER ERROR" prediction_test.log; then echo "::error::erreur de script dans le banc de la prédiction"; exit 1; fi
+
+      - name: Test réseau (plusieurs processus sur localhost, dont une manche sous latence simulée)
         shell: bash
         run: |
           set -o pipefail
