@@ -56,9 +56,13 @@ var _crans_vus := 0
 ## Frame du dernier son de ramassage : une pastille du solo débloque une couleur ET donne un cran
 ## dans la même frame, un seul son part.
 var _ramassage_joue_a := -1
-## Par son (« boing », « etourdi »), la frame où il a été joué pour la dernière fois : les deux lions
-## d'un choc le signalent chacun, un seul « boing » part.
-var _joues_a: Dictionary[String, int] = {}
+## Par son (« boing », « etourdi »), la frame où il a été joué pour la dernière fois et à quel volume
+## (Vector2(frame, db)) : les deux lions d'un choc le signalent chacun, un seul « boing » part. M6
+## (revue finale phase 17) : le son de ce poste (plus fort, `db` proche de 0) ne doit jamais être
+## masqué par celui, plus discret (`DB_AUTRES`), d'un choc entre deux AUTRES lions traité juste
+## avant dans la même image ; une demande plus forte joue donc quand même, une demande plus discrète
+## ou égale à celle déjà jouée cette image est ignorée.
+var _joues_a: Dictionary[String, Vector2] = {}
 
 
 func _ready() -> void:
@@ -154,9 +158,11 @@ func jouer_etourdi(ce_poste: bool) -> void:
 
 
 func _jouer_une_fois_par_frame(nom: String, db: float) -> void:
-	if _joues_a.get(nom, -1) == Engine.get_process_frames():
+	var frame := Engine.get_process_frames()
+	var precedent: Vector2 = _joues_a.get(nom, Vector2(-1, -INF))
+	if int(precedent.x) == frame and precedent.y >= db:
 		return
-	_joues_a[nom] = Engine.get_process_frames()
+	_joues_a[nom] = Vector2(frame, db)
 	jouer(nom, db)
 
 

@@ -304,7 +304,7 @@ func _position_de_depart(i: int, nb: int) -> Vector2:
 
 
 func _process(delta: float) -> void:
-	if lions.size() > 1:
+	if not lions.is_empty():
 		_placer_pseudos()
 	if hud_bataille != null:
 		Audio.definir_intensite(GameState.regles.intensite_musique())  # le temps de la manche

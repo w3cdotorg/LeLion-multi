@@ -2124,6 +2124,17 @@ func _tester_placement_pseudos() -> void:
 			if i != j and xs[i] < xs[j]:
 				separes = separes and xs[i] + 260.0 + PlacementPseudos.ECART <= xs[j] + 0.01
 	_check(separes, "six pseudos larges en tas contre un bord s'étalent sans se recouvrir, dans l'écran (%s)" % [xs])
+	# I1 (revue finale phase 17) : un pseudo court (lion à x=1000) à côté d'un pseudo large de 12
+	# capitales (lion à x=1092, 92 px à droite : distance de contact entre deux lions). Chaque texte
+	# est centré sur son lion (comme `Lion.rect_pseudo`) : le texte large, plus il est large, a un
+	# bord gauche plus à gauche que le texte court, bien que son lion soit à droite. Trier par bord
+	# gauche (l'ancien code) inverse alors l'ordre des deux étiquettes ; trier par centre le préserve.
+	var court := Rect2(1000.0 - 23.0, 50, 46, 30)  # centré sur le lion de gauche (x=1000)
+	var large := Rect2(1092.0 - 147.5, 50, 295, 30)  # centré sur le lion de droite (x=1092)
+	_check(large.position.x < court.position.x, "(pré-condition) le bord gauche du texte large est bien avant celui du texte court")
+	xs = PlacementPseudos.repartir([court, large], 2000.0)
+	_check(xs[0] + court.size.x + PlacementPseudos.ECART <= xs[1],
+		"deux lions à distance de contact (92 px) : le pseudo large reste sur le lion de droite, jamais basculé sur celui de gauche (%s)" % [xs])
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

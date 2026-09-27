@@ -22,7 +22,7 @@ static func repartir(textes: Array[Rect2], largeur: float) -> Array[float]:
 	xs.resize(textes.size())
 	for rangee in _rangees(textes):
 		rangee.sort_custom(func(a: int, b: int) -> bool:
-			return textes[a].position.x < textes[b].position.x or (textes[a].position.x == textes[b].position.x and a < b))
+			return textes[a].get_center().x < textes[b].get_center().x or (textes[a].get_center().x == textes[b].get_center().x and a < b))
 		# Blocs de textes serrés, de gauche à droite : {"debut", "fin" (dans `rangee`), "x", "largeur",
 		# "somme" (des places voulues du bloc, chacune rapportée à son bord gauche)}
 		var blocs: Array[Dictionary] = []

@@ -36,10 +36,11 @@ const DUREE_DE_VIE_PASTILLE := 12.0
 const FACTEUR_REPOS_PEINTRE := 2.0
 ## Bande du HUD en haut de l'écran de bataille (extra, revue de capture du 27/09 : une pastille née
 ## juste sous les vignettes se retrouvait partiellement cachée derrière elles) sous laquelle aucune
-## pastille ne doit apparaître, à l'échelle de l'écran de bataille (1125 px de haut) : le bas des
-## vignettes (`HUDBataille` : 10 px de marge du conteneur, 112 px de haut) plus le rayon d'une
-## pastille (`ColorPickup`, 28 px) et un peu d'air.
-const HAUTEUR_BANDE_HUD := 160.0
+## pastille ne doit apparaître, à l'échelle de l'écran de bataille (1125 px de haut). M4 (revue
+## finale phase 17) : 160 (10 px de marge du conteneur + 112 px de haut de `HUDBataille.TAILLE_VIGNETTE`)
+## sous-estimait le bas réel des vignettes, agrandies par leur contenu (pseudo, lion de 56 px, marges) :
+## mesuré à 135 px, plus le rayon d'une pastille (`ColorPickup`, 28 px) et un peu d'air.
+const HAUTEUR_BANDE_HUD := 175.0
 ## Durée d'une manche (spec §2) : son temps écoulé fait l'avancement, et le chrono la termine chez
 ## l'hôte.
 const DUREE_MANCHE := 90.0

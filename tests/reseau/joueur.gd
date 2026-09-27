@@ -145,8 +145,13 @@ const TICKS_CONVERGENCE := 9
 const A_COUP := 350.0 / 60.0 * 1.5
 ## Fin de manche au chrono : écart toléré entre le chrono de l'hôte et celui d'un client quand la fin y
 ## arrive, en secondes (la latence de l'intro et celle de la fin se compensent : reste la gigue du relais,
-## 40 ms, et une image de chaque côté).
-const ECART_CHRONO := 0.25
+## 40 ms, et une image de chaque côté ; 0,25 s au départ). I2 (revue finale phase 17) : le scénario 13
+## peint sans s'arrêter jusqu'au gong (des tampons et le territoire en vol au moment de la fin, sur le
+## même canal fiable ordonné que la fin) : un tampon ou un changement de territoire perdu sous les 5 %
+## de pertes simulées peut bloquer la fin derrière lui (canal ordonné) le temps d'une retransmission
+## ENet (mesuré une fois à 0,332 s sous charge CPU) ; les scores restants identiques chez tous (« FIN »),
+## seule cette marge purement latence a besoin d'être plus large qu'avant ce scénario plus réaliste.
+const ECART_CHRONO := 0.6
 ## Vitesse (px/s) au-delà de laquelle un lion ramasse une pastille « au vol », ou percute l'hôte.
 const VITESSE_AU_VOL := 150.0
 const VITESSE_CHOC := 250.0
@@ -856,6 +861,29 @@ func _jouer_passe(main: Node, sens: int) -> void:
 	print("MESURE %s : %d jeux de tampons en cache, frame la plus longue %.0f ms pendant la passe" % [reseau.pseudo, main.get_node("Ville")._tampons.size(), pire])
 
 
+## Comme `_jouer_passe`, mais peint sans s'arrêter jusqu'au gong (`gs.partie_en_cours` devient faux),
+## au lieu de s'arrêter après 2,5 s et d'attendre le reste de la manche les mains vides (I2, revue
+## finale phase 17) : garantit que ce poste a des tampons et une case de territoire en vol au moment
+## où la fin de manche part, pour que le scénario 13 mette réellement à l'épreuve l'ordre
+## tampons/territoire puis fin (`_diffuser_tampons` → `_diffuser_territoire` → `_recevoir_fin_manche`).
+## Vrai si la manche s'est bien terminée avant `delai` secondes.
+func _peindre_jusquau_gong(main: Node, sens: int, gs: Node, delai: float) -> bool:
+	var ville: Node2D = main.get_node("Ville")
+	var cible: float = ville.position.y - ville.tex_size.y / 2.0 - 233.0
+	Input.action_press("deplacer_bas")
+	_check(await _attendre(func() -> bool: return main.lion.position.y >= cible), "le lion de ce poste descend vers la ville (%.0f)" % main.lion.position.y)
+	Input.action_release("deplacer_bas")
+	var action := "deplacer_droite" if sens > 0 else "deplacer_gauche"
+	Input.action_press(action)
+	Input.action_press("vomir")
+	var fin := Time.get_ticks_msec() + int(delai * 1000)
+	while gs.partie_en_cours and Time.get_ticks_msec() < fin:
+		await process_frame
+	Input.action_release(action)
+	Input.action_release("vomir")
+	return not gs.partie_en_cours
+
+
 ## L'empreinte de la manche sur ce poste : territoire (propriétaire compté de chaque cellule), scores,
 ## tampons (nombre diffusé par l'hôte ou reçu par un client, et l'empreinte de leur suite), lions
 ## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position),
@@ -1235,8 +1263,8 @@ func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
 	_check(hud != null and hud.vignettes.size() == gs.joueurs.size() and gs.joueurs.size() == 3
 		and hud.vignettes[gs.joueur_local().index].badge.text == "TOI",
 		"le HUD de la bataille : une vignette par joueur (1 hôte et 2 clients), « TOI » sur celle de ce poste")
-	await _jouer_passe(main, int(_option("sens", "1")))
-	_check(await _attendre(func() -> bool: return not gs.partie_en_cours, duree + 10.0), "la manche se termine")
+	_check(await _peindre_jusquau_gong(main, int(_option("sens", "1")), gs, duree + 10.0),
+		"la manche se termine (peinte sans s'arrêter jusqu'au gong, I2 : des tampons et une case de territoire en vol quand la fin part)")
 	if hote:
 		_check(manche.finie and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
 			"le chrono de l'hôte termine la manche à %.0f s (%.3f s)" % [duree, gs.temps_ecoule])

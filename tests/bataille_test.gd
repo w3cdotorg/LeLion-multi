@@ -15,6 +15,7 @@ const NB_LIONS := 4
 const TAILLE_BATAILLE := Vector2(2000, 1125)
 const HAUTEURS_JET: Array[float] = [-233.0, -200.0, -270.0]  # y du lion sous le haut de la skyline, comme le pilote de la démo
 const DISTANCE_PASTILLE_TENTANTE := 900.0  # le pilote de la manche va chercher une pastille dans ce rayon
+const RAYON_PASTILLE := 28.0  # Scenes/ColorPickup.tscn : CircleShape2D (M4, revue finale phase 17)
 ## Réglage du territoire (spec §6) : sur une passe pleine vitesse, les cellules que le territoire
 ## fait compter, rapportées à celles que compte la couverture du solo pour la même passe, restent
 ## dans ces bornes ; et la même passe sur les cellules d'un adversaire lui en vole au moins cette
@@ -249,6 +250,19 @@ func _tester_apparitions() -> void:
 	_check(y_min_pastilles >= ReglesBataille.HAUTEUR_BANDE_HUD - 0.01,
 		"les pastilles n'apparaissent jamais sous la bande du HUD (y min %.0f px, attendu >= %.0f px)"
 			% [y_min_pastilles, ReglesBataille.HAUTEUR_BANDE_HUD])
+	# M4 (revue finale phase 17) : le check au-dessus ne teste que la fonction pure des règles (le
+	# `zone_pickups` du Spawner est déjà ajusté par sa précondition) ; celui-ci teste le branchement
+	# lui-même (`Spawner._ready`), qui mord sous la mutation « zone_pickups_ajustee jamais appelée »
+	_check(zone.position.y * echelle >= ReglesBataille.HAUTEUR_BANDE_HUD - 0.01,
+		"le Spawner applique bien la zone ajustée sous la bande du HUD (%.0f px, attendu >= %.0f px)"
+			% [zone.position.y * echelle, ReglesBataille.HAUTEUR_BANDE_HUD])
+	# Et la bande est assez haute pour le vrai bas des vignettes du HUD (mesuré, pas supposé) plus le
+	# rayon d'une pastille : sans air, une pastille née en haut de la zone mordrait sous les vignettes
+	var hud: CanvasLayer = main.hud_bataille
+	var bas_vignette: float = hud.vignettes[0].cadre.get_global_rect().end.y
+	_check(bas_vignette + RAYON_PASTILLE <= ReglesBataille.HAUTEUR_BANDE_HUD,
+		"la bande du HUD couvre le vrai bas des vignettes plus le rayon d'une pastille (bas %.0f px + rayon %.0f px <= bande %.0f px)"
+			% [bas_vignette, RAYON_PASTILLE, ReglesBataille.HAUTEUR_BANDE_HUD])
 	var haut: float = ville.position.y - ville.tex_size.y / 2.0
 	var ys: Array[float] = []
 	for i in range(60):
@@ -649,6 +663,34 @@ func _tester_pseudos_et_chocs() -> void:
 		_check(a.position.x >= -0.5 and b.end.x <= TAILLE_BATAILLE.x + 0.5 and a.end.x + 5.5 <= b.position.x,
 			"bord %s : deux pseudos voisins s'écartent sans se recouvrir, dans l'écran (%.0f à %.0f, puis %.0f à %.0f)"
 				% [bord, a.position.x, a.end.x, b.position.x, b.end.x])
+
+	# I1 (revue finale phase 17) : à distance de contact (92 px de centre à centre, deux lions qui se
+	# frôlent), le pseudo large (WWWWWWWWWWWW) doit rester sur son propre lion, jamais basculé sur son
+	# voisin à pseudo court, que le lion large soit à droite ou à gauche (tri par centre, pas par bord
+	# gauche : PlacementPseudos.repartir). Le pseudo court est raccourci à « Al » pour cette section (la
+	# vraie scène qui a révélé le bogue) : à 105 px (« Joueur 2 »), la marge à cette distance ne mord pas.
+	var pseudo_court_avant: String = l1.etiquette_pseudo.text
+	l1.etiquette_pseudo.text = "Al"
+	for large_a_droite in [true, false]:
+		for l: CharacterBody2D in [l1, l2]:
+			l.deplacement.recul = Vector2.ZERO
+			l.deplacement.vitesse = Vector2.ZERO
+		var x_court := 900.0 if large_a_droite else 992.0
+		var x_large := 992.0 if large_a_droite else 900.0
+		l1.global_position = Vector2(x_court, 400)  # "Al" : pseudo court
+		l2.global_position = Vector2(x_large, 400)  # "WWWWWWWWWWWW" : pseudo large
+		await _frames(2)
+		var court := _texte_pseudo(l1)
+		var large := _texte_pseudo(l2)
+		if large_a_droite:
+			_check(court.end.x + 5.5 <= large.position.x,
+				"à distance de contact (92 px), le pseudo large reste à droite, sur son lion (court %.0f à %.0f, large %.0f à %.0f)"
+					% [court.position.x, court.end.x, large.position.x, large.end.x])
+		else:
+			_check(large.end.x + 5.5 <= court.position.x,
+				"à distance de contact (92 px), le pseudo large reste à gauche, sur son lion (large %.0f à %.0f, court %.0f à %.0f)"
+					% [large.position.x, large.end.x, court.position.x, court.end.x])
+	l1.etiquette_pseudo.text = pseudo_court_avant
 	# Le pseudo suit le lion affiché (le décalage de la prédiction d'un client), pas son seul corps
 	var avant: Rect2 = l1.rect_pseudo()
 	l1.visuel.position = Vector2(40, -10)
@@ -722,6 +764,12 @@ func _tester_hud() -> void:
 		GS.joueurs[2].bonus_restant = 8.0
 		await physics_frame
 	_check(hud.vignettes[2].etat.text == "★ XXL 7 s", "le HUD décompte lui-même les secondes de la gerbe XXL (%s)" % hud.vignettes[2].etat.text)
+	# M2 (revue finale phase 17) : une deuxième étoile en pleine gerbe XXL recale le décompte affiché
+	# du HUD (`bonus_dure`), pas seulement la vraie durée de `Joueur.bonus_restant`
+	GS.regles.etoile_ramassee(GS.joueurs[2])
+	await _frames(1)
+	_check(hud.vignettes[2].etat.text == "★ XXL 8 s",
+		"M2 : une deuxième étoile en pleine gerbe XXL recale le décompte du HUD à la nouvelle durée (%s)" % hud.vignettes[2].etat.text)
 	GS.joueurs[2].recevoir_fin_bonus()
 	hud.marquer_parti(3)
 	await _frames(1)

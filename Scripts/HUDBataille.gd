@@ -78,6 +78,7 @@ func _ready() -> void:
 		xxl_restant.append(0.0)
 		partis.append(false)
 		joueur.bonus_change.connect(_sur_bonus.bind(i))
+		joueur.bonus_dure.connect(_sur_bonus_dure.bind(i))
 	GameState.partie_terminee.connect(_sur_fin)
 	_secondes_vues = _secondes()
 	rafraichir()
@@ -107,9 +108,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		quitter()
 
 
-## Retour au titre, qui quitte le réseau (en attendant l'écran Résultats de la phase 18).
+## Retour au titre, qui quitte le réseau (en attendant l'écran Résultats de la phase 18). Ne dépause
+## pas ici (N1, revue finale phase 17) : `Titre._ready` le fait déjà, une fois la scène changée ; sinon
+## l'arbre repart pour le pas physique de cette image avant même la libération de la scène (sans effet
+## aujourd'hui, mais la phase 18 changera de scène par RPC : Revanche, Salon).
 func quitter() -> void:
-	get_tree().paused = false
 	get_tree().change_scene_to_file(SCENE_TITRE)
 
 
@@ -185,7 +188,15 @@ func _secondes() -> int:
 
 
 func _sur_bonus(actif: bool, index: int) -> void:
-	xxl_restant[index] = GameState.joueurs[index].bonus_restant if actif else 0.0
+	if not actif:
+		xxl_restant[index] = 0.0
+
+
+## M2 (revue finale phase 17) : `bonus_dure` part à chaque activation de la gerbe XXL (première
+## activation et prolongation confondues) : le décompte se recale même quand une deuxième étoile
+## prolonge une gerbe déjà en cours (`bonus_change`, lui, ne l'est qu'à la première activation).
+func _sur_bonus_dure(duree: float, index: int) -> void:
+	xxl_restant[index] = duree
 
 
 ## Fin de la manche : les scores définitifs (le dernier territoire de l'hôte est déjà appliqué chez un

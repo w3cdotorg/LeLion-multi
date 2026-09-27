@@ -86,6 +86,11 @@ var finie := false
 ## le test réseau : le décalage de la latence, sans conséquence, puisque le chrono de ce poste prend
 ## celui de l'hôte).
 var ecart_chrono_fin := 0.0
+## Hôte : la suite des méthodes passées à `_envoyer`, dans l'ordre (I2, revue finale phase 17) : lue
+## par les tests (smoke, réseau) pour prouver que les derniers tampons et le territoire partent
+## avant la fin de manche, sur le même canal fiable ordonné. Jamais vidée d'elle-même : au test de
+## la vider avant la mesure qui l'intéresse.
+var envois_ordre: Array[StringName] = []
 
 var _hote := false
 var _ville: Node2D
@@ -232,6 +237,7 @@ func _verifier_barriere() -> void:
 		j.etourdissement_fini.connect(_sur_fin_etourdissement.bind(j))
 		j.crans_changes.connect(_sur_crans.bind(j))
 		j.bonus_change.connect(_sur_bonus.bind(j))
+		j.bonus_dure.connect(_sur_bonus_dure.bind(j))
 	barriere_passee.emit()  # la scène fait apparaître les lions : leurs apparitions partent avant l'intro
 	_envoyer(&"_lancer_intro", [])
 	for index in _partis:  # les départs d'avant la barrière (exclus compris)
@@ -394,10 +400,15 @@ func _sur_crans(crans: int, j: Joueur) -> void:
 
 
 func _sur_bonus(actif_: bool, j: Joueur) -> void:
-	if actif_:
-		_envoyer(&"_recevoir_bonus", [j.index, j.bonus_restant])
-	else:
+	if not actif_:
 		_envoyer(&"_recevoir_fin_bonus", [j.index])
+
+
+## M2 (revue finale phase 17) : `bonus_dure` part à chaque activation de la gerbe XXL, première
+## activation et prolongation confondues (contrairement à `bonus_change`, qui ne l'est qu'une fois) :
+## un client recale ainsi son décompte quand une deuxième étoile prolonge la gerbe en cours.
+func _sur_bonus_dure(duree: float, j: Joueur) -> void:
+	_envoyer(&"_recevoir_bonus", [j.index, duree])
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -524,6 +535,7 @@ func _sur_hote_perdu() -> void:
 ## client dont la scène de jeu n'est pas chargée : le nœud de la manche n'y existe pas encore ; ni
 ## chez un client déjà déconnecté dont le départ n'est pas encore arrivé ici).
 func _envoyer(methode: StringName, arguments: Array) -> void:
+	envois_ordre.append(methode)
 	var connectes := multiplayer.get_peers()
 	for id in _prets:
 		if connectes.has(id):

@@ -5,7 +5,15 @@ extends Resource
 ## Ne dépend de rien : ce sont les règles qui décident quand appeler ces méthodes.
 
 signal couleur_debloquee(couleur: Color)
+## Vrai à la toute première activation de la gerbe XXL (son, effet visuel : ne doit pas rejouer à
+## une prolongation), faux à sa fin. `bonus_dure` (ci-dessous), lui, est émis à chaque activation,
+## prolongation comprise (M2, revue finale phase 17).
 signal bonus_change(actif: bool)
+## Émis à chaque `activer_bonus` (première activation et prolongation), avec la durée qui reste
+## après l'appel : le HUD y recale son décompte, que la gerbe reparte de zéro ou soit prolongée
+## (sans lui, prendre une étoile en cours de gerbe laisse le décompte affiché continuer sur
+## l'ancienne durée, plus courte que la vraie, M2 de la revue finale phase 17).
+signal bonus_dure(duree: float)
 signal vies_changees(vies: int)
 signal touche(origine: Vector2)
 signal crans_changes(crans: int)
@@ -192,3 +200,4 @@ func activer_bonus(duree: float) -> void:
 	bonus_restant = max(bonus_restant, duree)
 	if not etait_actif:
 		bonus_change.emit(true)
+	bonus_dure.emit(bonus_restant)

@@ -1154,6 +1154,30 @@ func _run() -> void:
 	lr.commandes.direction_voulue = Vector2.ZERO
 	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
 	_check(_sons.count("boing") == boings_avant + 1, "un choc fait « boing », une fois pour les deux lions (%d)" % (_sons.count("boing") - boings_avant))
+	# M6 (revue finale phase 17) : dans la même image, un son plus fort (celui du lion de ce poste) ne
+	# doit jamais être masqué par un son plus discret (un choc entre deux AUTRES lions) déjà joué ;
+	# et l'inverse ne double pas inutilement (un son plus discret après le son fort déjà joué est ignoré).
+	# Une image neuve d'abord : le choc réel ci-dessus a déjà enregistré un « boing » sur celle-ci.
+	await _frames(1)
+	var _boings_db := func() -> Array[float]:
+		var db: Array[float] = []
+		for enfant in audio.get_children():
+			if enfant is AudioStreamPlayer and enfant.stream != null and enfant.stream.resource_path.get_file().get_basename() == "boing":
+				db.append(enfant.volume_db)
+		return db
+	var avant_m6: int = _boings_db.call().size()
+	audio.jouer_boing(false)  # discret (-9 dB) : un choc entre deux autres lions, traité en premier
+	audio.jouer_boing(true)  # le lion de ce poste, dans la même image : ne doit pas être masqué
+	var apres_m6: Array[float] = _boings_db.call()
+	_check(apres_m6.size() == avant_m6 + 2 and apres_m6[-1] > apres_m6[-2],
+		"M6 : un son plus fort (ce poste) n'est jamais masqué par un son plus discret déjà joué dans la même image (%s)" % [apres_m6.slice(avant_m6)])
+	await _frames(1)  # nouvelle image : la dédup par image ne doit pas retenir l'ancienne
+	audio.jouer_boing(true)  # fort, joué le premier cette fois
+	audio.jouer_boing(false)  # discret, après le fort déjà joué : ignoré, pas de doublon inutile
+	var apres_m6_2: Array[float] = _boings_db.call()
+	_check(apres_m6_2.size() == apres_m6.size() + 1,
+		"un son plus discret qui arrive après un son plus fort déjà joué dans la même image ne rejoue pas (%d au lieu de %d)"
+			% [apres_m6_2.size(), apres_m6.size() + 1])
 	_check(lr.deplacement.recul.x < 0.0 and lb.deplacement.recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
 		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
 	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")
@@ -2120,10 +2144,23 @@ func _tester_manche_reseau() -> void:
 			"un joueur parti en pleine manche perd son lion, ses cellules restent au territoire (%d)" % cellules_bob)
 		_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].part.text != "0 %",
 			"le HUD grise Bob, parti, avec sa part des cellules peintes (%s) ; la manche annonce son départ" % hud.vignettes[1].part.text)
+		# I2 (revue finale phase 17) : un tampon et une case de territoire tout juste peints, encore en
+		# attente (aucune image écoulée depuis pour les diffuser normalement), doivent partir avec la fin,
+		# avant elle, sur le même canal : sinon la mutation « fin sans vidage » ne serait jamais mise à
+		# l'épreuve (elle passerait tous les tests sans qu'aucun tampon ni case ne soit réellement en vol).
+		ville.peindre(ville.position, 22, GS.joueurs[0])
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)  # reprend la cellule de Bob, parti
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)
+		ville.territoire.tamponner(0, Vector2i(1000, 200), 40)
+		_check(not manche._tampons.is_empty() and not ville.territoire._changements.is_empty(),
+			"(pré-condition) un tampon et une case de territoire sont en attente, pas encore diffusés")
+		manche.envois_ordre.clear()
 		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
 		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
 		GS.terminer_partie(true)
 		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
+		_check(manche.envois_ordre == ([&"_recevoir_tampons", &"_recevoir_territoire", &"_recevoir_fin_manche"] as Array[StringName]),
+			"I2 : les derniers tampons et le territoire partent avant la fin, sur le même canal (%s)" % [manche.envois_ordre])
 		# Un hôte perdu (chez un client) : message, tout se fige
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
