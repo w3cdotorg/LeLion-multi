@@ -68,8 +68,9 @@ var empreinte_tampons := 0
 
 var _hote := false
 var _ville: Node2D
-## Hôte : les commandes manuelles du lion de chaque client, par index de joueur. Client : les
-## commandes de son lion (celles de ce poste), à l'index de son joueur.
+## Hôte : les commandes manuelles du lion de chaque client, par index de joueur. Jamais rempli chez un
+## client (phase 16) : les commandes de son propre lion partent par sa prédiction (`_prediction`),
+## jamais par ce dictionnaire.
 var _commandes: Dictionary[int, Commandes] = {}
 ## Hôte : par index de joueur, l'instant (ms de temps de jeu) du dernier paquet de commandes reçu.
 var _recues: Dictionary[int, int] = {}
@@ -127,10 +128,11 @@ func _exit_tree() -> void:
 
 ## Le lion `lion` vient d'apparaître sur ce poste (appelé par `Main`) : chez l'hôte, les commandes
 ## manuelles du lion d'un client y seront écrites ; chez un client, les commandes de son propre lion,
-## lues et numérotées par sa prédiction, partiront vers l'hôte.
+## lues et numérotées par sa prédiction, partiront vers l'hôte (jamais par `_commandes`, qu'un client
+## ne remplit pas).
 func suivre_lion(lion: Lion) -> void:
 	var local := lion.joueur == GameState.joueur_local()
-	if (_hote and not local) or (not _hote and local):
+	if _hote and not local:
 		_commandes[lion.joueur.index] = lion.commandes
 	if not _hote and local:
 		_prediction = lion.prediction
@@ -267,7 +269,9 @@ func _recevoir_commandes(octets: Variant) -> void:
 ## Chez l'hôte : le paquet de commandes `octets` du joueur d'index `index` (la dernière et jusqu'à 3
 ## précédentes, `Commandes.encoder_paquet`), reçu à `maintenant` (ms de temps de jeu) : chaque
 ## commande neuve entre dans la file des commandes de son lion, qui en applique une par tick. Renvoie
-## le nombre de commandes neuves, ou -1 pour un lion inconnu ou un paquet mal formé.
+## le nombre de commandes neuves, ou -1 pour un lion inconnu ou un paquet mal formé. Un paquet reçu
+## deux fois (aucune commande neuve) ne repousse pas le silence : sinon un client planté qui ne fait
+## que redonder son dernier paquet (jamais de commande neuve) semblerait vivant indéfiniment.
 func recevoir_paquet_de(index: int, octets: Variant, maintenant: int) -> int:
 	var c: Commandes = _commandes.get(index)
 	var paquet := Commandes.decoder_paquet(octets)
@@ -277,7 +281,8 @@ func recevoir_paquet_de(index: int, octets: Variant, maintenant: int) -> int:
 	for commande in paquet:
 		if c.recevoir(commande.numero, commande.direction, commande.vomir):
 			neuves += 1
-	_recues[index] = maintenant
+	if neuves > 0:
+		_recues[index] = maintenant
 	return neuves
 
 

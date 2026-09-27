@@ -32,10 +32,15 @@ const ETATS_RECUS_MAX := 64
 
 @export var inclinaison_max: float = 0.14  # radians
 
-@onready var sprite: Sprite2D = $Sprite2D
+## Nœud purement visuel (phase 16) : sprite, pseudo et étoiles, jamais le corps physique (`PareChocs`,
+## `GerbeTraceuse`, les zones de contact) ni `Gerbe`, qui peint. Seule la prédiction du lion local d'un
+## client y pose son décalage d'affichage (`visuel.position`) : le corps (`position`) reste toujours à
+## l'endroit prédit, jamais décalé (sinon `PareChocs` verrait l'affichage, pas la prédiction).
+@onready var visuel: Node2D = $Visuel
+@onready var sprite: Sprite2D = $Visuel/Sprite2D
 @onready var anim: AnimationPlayer = $AnimationPlayer
-@onready var etiquette_pseudo: Label = $Pseudo
-@onready var etoiles: Node2D = $Etoiles
+@onready var etiquette_pseudo: Label = $Visuel/Pseudo
+@onready var etoiles: Node2D = $Visuel/Etoiles
 @onready var pare_chocs: PareChocs = $PareChocs
 @onready var gerbe: GerbeLion = $Gerbe
 

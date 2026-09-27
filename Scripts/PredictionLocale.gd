@@ -15,6 +15,9 @@ extends Node
 ##    prédiction et la nouvelle passe dans un décalage d'affichage ;
 ## 3. le lion fait son pas de ce tick ; le décalage s'amortit (DUREE_CORRECTION : 95 % en 120 ms),
 ##    sauf au-delà de SEUIL_RECALAGE (téléportation, désynchronisation grave) : recalage immédiat.
+## Le décalage ne bouge que l'affichage (`Lion.visuel`, sprite, pseudo, étoiles) : le corps (`position`)
+## reste toujours à l'endroit prédit, jamais décalé, sinon `PareChocs` (chocs, blocage) verrait la
+## position affichée au lieu de la prédiction (revue de la Task 4).
 ## Le lion ne suit que les commandes qu'accepte l'hôte : rien avant la fin de l'intro, rien pendant un
 ## étourdissement (le rejeu applique la même règle, `Lion.direction_pour` : pendant un étourdissement,
 ## le lion suit l'hôte). Ses chocs contre les autres lions (affichés, interpolés) sont simulés tout de
@@ -74,7 +77,6 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	_lion.position -= _decalage
 	var suspendues := _lion.commandes.suspendues
 	var direction_lue := Vector2.ZERO if suspendues else _locales.direction()
 	var vomir_lu := false if suspendues else _locales.vomir()
@@ -96,7 +98,7 @@ func _physics_process(delta: float) -> void:
 	_decalage *= exp(-delta / DUREE_CORRECTION)
 	if _decalage.length() < DECALAGE_NEGLIGEABLE:
 		_decalage = Vector2.ZERO
-	_lion.position += _decalage
+	_lion.visuel.position = _decalage
 
 
 ## Le paquet de commandes à envoyer à l'hôte : la dernière lue et jusqu'à REDONDANCE précédentes

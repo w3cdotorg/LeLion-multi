@@ -123,6 +123,7 @@ func _run() -> void:
 	await _scenario_parcours("80 ms, 40 ms de gigue, 5 % de pertes", 80.0, 40.0, 5.0)
 	await _scenario_etourdissement()
 	await _scenario_choc()
+	await _scenario_choc_pendant_correction()
 	await _scenario_ecarts()
 	await _scenario_hote_fige()
 	GS.configurer_solo()
@@ -202,6 +203,13 @@ func _lion(vue: SubViewport, j: Joueur, depart: Vector2, predit: bool) -> Charac
 	return l
 
 
+## La position affichée du lion `l` (phase 16) : son corps (la position prédite) plus le décalage
+## d'affichage porté par `Lion.visuel`, jamais mêlés (revue de la Task 4: `PareChocs` ne doit voir que
+## le corps). Égale à `l.position` pour un lion non prédit (décalage toujours nul).
+static func _affiche(l: CharacterBody2D) -> Vector2:
+	return l.position + l.visuel.position
+
+
 func _liberer() -> void:
 	_relacher()
 	for j: Joueur in GS.joueurs:
@@ -242,9 +250,9 @@ func _pas() -> void:
 	if not paquet.is_empty():
 		_commandes.envoyer(paquet, _t)
 	# Mesures : sauts de l'affichage du lion prédit, pas du lion distant
-	if _affiche_avant.is_finite() and c1.position.distance_to(_affiche_avant) > A_COUP + c1.deplacement.recul.length() / 60.0:
+	if _affiche_avant.is_finite() and _affiche(c1).distance_to(_affiche_avant) > A_COUP + c1.deplacement.recul.length() / 60.0:
 		_a_coups += 1
-	_affiche_avant = c1.position
+	_affiche_avant = _affiche(c1)
 	if _c0_avant.is_finite():
 		_pas_c0.append(c0.position.x - _c0_avant.x)
 	_c0_avant = c0.position
@@ -365,11 +373,11 @@ func _scenario_etourdissement() -> void:
 		await _pas()
 		if tick_etourdi < 0 and j_client.est_etourdi():
 			tick_etourdi = _tick
-			x_etourdi = c1.position.x
+			x_etourdi = _affiche(c1).x
 		if tick_etourdi >= 0 and _tick == tick_etourdi + 2:
 			numero_suivi = c1.prediction.numero
 		if tick_etourdi >= 0 and tick_fin < 0 and j_client.est_etourdi():
-			bouge_etourdi = c1.position.x - x_etourdi
+			bouge_etourdi = _affiche(c1).x - x_etourdi
 		if tick_etourdi >= 0 and tick_fin < 0 and not j_client.est_etourdi():
 			tick_fin = _tick
 			numero_fin = c1.prediction.numero
@@ -417,8 +425,8 @@ func _scenario_choc() -> void:
 		if tick_hote < 0 and h1.deplacement.recul.x < 0.0:
 			tick_hote = _tick
 		if tick_client >= 0:
-			x_min = minf(x_min, c1.position.x)
-			rebond = maxf(rebond, c1.position.x - x_min)
+			x_min = minf(x_min, _affiche(c1).x)
+			rebond = maxf(rebond, _affiche(c1).x - x_min)
 	var p: Node = c1.prediction
 	print("MESURE choc : simulé chez le client au tick %d, chez l'hôte au tick %d ; erreur max %.2f px ; rebond de l'affichage %.2f px ; recalages %d ; à-coups %d"
 		% [tick_client, tick_hote, p.erreur_max(), rebond, p.recalages, _a_coups])
@@ -429,6 +437,44 @@ func _scenario_choc() -> void:
 	_check(p.recalages == 0 and rebond < ECART_MAX and p.erreur_max() < ECART_MAX,
 		"le choc ne fait ni recalage ni aller-retour visible (rebond de %.2f px ; erreur au plus %.2f px)" % [rebond, p.erreur_max()])
 	await _verifier_convergence("choc", arret, 90)
+	await _liberer()
+
+
+## Un choc simulé pendant une correction d'affichage (grand décalage, sous SEUIL_RECALAGE) : le
+## pare-chocs du lion prédit ne doit réagir qu'à sa position prédite (le corps), jamais à ce qu'il
+## affichait un instant avant un recalage (régression de la revue de la Task 4 : le décalage écrit dans
+## `position` entre deux ticks laissait `PareChocs` voir l'affichage, pas la prédiction).
+func _scenario_choc_pendant_correction() -> void:
+	print("-- Choc simulé pendant une correction (grand décalage), sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(700, 500), Vector2(700, 800), 80.0, 40.0, 5.0, 2100)
+	for i in range(30):
+		await _pas()  # l'obstacle (C0, interpolé) affiché à sa place ; le lion local, loin, au repos
+	# Le client croit un instant son lion tout près de l'obstacle (sous le seuil de contact du
+	# pare-chocs) ; l'hôte, lui, le tient loin (écart sous SEUIL_RECALAGE : une correction douce, pas
+	# un recalage d'un coup).
+	var loin: Vector2 = c0.position + Vector2(0, 250.0)
+	var pres: Vector2 = c0.position + Vector2(0, 70.0)
+	c1.position = pres
+	h1.global_position = loin
+	var p: Node = c1.prediction
+	var en_correction := false
+	var avant_corps := Vector2.INF
+	var pas_corps_max := 0.0
+	var loin_min := INF
+	for i in range(60):
+		await _pas()
+		if p.decalage().length() > 1.0:
+			en_correction = true
+		if en_correction:
+			loin_min = minf(loin_min, c1.position.distance_to(c0.position))
+			if avant_corps.is_finite():
+				pas_corps_max = maxf(pas_corps_max, c1.position.distance_to(avant_corps))
+			avant_corps = c1.position
+	print("MESURE choc pendant correction : lion prédit à %.0f px au moins de l'obstacle une fois loin (jamais en contact) ; pas du corps au repos %.2f px au plus pendant la correction (décalage jusqu'à %.0f px)"
+		% [loin_min, pas_corps_max, pres.distance_to(loin)])
+	_check(en_correction and loin_min > 2.0 * c1.pare_chocs.rayon and pas_corps_max < 1.0,
+		"pendant une correction (décalage jusqu'à %.0f px), le pare-chocs du lion prédit ne réagit qu'à sa position (le corps, loin de l'obstacle, %.0f px au moins, reste au repos, %.2f px au plus par tick)"
+			% [pres.distance_to(loin), loin_min, pas_corps_max])
 	await _liberer()
 
 
@@ -444,25 +490,25 @@ func _scenario_ecarts() -> void:
 	var pas_max := 0.0
 	var ecart_apres := -1.0
 	for i in range(40):
-		var avant: Vector2 = c1.position
+		var avant: Vector2 = _affiche(c1)
 		await _pas()
-		var pas: float = c1.position.distance_to(avant)
+		var pas: float = _affiche(c1).distance_to(avant)
 		if debut < 0 and pas > 0.0:
 			debut = _tick
 		pas_max = maxf(pas_max, pas)
 		if debut >= 0 and _tick == debut + TICKS_CONVERGENCE:
-			ecart_apres = c1.position.distance_to(h1.position)
+			ecart_apres = _affiche(c1).distance_to(h1.position)
 	print("MESURE écarts : 60 px résorbés en glissant, %.1f px au plus par tick, %.2f px restants 150 ms après" % [pas_max, ecart_apres])
 	_check(c1.prediction.recalages == 0 and debut > 0 and pas_max < 30.0 and ecart_apres >= 0.0 and ecart_apres < ECART_MAX,
 		"un écart de 60 px se résorbe en douceur : le lion glisse vers celui de l'hôte (%.1f px par tick au plus) et l'a rejoint 150 ms après (%.2f px)" % [pas_max, ecart_apres])
 	h1.global_position += Vector2(500, -300)
 	var saut := 0.0
 	for i in range(30):
-		var avant: Vector2 = c1.position
+		var avant: Vector2 = _affiche(c1)
 		await _pas()
-		saut = maxf(saut, c1.position.distance_to(avant))
+		saut = maxf(saut, _affiche(c1).distance_to(avant))
 	var p: Node = c1.prediction
-	_check(p.recalages == 1 and saut > 500.0 and c1.position.distance_to(h1.position) < ECART_MAX and p.decalage() == Vector2.ZERO,
+	_check(p.recalages == 1 and saut > 500.0 and _affiche(c1).distance_to(h1.position) < ECART_MAX and p.decalage() == Vector2.ZERO,
 		"au-delà de %.0f px, le lion est recalé d'un coup sur l'hôte (%d recalage, un saut de %.0f px), sans glisser jusqu'à lui" % [p.SEUIL_RECALAGE, p.recalages, saut])
 	await _liberer()
 
