@@ -103,6 +103,7 @@ func _preparer_manche_en_reseau() -> void:
 	apparitions.spawned.connect(_sur_apparition)
 	manche.barriere_passee.connect(_sur_barriere_passee)
 	manche.joueur_parti.connect(_sur_joueur_parti)
+	manche.depart_vu.connect(hud_bataille.marquer_parti)
 	menu_pause.visibility_changed.connect(_suspendre_commandes)
 	# M2 (revue finale) : `Reseau.hote_perdu` peut aussi partir chez l'hôte (son propre pair ENet en
 	# erreur, N4 de `Reseau.gd`) ; sans ce branchement, l'hôte continuait seul une manche que
@@ -188,6 +189,8 @@ func _sur_hote_perdu() -> void:
 	# solo) puis un second Échap dépauserait l'arbre en le refermant, repartant la ville figée.
 	menu_pause.hide()
 	menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
+	if hud_bataille != null:
+		hud_bataille.fin.hide()  # une manche finie : le message remplace le panneau de fin et sa sortie
 	var couche := CanvasLayer.new()
 	couche.name = "HotePerdu"
 	couche.layer = 10

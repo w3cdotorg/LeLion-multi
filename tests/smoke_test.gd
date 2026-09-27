@@ -2056,8 +2056,14 @@ func _tester_manche_reseau() -> void:
 		_check(manche.barriere and noms == attendus_noms and main.lion == main.lions[0] and main.lion.joueur == GS.joueur_local()
 			and main.lion.commandes.source == Commandes.Source.LOCALES and main.get_node("Intro")._lancee and main.get_node("Spawner")._demarre,
 			"(%s) barrière passée : un lion par joueur encore là (%s), celui de ce poste lit ses commandes, l'intro et les apparitions commencent" % [essai, noms])
+		var hud: CanvasLayer = main.hud_bataille
+		_check(hud != null and hud.vignettes.map(func(v: Dictionary) -> String: return v.pseudo.text) == ["Hôte", "Bob"]
+			and hud.vignettes[0].badge.text == "TOI",
+			"(%s) le HUD de la bataille : une vignette par joueur de la table, « TOI » sur celle de l'hôte" % essai)
 		if essai == "absent":
 			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
+			_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].badge.text == "PARTI",
+				"(absent) l'exclu reste au classement, en grisé ; son départ sera annoncé aux clients en passant la barrière")
 			main.free()
 			await _frames(1)
 			reseau.quitter()
@@ -2112,10 +2118,17 @@ func _tester_manche_reseau() -> void:
 		await _frames(2)
 		_check(not is_instance_valid(lion_bob) and main.lions.size() == 1 and ville.territoire.cellules_de(1) == cellules_bob and cellules_bob > 0,
 			"un joueur parti en pleine manche perd son lion, ses cellules restent au territoire (%d)" % cellules_bob)
+		_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].part.text != "0 %",
+			"le HUD grise Bob, parti, avec sa part des cellules peintes (%s) ; la manche annonce son départ" % hud.vignettes[1].part.text)
+		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
+		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
+		GS.terminer_partie(true)
+		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
 		# Un hôte perdu (chez un client) : message, tout se fige
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused, "l'hôte perdu : « L'hôte a quitté la partie », la partie se fige")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not hud.fin.visible,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place du panneau de fin), la partie se fige")
 		paused = false
 		main.free()
 		await _frames(1)
