@@ -2224,7 +2224,7 @@ func _attendre_nouvelle_scene(chemin: String, avant: int, max_ms: int = 5000) ->
 
 ## Une manche en réseau chez l'hôte (Bob simulé dans `Reseau.inscrits`, comme `_tester_manche_reseau`),
 ## jusqu'à la barrière passée : la scène de jeu `main` (déjà chargée).
-func _passer_la_barriere(main: Node) -> void:
+func _passer_la_barriere(_main: Node) -> void:
 	await _frames(2)
 	root.get_node("Reseau")._noter_scene_chargee(7)  # comme la RPC de Bob
 	await _frames(2)
@@ -2255,7 +2255,7 @@ func _tester_resultats_reseau() -> void:
 	root.add_child(main)
 	current_scene = main
 	await _passer_la_barriere(main)
-	for k in range(3):
+	for _k in range(3):
 		main.get_node("Ville").territoire.tamponner(0, Vector2i(1000, 200), 40)
 	_check(main.get_node("Ville").territoire.cellules_de(0) > 0, "(pré-condition) l'hôte a peint pendant la première manche")
 	GS.terminer_partie(true)
@@ -2291,7 +2291,8 @@ func _tester_resultats_reseau() -> void:
 	_check(resultats.partis == [false, true] and resultats.lignes.any(func(l: Dictionary) -> bool: return l.index == 1 and l.badge.text == "PARTI")
 		and not resultats.possible(&"revanche") and resultats.bouton_revanche.disabled and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
 		"Bob part sur l'écran Résultats : sa ligne se grise, Revanche et Niveau suivant attendent deux joueurs")
-	suivante._sur_choix_resultats(&"revanche")  # l'hôte qui ne peut plus suivre : refusé, rien ne change
+	resultats.choix = &"revanche"  # le choix fait (boutons grisés) au moment même où Bob part
+	suivante._sur_choix_resultats(&"revanche")  # l'hôte qui ne peut plus suivre : refusé, le choix se regrise
 	await _frames(2)
 	_check(current_scene == suivante and lancements[0] == 2 and resultats.choix.is_empty() and reseau.manche_en_cours,
 		"une relance que l'hôte ne peut plus suivre est refusée : l'écran reste, on peut encore choisir")
