@@ -733,7 +733,8 @@ func _run() -> void:
 	var attendues := {
 		"Soucoupe": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
 		"Coccinelle": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:rotation", SceneReplicationConfig.REPLICATION_MODE_ALWAYS]],
-		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
+		"Boss": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_ALWAYS], [^".:cote", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE],
+			[^".:etat", SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE]],
 		"ColorPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER], [^".:couleur_index", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
 		"BonusPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
 		"CoeurPickup": [[^".:position", SceneReplicationConfig.REPLICATION_MODE_NEVER]],
@@ -839,6 +840,14 @@ func _run() -> void:
 		and coccinelle_repl.speed == 0.0 and boss_client.position == Vector2(1000, 300) and boss_client._tween == null,
 		"sur un client, un ennemi ne bouge pas de lui-même, ne tire rien au hasard et le peintre ne lance aucun tween")
 	_check(boss_client.sprite.scale.x < 0.0 and boss_client.cote == -1, "sur un client, le peintre regarde du côté reçu de l'hôte (sprite en miroir)")
+	# Phase 17 bis : l'annonce du peintre, décidée par l'hôte, s'entend aussi chez chaque client (son état
+	# est répliqué) ; l'état répété, ou un autre état, ne rejoue rien
+	var annonces_avant := _sons.count("boss")
+	boss_client.etat = boss_client.Etat.ANNONCE
+	boss_client.etat = boss_client.Etat.ANNONCE
+	boss_client.etat = boss_client.Etat.ENTREE
+	_check(_sons.count("boss") == annonces_avant + 1 and boss_client._tween == null,
+		"sur un client, l'annonce du peintre reçue de l'hôte joue son son, une fois, sans lancer de tween")
 	_check(not spawner_client._demarre and spawner_client._timer_soucoupe == null and poste_client.get_child_count() == enfants_client,
 		"sur un client, le Spawner ne fait rien apparaître (tout vient de l'hôte)")
 	# Chaque nœud synchronisé quitte le sous-arbre avant que son pair ne change (sinon l'API du client
@@ -1010,13 +1019,31 @@ func _run() -> void:
 		"un matériau d'un autre shader sur le sprite est remplacé par celui de la teinte")
 	lion_neuf.free()
 
+	# Phase 17 bis : la boucle du vomi n'appartient qu'au lion de ce poste ; un autre lion qui arrête
+	# de vomir ne la coupe plus
+	lr.commandes.vomir_voulu = true
+	lb.commandes.vomir_voulu = true
+	for i in range(3):
+		await process_frame
+	lb.commandes.vomir_voulu = false
+	for i in range(3):
+		await process_frame
+	_check(lr.est_local() and not lb.est_local() and lr.est_en_train_de_vomir and not lb.est_en_train_de_vomir and audio._vomi.playing,
+		"un autre lion qui arrête de vomir ne coupe pas la boucle du vomi du lion de ce poste")
+	lr.commandes.vomir_voulu = false
+	for i in range(3):
+		await process_frame
+	_check(not audio._vomi.playing, "le lion de ce poste qui arrête de vomir coupe sa boucle")
+
 	# Étourdissement par un ennemi : immobile, repoussé, étoiles, sans barbouillage
 	var materiau_bleu := lb.sprite.material as ShaderMaterial
 	lb.commandes.direction_voulue = Vector2.LEFT
 	await _frames(5)
 	_check(lb.deplacement.vitesse.x < 0.0, "(pré-condition) le lion bleu avance selon ses commandes")
 	materiau_bleu.set_shader_parameter("barbouillage_force", 0.5)  # pour un check discriminant : un ennemi doit bien la remettre à 0
+	var etourdis_avant := _sons.count("etourdi")
 	GS.regles.lion_touche_par_ennemi(j_bleu, lb.global_position + lb.CENTRE + Vector2(-80, 0))
+	_check(_sons.count("etourdi") == etourdis_avant + 1, "un étourdissement joue son son (phase 17 bis)")
 	_check(j_bleu.est_etourdi() and lb.deplacement.vitesse == Vector2.ZERO and lb.deplacement.recul.x > 0.0 and lb.etoiles.visible,
 		"un ennemi étourdit le lion : il s'arrête, il est repoussé, des étoiles tournent")
 	_check(materiau_bleu.get_shader_parameter("barbouillage_force") == 0.0, "un ennemi ne barbouille pas")
@@ -1118,6 +1145,7 @@ func _run() -> void:
 	lr.global_position = Vector2(600, 300)
 	lb.global_position = Vector2(800, 300)
 	await _frames(2)
+	var boings_avant := _sons.count("boing")
 	lr.commandes.direction_voulue = Vector2.RIGHT
 	for i in range(90):
 		await _frames(1)
@@ -1125,6 +1153,7 @@ func _run() -> void:
 			break
 	lr.commandes.direction_voulue = Vector2.ZERO
 	_check(j_rouge.chocs == 1 and j_bleu.chocs == 1, "un choc est compté une fois, pour les deux lions")
+	_check(_sons.count("boing") == boings_avant + 1, "un choc fait « boing », une fois pour les deux lions (%d)" % (_sons.count("boing") - boings_avant))
 	_check(lr.deplacement.recul.x < 0.0 and lb.deplacement.recul.x > 0.0 and lr._secousse_restante > 0.0 and lb._secousse_restante > 0.0,
 		"au choc, les deux lions reculent chacun de son côté, et leur sprite tremble")
 	_check(not j_rouge.est_etourdi() and not j_bleu.est_etourdi(), "un choc n'étourdit personne")

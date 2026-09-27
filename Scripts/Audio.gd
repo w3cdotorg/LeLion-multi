@@ -3,6 +3,8 @@ extends Node
 ## synchronisées (base, arpèges, mélodie) ; l'intensité 0..2 décide combien on entend.
 
 const DB_VOMI := -8.0
+## Un choc ou un étourdissement entre d'autres lions que celui de ce poste : plus discret que les siens.
+const DB_AUTRES := -9.0
 const DB_MUSIQUE := -12.0
 const DB_MUET := -80.0
 const COUCHES := ["base", "arp", "melodie"]
@@ -14,6 +16,10 @@ const SONS := {
 	"victoire": preload("res://Assets/Sons/victoire.wav"),
 	"boss": preload("res://Assets/Sons/boss.wav"),
 	"pret": preload("res://Assets/Sons/pret.wav"),
+	"boing": preload("res://Assets/Sons/boing.wav"),
+	"tic": preload("res://Assets/Sons/tic.wav"),
+	"fin": preload("res://Assets/Sons/fin.wav"),
+	"etourdi": preload("res://Assets/Sons/etourdi.wav"),
 }
 const ENSEMBLES := {
 	"ville": {
@@ -50,6 +56,9 @@ var _crans_vus := 0
 ## Frame du dernier son de ramassage : une pastille du solo débloque une couleur ET donne un cran
 ## dans la même frame, un seul son part.
 var _ramassage_joue_a := -1
+## Par son (« boing », « etourdi »), la frame où il a été joué pour la dernière fois : les deux lions
+## d'un choc le signalent chacun, un seul « boing » part.
+var _joues_a: Dictionary[String, int] = {}
 
 
 func _ready() -> void:
@@ -122,15 +131,36 @@ func appliquer_volumes() -> void:
 	_vomi.volume_db = DB_VOMI + Parametres.en_db(Parametres.effets)
 
 
-func jouer(nom: String) -> void:
+## Joue l'effet `nom`, `db` décibels au-dessus (ou au-dessous) du volume des effets.
+func jouer(nom: String, db := 0.0) -> void:
 	var lecteur := AudioStreamPlayer.new()
 	lecteur.stream = SONS[nom]
-	lecteur.volume_db = Parametres.en_db(Parametres.effets)
+	lecteur.volume_db = Parametres.en_db(Parametres.effets) + db
 	lecteur.finished.connect(lecteur.queue_free)
 	add_child(lecteur)
 	lecteur.play()
 
 
+## Le « boing » d'un choc entre deux lions (`PareChocs`), sur chaque poste : plus fort si le lion de
+## ce poste est l'un des deux (`concerne_ce_poste`). Un par frame au plus : les deux lions d'un choc le
+## signalent chacun.
+func jouer_boing(concerne_ce_poste: bool) -> void:
+	_jouer_une_fois_par_frame("boing", 0.0 if concerne_ce_poste else DB_AUTRES)
+
+
+## Un lion vient d'être étourdi (`Lion`) : plus fort si c'est celui de ce poste. Un par frame au plus.
+func jouer_etourdi(ce_poste: bool) -> void:
+	_jouer_une_fois_par_frame("etourdi", 0.0 if ce_poste else DB_AUTRES)
+
+
+func _jouer_une_fois_par_frame(nom: String, db: float) -> void:
+	if _joues_a.get(nom, -1) == Engine.get_process_frames():
+		return
+	_joues_a[nom] = Engine.get_process_frames()
+	jouer(nom, db)
+
+
+## La boucle du vomi du lion de ce poste (les autres lions n'en jouent pas : `Lion`).
 func demarrer_vomi() -> void:
 	if not _vomi.playing:
 		_vomi.play()
@@ -195,8 +225,13 @@ func _on_partie_prete() -> void:
 	_crans_vus = _joueur_ecoute.crans
 
 
+## Fin du solo : victoire ou défaite ; fin d'une manche de bataille : le gong, sur chaque poste (la
+## manche de l'hôte, reçue par chaque client, phase 17), la musique gardée.
 func _on_partie_terminee(victoire: bool) -> void:
 	arreter_vomi()
+	if GameState.regles.compte_le_territoire():
+		jouer("fin")
+		return
 	jouer("victoire" if victoire else "mort")
 	if victoire:
 		definir_intensite(2)

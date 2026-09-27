@@ -17,7 +17,15 @@ signal etat_change(etat: Etat)
 
 @onready var sprite: Sprite2D = $Sprite2D
 
-var etat := Etat.REPOS
+## Répliqué chez les clients (`Synchro`, à chaque changement) : l'annonce du peintre s'y entend comme
+## chez l'hôte (phase 17 bis), qui la joue dans `_changer_etat`.
+var etat := Etat.REPOS:
+	set(valeur):
+		if valeur == etat:
+			return
+		etat = valeur
+		if valeur == Etat.ANNONCE and is_node_ready() and est_replique():
+			Audio.jouer("boss")
 ## 1 = entre par la gauche, -1 = par la droite. Répliqué chez les clients (`Synchro`) : le peintre y
 ## regarde vers le centre comme chez l'hôte.
 var cote := 1:

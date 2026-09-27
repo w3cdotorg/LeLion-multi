@@ -266,14 +266,23 @@ func demarrer_vomi() -> void:
 	est_en_train_de_vomir = true
 	gerbe.demarrer()
 	anim.play("Vomit")
-	Audio.demarrer_vomi()
+	if est_local():
+		Audio.demarrer_vomi()
 
 
+## La boucle du vomi (une seule, dans `Audio`) n'est qu'au lion de ce poste : un autre lion qui arrête
+## de vomir ne la coupe plus (phase 17 bis).
 func arreter_vomi() -> void:
 	est_en_train_de_vomir = false
 	gerbe.arreter()
 	anim.play("Idle")
-	Audio.arreter_vomi()
+	if est_local():
+		Audio.arreter_vomi()
+
+
+## Vrai si ce lion est celui du joueur de ce poste (en solo, le seul lion).
+func est_local() -> bool:
+	return joueur == GameState.joueur_local()
 
 
 ## Crinière à la couleur du joueur et pseudo au-dessus de la tête. Lu une fois dans `_ready` ; à
@@ -354,6 +363,7 @@ func _on_etourdi(origine: Vector2, barbouillage: Color) -> void:
 	_barbouiller(barbouillage)
 	etoiles.visible = true
 	_tourner_etoiles()
+	Audio.jouer_etourdi(est_local())
 
 
 ## Fin de l'étourdissement : barbouillage et étoiles s'en vont, l'immunité clignote.
