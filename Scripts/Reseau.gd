@@ -7,7 +7,9 @@ extends Node
 ## la barrière de chargement : chaque poste signale sa scène de jeu chargée
 ## (`signaler_scene_chargee`), l'hôte les note (`scenes_chargees`) ; la manche synchronisée
 ## (`Scripts/Manche.gd`) attend tous les joueurs avant l'intro, et suit les départs
-## (`joueur_parti`, `hote_perdu`). Hors réseau (solo, retour au titre), le pair est un
+## (`joueur_parti`, `hote_perdu`). Après la manche (phase 18, l'écran Résultats), l'hôte en relance une
+## avec les mêmes joueurs (`relancer_manche` : Revanche, Niveau suivant) ou ramène chaque poste au salon
+## (`revenir_au_salon`). Hors réseau (solo, retour au titre), le pair est un
 ## `OfflineMultiplayerPeer` : ce poste est son propre hôte (`multiplayer.is_server()` vrai), et
 ## `quitter()` y revient toujours.
 ##
@@ -32,7 +34,14 @@ extends Node
 ## demandent (couleur, Prêt) et l'hôte arbitre. Tous ces RPC passent par cet autoload, présent au
 ## même chemin sur chaque poste dès la connexion : une table envoyée avant que la scène du salon
 ## soit chargée chez un client l'y attend. Les RPC de l'hôte sont en mode "authority" (le moteur
-## rejette tout autre émetteur) ; ceux des clients vérifient l'émetteur et leurs arguments.
+## rejette tout autre émetteur) ; ceux des clients vérifient l'émetteur et leurs arguments. Phase 18 : le
+## lancement et le retour au salon partent sur le canal fiable ordonné de la manche (CANAL_ORDONNE,
+## celui des tampons, du territoire et de la fin), la table avec eux : chez un client, une manche relancée
+## depuis l'écran Résultats n'arrive qu'après tout ce que la précédente a envoyé sur ce canal, sa fin
+## comprise (sinon un tampon, un territoire ou une fin retardés par une perte arriveraient dans la
+## manche neuve). La table diffusée à chaque changement du salon reste sur le canal 0, celui de la
+## poignée de main : sur le canal 1, la première table d'un arrivant pouvait devancer la fin de son
+## authentification et être jetée (vu en préparant la phase 18, sous le relais du test réseau).
 ##
 ## Autoload : les tests `--script`, compilés avant l'enregistrement des autoloads, le récupèrent
 ## par `root.get_node("Reseau")` et ne le nomment pas.
@@ -66,6 +75,9 @@ signal salon_change()
 ## `{"id_reseau", "pseudo", "couleur"}` par joueur, dans l'ordre des index compactés (0..n-1), à
 ## donner à `GameState.configurer_bataille_reseau` avant de charger la scène de jeu.
 signal manche_lancee(fiches: Array[Dictionary])
+## Sur chaque poste en session : l'hôte ramène tout le monde au salon (phase 18, depuis l'écran
+## Résultats) ; la table (sans les partis, personne prêt) est déjà arrivée, la manche n'est plus en cours.
+signal salon_rouvert()
 
 const PORT := 7777
 ## Identifiant de la poignée de main : une demande qui ne le porte pas vient d'un autre programme.
@@ -106,6 +118,9 @@ const ESSAIS_SILENCE := 32
 ## Délai laissé à un départ volontaire pour être reçu (accusé de réception du DISCONNECT), en
 ## millisecondes.
 const DELAI_DEPART := 1000
+## Canal ENet du lancement et du retour au salon, table comprise : le canal fiable ordonné de la manche
+## (`Manche.CANAL_PEINTURE`, spec §4), phase 18.
+const CANAL_ORDONNE := 1
 ## Pour `adresse_ipv4`, la validation de l'écran Réseau (fonction statique : l'autoload n'est pas
 ## nommé). `Decouverte.gd` précharge aussi ce script : ce préchargement croisé passe en Godot 4.7.
 const _Decouverte := preload("res://Scripts/Decouverte.gd")
@@ -119,8 +134,9 @@ var pseudo := ""
 ## [2, `EtatPartie.NB_JOUEURS_MAX`] (N3 : au-delà, `premier_index_libre` renverrait -1 pour l'hôte
 ## lui-même).
 var places := EtatPartie.NB_JOUEURS_MAX
-## Posé par la partie (phase 13 au lancement de la manche, phase 18 au retour au salon) : tant
-## qu'il est vrai, l'hôte refuse tout nouveau venu (pas d'arrivée en cours de manche, spec §1).
+## Posé au lancement de la manche (phase 13), et gardé tant qu'on enchaîne les manches depuis l'écran
+## Résultats ; retiré au retour au salon (phase 18) : tant qu'il est vrai, l'hôte refuse tout nouveau
+## venu (pas d'arrivée en cours de manche, spec §1).
 var manche_en_cours := false
 ## Chez l'hôte : les joueurs inscrits, hôte compris, par identifiant réseau :
 ## `{"index": int, "couleur": Color, "pseudo": String, "arrive": bool, "pret": bool}`. Un accepté y
@@ -479,6 +495,39 @@ func definir_pret(id: int, pret: bool) -> bool:
 func lancer_manche() -> bool:
 	if not multiplayer.is_server() or manche_en_cours or not salon_pret(inscrits):
 		return false
+	return _lancer()
+
+
+## Chez l'hôte, depuis l'écran Résultats (phase 18) : une manche neuve avec les joueurs encore là, sur le
+## niveau `niveau` (ramené dans la liste, en boucle : Revanche, le même ; Niveau suivant, le suivant),
+## comme `lancer_manche` (index recompactés, table diffusée, lancement, chargement), sans repasser par le
+## salon : la manche reste en cours (aucune arrivée) et personne n'a à se redire prêt. Faux, sans rien
+## changer, chez un client, hors d'une manche, ou à moins de NB_JOUEURS_MIN joueurs encore là.
+func relancer_manche(niveau: int) -> bool:
+	if not multiplayer.is_server() or not manche_en_cours or table_de(inscrits).size() < EtatPartie.NB_JOUEURS_MIN:
+		return false
+	niveau_salon = posmod(niveau, EtatPartie.NIVEAUX.size())
+	return _lancer()
+
+
+## Chez l'hôte, depuis l'écran Résultats (phase 18) : chaque poste revient au salon, sur la même table
+## (les partis en moins) : le salon s'ouvre chez l'hôte (`ouvrir_salon` : plus de manche en cours, les
+## arrivées de nouveau acceptées et annoncées par la balise, personne prêt, la table diffusée), puis
+## chaque client change de scène (`_recevoir_retour_salon`, sur le canal ordonné, avec la table) ;
+## `salon_rouvert` part aussi ici. Faux chez un client, ou hors d'une manche.
+func revenir_au_salon() -> bool:
+	if not multiplayer.is_server() or not manche_en_cours:
+		return false
+	definir_silence(SILENCE_SESSION)
+	ouvrir_salon(niveau_salon)
+	if en_ligne():
+		_recevoir_retour_salon.rpc(table_salon, niveau_salon, places_salon)
+	salon_rouvert.emit()
+	return true
+
+
+## La manche part (`lancer_manche`, `relancer_manche`), une fois les fiches revérifiées (M1).
+func _lancer() -> bool:
 	var essai: Dictionary[int, Dictionary] = inscrits.duplicate(true)
 	compacter_index(essai)
 	if fiches_de_manche(table_de(essai), multiplayer.get_unique_id()).is_empty():
@@ -491,7 +540,7 @@ func lancer_manche() -> bool:
 	index_local = inscrits[multiplayer.get_unique_id()].index
 	_diffuser_salon()
 	if en_ligne():
-		_recevoir_manche.rpc()
+		_recevoir_manche.rpc(table_salon, niveau_salon)
 	manche_lancee.emit(fiches_de_manche(table_salon, multiplayer.get_unique_id()))
 	return true
 
@@ -625,15 +674,21 @@ func _demande_pret(pret: Variant) -> void:
 		definir_pret(multiplayer.get_remote_sender_id(), pret)
 
 
-## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible). Ce
-## poste y lit son index et sa couleur.
+## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible).
 @rpc("authority", "call_remote", "reliable")
 func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
+	if not _poser_salon(table, niveau, nb_places):
+		push_warning("Reseau : table du salon illisible, ignorée")
+
+
+## Chez un client : pose la table du salon reçue de l'hôte, son niveau et ses places ; ce poste y lit
+## son index et sa couleur, puis `salon_change`. Faux, sans rien changer, pour une table illisible
+## (`lire_table`) ou des valeurs hors plage.
+func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant) -> bool:
 	var lue := lire_table(table)
 	if lue.is_empty() or not (niveau is int) or niveau < 0 or niveau >= EtatPartie.NIVEAUX.size() \
 			or not (nb_places is int) or nb_places < EtatPartie.NB_JOUEURS_MIN or nb_places > EtatPartie.NB_JOUEURS_MAX:
-		push_warning("Reseau : table du salon illisible, ignorée")
-		return
+		return false
 	table_salon = lue
 	niveau_salon = niveau
 	places_salon = nb_places
@@ -642,19 +697,33 @@ func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant) -> voi
 			index_local = fiche.index
 			couleur_locale = fiche.couleur
 	salon_change.emit()
+	return true
 
 
-## Chez un client : l'hôte lance la manche, sur la table compactée reçue juste avant. Le chargement
-## commence : silence toléré SILENCE_CHARGEMENT.
-@rpc("authority", "call_remote", "reliable")
-func _recevoir_manche() -> void:
-	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id())
+## Chez un client : l'hôte lance la manche, sur la table compactée et le niveau `table`, `niveau` (phase
+## 18 : avec le lancement, sur le canal ordonné, que la table diffusée sur le canal 0 peut ne pas
+## précéder). Le chargement commence : silence toléré SILENCE_CHARGEMENT.
+@rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
+func _recevoir_manche(table: Variant, niveau: Variant) -> void:
+	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id()) if _poser_salon(table, niveau, places_salon) else [] as Array[Dictionary]
 	if fiches.is_empty():
 		push_warning("Reseau : lancement de manche sur une table illisible, ignoré")
 		return
 	manche_en_cours = true
 	definir_silence(SILENCE_CHARGEMENT)
 	manche_lancee.emit(fiches)
+
+
+## Chez un client : l'hôte ramène tout le monde au salon (phase 18), sur la table `table`, son niveau et
+## ses places (la même que celle diffusée juste avant, sur le canal 0 ; aucune place n'est réservée
+## pendant une manche). Une table illisible est signalée, le retour a lieu quand même.
+@rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
+func _recevoir_retour_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
+	if not _poser_salon(table, niveau, nb_places):
+		push_warning("Reseau : table du retour au salon illisible, ignorée")
+	manche_en_cours = false
+	definir_silence(SILENCE_SESSION)
+	salon_rouvert.emit()
 
 
 ## Chez l'hôte : la scène de jeu d'un joueur de la manche est chargée (barrière avant l'intro).

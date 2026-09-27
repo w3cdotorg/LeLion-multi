@@ -1567,6 +1567,7 @@ func _run() -> void:
 	GS.pret = false
 
 	await _tester_manche_reseau()
+	await _tester_resultats_reseau()
 
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
@@ -2203,6 +2204,113 @@ func _tester_manche_reseau() -> void:
 		await _frames(1)
 		reseau.quitter()
 	script_manche.delai_chargement = delai_du_jeu
+	reseau.pseudo = ""
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+	GS.niveau_courant = 0
+
+
+## Attend la scène `chemin` qui remplace celle d'identifiant `avant` (la même scène rechargée compte),
+## prête ; bornée comme `_attendre_scene`.
+func _attendre_nouvelle_scene(chemin: String, avant: int, max_ms: int = 5000) -> Node:
+	var fin := Time.get_ticks_msec() + max_ms
+	while Time.get_ticks_msec() < fin and (current_scene == null or current_scene.get_instance_id() == avant
+			or current_scene.scene_file_path != chemin or not current_scene.is_node_ready()):
+		await process_frame
+	return current_scene
+
+
+## Une manche en réseau chez l'hôte (Bob simulé dans `Reseau.inscrits`, comme `_tester_manche_reseau`),
+## jusqu'à la barrière passée : la scène de jeu `main` (déjà chargée).
+func _passer_la_barriere(main: Node) -> void:
+	await _frames(2)
+	root.get_node("Reseau")._noter_scene_chargee(7)  # comme la RPC de Bob
+	await _frames(2)
+	GS.pret = true  # sans attendre l'intro
+
+
+## Phase 18 : l'écran Résultats chez l'hôte en réseau, et ses choix (les échanges entre postes sont
+## couverts par tests/reseau/lancer.sh, scénario 13) : Revanche relance la manche chez tous (la scène de
+## jeu se recharge, la barrière attend de nouveau chaque joueur), Niveau suivant de même sur le niveau
+## suivant, un choix que l'hôte ne peut plus suivre se regrise, Retour au salon ramène au salon, la même
+## table, personne prêt, les arrivées de nouveau acceptées.
+func _tester_resultats_reseau() -> void:
+	print("-- Écran Résultats en réseau (hôte)")
+	var reseau: Node = root.get_node("Reseau")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(17799) == OK, "(pré-condition) ce poste héberge")
+	reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+	reseau.inscrits[1].pret = true
+	GS.niveau_courant = 0
+	reseau.niveau_salon = 0
+	_check(reseau.lancer_manche(), "(pré-condition) l'hôte lance la manche depuis le salon")
+	var lancements := [0]
+	var compter := func(_f: Array[Dictionary]) -> void: lancements[0] += 1
+	reseau.manche_lancee.connect(compter)
+	GS.configurer_bataille_reseau(reseau.fiches_de_manche(reseau.table_salon, 1))
+	var main: Node = load("res://Scenes/Main.tscn").instantiate()
+	root.add_child(main)
+	current_scene = main
+	await _passer_la_barriere(main)
+	for k in range(3):
+		main.get_node("Ville").territoire.tamponner(0, Vector2i(1000, 200), 40)
+	_check(main.get_node("Ville").territoire.cellules_de(0) > 0, "(pré-condition) l'hôte a peint pendant la première manche")
+	GS.terminer_partie(true)
+	await _frames(1)
+	_check(main.resultats != null and main.resultats.hote and main.resultats.possible(&"revanche") and main.resultats.possible(&"salon"),
+		"(pré-condition) la manche finie, l'écran Résultats de l'hôte, Bob encore là : Revanche possible")
+	# Revanche : la manche se relance chez tous, la scène de jeu se recharge et attend chaque joueur
+	var id_premiere := main.get_instance_id()
+	main.resultats.choisir(&"revanche")
+	var revanche: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_premiere)
+	_check(revanche != null and revanche.get_instance_id() != id_premiere and not is_instance_valid(main) and lancements[0] == 1 and reseau.manche_en_cours
+		and not paused and revanche.en_reseau and not revanche.get_node("Manche").barriere and reseau.scenes_chargees == [1]
+		and GS.niveau_courant == 0 and GS.joueurs.size() == 2 and GS.joueurs[1].pseudo == "Bob" and revanche.resultats == null,
+		"Revanche : la manche se relance (même niveau, mêmes joueurs), la scène de jeu se recharge et attend Bob à la barrière")
+	await _passer_la_barriere(revanche)
+	_check(revanche.lions.size() == 2 and revanche.get_node("Ville").territoire.cellules_de(0) == 0 and GS.temps_ecoule == 0.0,
+		"la barrière passée : les deux lions, un territoire vierge, le chrono à zéro")
+	# Niveau suivant : de même, sur le niveau suivant
+	GS.terminer_partie(true)
+	await _frames(1)
+	var id_revanche := revanche.get_instance_id()
+	revanche.resultats.choisir(&"suivant")
+	var suivante: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_revanche)
+	_check(suivante != null and lancements[0] == 2 and GS.niveau_courant == 1 and reseau.niveau_salon == 1 and not paused,
+		"Niveau suivant : la manche se relance sur le niveau suivant (Métropole), annoncé à chaque poste avec la table")
+	await _passer_la_barriere(suivante)
+	GS.terminer_partie(true)
+	await _frames(1)
+	var resultats: CanvasLayer = suivante.resultats
+	# Bob part sur l'écran Résultats : il se grise ; seul, l'hôte ne peut plus relancer
+	reseau._sur_pair_deconnecte(7)
+	await _frames(1)
+	_check(resultats.partis == [false, true] and resultats.lignes.any(func(l: Dictionary) -> bool: return l.index == 1 and l.badge.text == "PARTI")
+		and not resultats.possible(&"revanche") and resultats.bouton_revanche.disabled and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
+		"Bob part sur l'écran Résultats : sa ligne se grise, Revanche et Niveau suivant attendent deux joueurs")
+	suivante._sur_choix_resultats(&"revanche")  # l'hôte qui ne peut plus suivre : refusé, rien ne change
+	await _frames(2)
+	_check(current_scene == suivante and lancements[0] == 2 and resultats.choix.is_empty() and reseau.manche_en_cours,
+		"une relance que l'hôte ne peut plus suivre est refusée : l'écran reste, on peut encore choisir")
+	# Retour au salon : la même table (Bob en moins), personne prêt, les arrivées de nouveau acceptées
+	var balise_manche: bool = reseau.manche_en_cours
+	resultats.choisir(&"salon")
+	var salon: Node = await _attendre_scene("res://Scenes/Salon.tscn")
+	_check(salon != null and salon.scene_file_path == "res://Scenes/Salon.tscn" and not paused and balise_manche and not reseau.manche_en_cours
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1] and not reseau.inscrits[1].pret
+		and salon.titre_niveau.text == "Niveau : Métropole",
+		"Retour au salon : le salon de l'hôte s'ouvre sur la même table (Bob parti), personne prêt, le niveau gardé, les arrivées acceptées")
+	reseau.manche_lancee.disconnect(compter)
+	if salon != null:
+		salon.free()
+	await _frames(1)
+	_check(reseau.manche_lancee.get_connections().is_empty() and reseau.salon_rouvert.get_connections().is_empty()
+		and reseau.hote_perdu.get_connections().is_empty(),
+		"les scènes de jeu fermées et le salon ne laissent aucune connexion aux autoloads")
+	reseau.quitter()
 	reseau.pseudo = ""
 	GS.configurer_solo()
 	GS.nouvelle_partie()

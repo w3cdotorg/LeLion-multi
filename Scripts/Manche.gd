@@ -461,9 +461,12 @@ func _recevoir_fin_bonus(index: Variant) -> void:
 		j.recevoir_fin_bonus()
 
 
-## Le joueur d'index `index` reçu de l'hôte, ou null (index d'un autre type ou hors de la table).
+## Le joueur d'index `index` reçu de l'hôte, ou null (index d'un autre type ou hors de la table, ou la
+## barrière pas encore passée : phase 18, une réaction ou un départ d'une manche précédente, sur le canal
+## 0, arrivé après que ce poste a rechargé la scène pour une revanche, ne touche pas la manche neuve ;
+## ceux de la manche neuve partent après son intro, sur le même canal).
 func _joueur_recu(index: Variant) -> Joueur:
-	if not actif or not (index is int) or index < 0 or index >= GameState.joueurs.size():
+	if not actif or not barriere or not (index is int) or index < 0 or index >= GameState.joueurs.size():
 		return null
 	return GameState.joueurs[index]
 

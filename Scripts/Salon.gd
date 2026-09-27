@@ -50,6 +50,8 @@ var _tenues: Dictionary[StringName, bool] = {}
 
 
 func _ready() -> void:
+	# Au retour de l'écran Résultats (phase 18), l'arbre est encore en pause (la fin de manche l'a figé).
+	get_tree().paused = false
 	Regles.appliquer_ecran(get_tree(), ReglesBataille.TAILLE_ECRAN)
 	for i in range(EtatPartie.NB_JOUEURS_MAX):
 		cartes.append(_creer_carte())
@@ -160,9 +162,17 @@ func _sur_salon_change() -> void:
 func _sur_manche_lancee(fiches: Array[Dictionary]) -> void:
 	_lance = true
 	bouton_demarrer.disabled = true
+	entrer_en_manche(get_tree(), fiches)
+
+
+## Sur chaque poste, au lancement d'une manche (depuis le salon, ou depuis l'écran Résultats : Revanche,
+## Niveau suivant, phase 18) : le niveau du salon devient celui de la partie, les règles de bataille et la
+## table des joueurs sont branchées (`GameState.configurer_bataille_reseau`), puis la scène de jeu se
+## charge.
+static func entrer_en_manche(arbre: SceneTree, fiches: Array[Dictionary]) -> void:
 	GameState.niveau_courant = Reseau.niveau_salon
 	GameState.configurer_bataille_reseau(fiches)
-	get_tree().change_scene_to_file(SCENE_JEU)
+	arbre.change_scene_to_file(SCENE_JEU)
 
 
 func _sur_hote_perdu() -> void:

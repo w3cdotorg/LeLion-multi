@@ -19,6 +19,8 @@ extends Node2D
 @export var hauteur_depart_lions := 0.12
 
 const SCENE_TITRE := "res://Scenes/Titre.tscn"
+const SCENE_SALON := "res://Scenes/Salon.tscn"
+const _Salon := preload("res://Scripts/Salon.gd")
 const SCRIPT_PILOTE := preload("res://Scripts/Pilote.gd")
 const SCENE_LION := preload("res://Scenes/Lion.tscn")
 const SCENE_HUD_BATAILLE := preload("res://Scenes/HUDBataille.tscn")
@@ -117,7 +119,30 @@ func _preparer_manche_en_reseau() -> void:
 	# erreur, N4 de `Reseau.gd`) ; sans ce branchement, l'hôte continuait seul une manche que
 	# personne ne recevait plus, sans aucun message.
 	Reseau.hote_perdu.connect(_sur_hote_perdu)
+	# Phase 18 : depuis l'écran Résultats, l'hôte relance une manche (chaque poste recharge la scène de
+	# jeu) ou ramène tout le monde au salon.
+	Reseau.manche_lancee.connect(_sur_manche_relancee)
+	Reseau.salon_rouvert.connect(_sur_salon_rouvert)
 	manche.demarrer(ville)
+
+
+## Les autoloads survivent à la scène de jeu : ne rien leur laisser.
+func _exit_tree() -> void:
+	for connexion: Array in [[Reseau.hote_perdu, _sur_hote_perdu], [Reseau.manche_lancee, _sur_manche_relancee],
+			[Reseau.salon_rouvert, _sur_salon_rouvert]]:
+		if (connexion[0] as Signal).is_connected(connexion[1]):
+			(connexion[0] as Signal).disconnect(connexion[1])
+
+
+## Sur chaque poste : l'hôte relance une manche avec les mêmes joueurs (Revanche, Niveau suivant) : la
+## scène de jeu se recharge, comme depuis le salon (`Salon.entrer_en_manche`).
+func _sur_manche_relancee(fiches: Array[Dictionary]) -> void:
+	_Salon.entrer_en_manche(get_tree(), fiches)
+
+
+## Sur chaque poste : l'hôte ramène tout le monde au salon.
+func _sur_salon_rouvert() -> void:
+	get_tree().change_scene_to_file(SCENE_SALON)
 
 
 ## La `spawn_function` d'`apparitions`, sur chaque poste : le lion du joueur d'index `index`, avec
@@ -417,15 +442,24 @@ func _afficher_resultats(bilan: BilanManche) -> void:
 
 
 ## Le choix fait sur l'écran Résultats. Quitter : le titre (qui quitte le réseau ; l'hôte qui part ramène
-## ses clients au titre, « L'hôte a quitté la partie »). Hors réseau, Revanche et Niveau suivant
-## rechargent la scène de jeu, sur le même niveau ou le suivant (en boucle), avec les mêmes joueurs : un
-## territoire, un Spawner, un chrono tout neufs.
+## ses clients au titre, « L'hôte a quitté la partie »). Revanche et Niveau suivant : la scène de jeu se
+## recharge, sur le même niveau ou le suivant (en boucle), avec les mêmes joueurs (les partis en moins) :
+## un territoire, un Spawner, un chrono, une manche tout neufs ; en réseau, l'hôte la relance chez tous
+## (`Reseau.relancer_manche`, puis `_sur_manche_relancee` sur chaque poste). Retour au salon (l'hôte, en
+## réseau) : chaque poste revient au salon, sur la même table (`Reseau.revenir_au_salon`). Un choix que
+## l'hôte ne peut plus suivre au moment même (plus assez de joueurs) se regrise.
 func _sur_choix_resultats(choix: StringName) -> void:
+	var niveau := GameState.niveau_courant + (1 if choix == &"suivant" else 0)
 	match choix:
 		&"quitter":
 			get_tree().change_scene_to_file(SCENE_TITRE)
 		&"revanche", &"suivant":
-			if not en_reseau:
-				if choix == &"suivant":
-					GameState.niveau_courant = posmod(GameState.niveau_courant + 1, GameState.NIVEAUX.size())
+			if en_reseau:
+				if not Reseau.relancer_manche(niveau):
+					resultats.annuler_choix()
+			else:
+				GameState.niveau_courant = posmod(niveau, GameState.NIVEAUX.size())
 				get_tree().reload_current_scene()
+		&"salon":
+			if not Reseau.revenir_au_salon():
+				resultats.annuler_choix()

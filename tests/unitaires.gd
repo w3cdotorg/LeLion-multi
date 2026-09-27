@@ -46,6 +46,7 @@ func _run() -> void:
 	_tester_chrono_bataille()
 	_tester_placement_pseudos()
 	_tester_bilan_manche()
+	_tester_manches_enchainees()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1495,9 +1496,35 @@ func _tester_salon() -> void:
 		"au lancement, les index sont compactés (Chloé passe de 3 à 2) et les fiches suivent cet ordre")
 	_check(not reseau.lancer_manche() and not reseau.changer_couleur(1, 1) and not reseau.definir_pret(5, false) and lancees.size() == 1,
 		"pendant la manche : ni second lancement, ni couleur, ni Prêt")
+	# Phase 18 : depuis l'écran Résultats, l'hôte relance une manche avec les joueurs encore là (Revanche,
+	# Niveau suivant), ou ramène tout le monde au salon
+	reseau._sur_pair_deconnecte(5)  # Bob part pendant la manche : un trou à l'index 1
+	reseau.scenes_chargees.assign([1, 9])
+	var niveau_avant: int = reseau.niveau_salon
+	_check(reseau.relancer_manche(niveau_avant + 1 + EtatPartie.NIVEAUX.size()) and reseau.manche_en_cours and lancees.size() == 2
+		and reseau.niveau_salon == posmod(niveau_avant + 1, EtatPartie.NIVEAUX.size())
+		and lancees[1].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 9] and reseau.inscrits[9].index == 1
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.index) == [0, 1] and reseau.scenes_chargees.is_empty()
+		and reseau.silence == reseau.SILENCE_CHARGEMENT
+		and reseau.examiner_demande({"jeu": reseau.JEU, "version": reseau.version, "pseudo": "Tard"}).raison == reseau.REFUS_MANCHE,
+		"Niveau suivant : une manche neuve avec les joueurs encore là (index recompactés), le niveau suivant en boucle, toujours sans arrivée")
+	var rouverts := [0]
+	var sur_salon := func() -> void: rouverts[0] += 1
+	reseau.salon_rouvert.connect(sur_salon)
+	_check(reseau.revenir_au_salon() and not reseau.manche_en_cours and rouverts[0] == 1 and reseau.silence == reseau.SILENCE_SESSION
+		and reseau.inscrits.values().all(func(f: Dictionary) -> bool: return not f.pret)
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1, 9],
+		"Retour au salon : plus de manche en cours (arrivées acceptées), personne n'est prêt, la même table sans les partis")
+	_check(not reseau.revenir_au_salon() and not reseau.relancer_manche(0) and rouverts[0] == 1 and lancees.size() == 2,
+		"hors d'une manche (au salon), ni retour au salon ni relance : c'est « Démarrer la partie »")
+	reseau.manche_en_cours = true
+	reseau._sur_pair_deconnecte(9)
+	_check(not reseau.relancer_manche(0) and lancees.size() == 2 and reseau.manche_en_cours,
+		"seul, l'hôte ne relance pas de manche (Revanche : au moins deux joueurs)")
+	reseau.salon_rouvert.disconnect(sur_salon)
 	reseau.ouvrir_salon(1)
 	_check(not reseau.manche_en_cours and reseau.inscrits.values().all(func(f: Dictionary) -> bool: return not f.pret) and reseau.niveau_salon == 1,
-		"rouvrir le salon (retour de manche, phase 18) : arrivées acceptées, personne n'est prêt")
+		"rouvrir le salon (à l'ouverture de la scène du salon) : arrivées acceptées, personne n'est prêt")
 	reseau.manche_lancee.disconnect(sur_lancement)
 	reseau.quitter()
 	_check(reseau.table_salon.is_empty() and reseau.niveau_salon == 0 and reseau.places_salon == EtatPartie.NB_JOUEURS_MAX,
@@ -2224,6 +2251,66 @@ func _tester_bilan_manche() -> void:
 	_check(vide.meneurs().is_empty() and vide.parts() == [0, 0] and vide.classement() == [0, 1]
 		and BilanManche.TITRES.all(func(t: StringName) -> bool: return calme.laureats(t).is_empty() and calme.record(t) == 0),
 		"personne n'a peint : aucun meneur, 0 % partout ; personne n'a étourdi, volé ni percuté : aucun titre")
+
+
+## Phase 18 : des manches enchaînées depuis l'écran Résultats ne se mélangent pas chez un client. Le
+## lancement et le retour au salon partent sur le canal fiable ordonné de la manche (celui de ses
+## tampons, de son territoire et de sa fin), avec leur table : une manche relancée n'arrive qu'après tout
+## ce que la précédente y a envoyé. La table seule reste sur le canal 0, celui de la poignée de main. Et
+## une réaction ou un départ de la manche précédente (canal 0) arrivé après le rechargement de la scène
+## ne touche pas la manche neuve tant que sa barrière n'est pas passée.
+func _tester_manches_enchainees() -> void:
+	print("-- Manches enchaînées (phase 18)")
+	var reseau: Node = root.get_node("Reseau")
+	var rpc_reseau: Dictionary = reseau.get_script().get_rpc_config()
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	var rpc_manche: Dictionary = script_manche.get_rpc_config()
+	var canal: int = rpc_manche[&"_recevoir_fin_manche"].get("channel", 0)
+	_check(canal == reseau.CANAL_ORDONNE and canal != 0 and rpc_manche[&"_recevoir_tampons"].get("channel", 0) == canal
+		and rpc_manche[&"_recevoir_territoire"].get("channel", 0) == canal
+		and [&"_recevoir_manche", &"_recevoir_retour_salon"].all(func(m: StringName) -> bool: return rpc_reseau[m].get("channel", 0) == canal)
+		and rpc_reseau[&"_recevoir_salon"].get("channel", 0) == 0,
+		"le lancement et le retour au salon partent sur le canal des tampons, du territoire et de la fin (%d) ; la table seule, sur celui de la poignée de main (0)" % canal)
+	# Ils portent leur table : un client la prend d'eux, même si la table du canal 0 ne les a pas précédés
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var table := [{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Moi", "pret": true},
+		{"id": 5, "index": 1, "couleur": palette[3], "pseudo": "Bob", "pret": true}]
+	var lancements: Array = []
+	var sur_lancement := func(f: Array[Dictionary]) -> void: lancements.append(f)
+	var retours := [0]
+	var sur_retour := func() -> void: retours[0] += 1
+	reseau.manche_lancee.connect(sur_lancement)
+	reseau.salon_rouvert.connect(sur_retour)
+	reseau._recevoir_manche(table, 2)
+	_check(lancements.size() == 1 and lancements[0].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 5] and reseau.niveau_salon == 2
+		and reseau.table_salon.size() == 2 and reseau.manche_en_cours,
+		"le lancement pose sa table et son niveau, puis lance la manche sur elle")
+	reseau._recevoir_retour_salon(table, 1, 4)
+	_check(retours[0] == 1 and not reseau.manche_en_cours and reseau.niveau_salon == 1 and reseau.places_salon == 4,
+		"le retour au salon pose sa table, son niveau et ses places, puis ramène au salon")
+	reseau.manche_lancee.disconnect(sur_lancement)
+	reseau.salon_rouvert.disconnect(sur_retour)
+	reseau.quitter()
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	var manche: Node = script_manche.new()
+	manche.actif = true
+	manche._recevoir_crans(1, 4)
+	manche._recevoir_depart(1)
+	var departs := [0]
+	manche.depart_vu.connect(func(_i: int) -> void: departs[0] += 1)
+	manche._recevoir_depart(1)
+	_check(gs.joueurs[1].crans == 1 and departs[0] == 0,
+		"avant sa barrière, une manche neuve ignore les réactions et les départs d'une manche précédente arrivés en retard")
+	manche.barriere = true
+	manche._recevoir_crans(1, 4)
+	manche._recevoir_depart(1)
+	_check(gs.joueurs[1].crans == 4 and departs[0] == 1, "sa barrière passée, elle les applique")
+	manche.free()
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
