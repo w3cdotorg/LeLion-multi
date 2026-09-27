@@ -62,6 +62,7 @@ func _run() -> void:
 	await _tester_fin_pendant_intro()
 	await _tester_scene()
 	await _tester_apparitions()
+	await _tester_rythme_pastilles()
 	await _tester_peintre()
 	await _tester_pseudos_et_chocs()
 	await _tester_reglage_territoire()
@@ -209,10 +210,45 @@ func _tester_apparitions() -> void:
 		y_max = maxf(y_max, p.y)
 		if p.x < zone.position.x or p.x > zone.end.x or p.y < zone.position.y * echelle - 0.01 or p.y > zone.end.y * echelle + 0.01:
 			dans_zone = false
-		if lions.all(func(l: Node2D) -> bool: return p.distance_to(l.global_position) >= spawner.distance_min_du_lion):
+		if lions.all(func(l: Node2D) -> bool: return p.distance_to(l.global_position + l.CENTRE) >= spawner.distance_min_du_lion):
 			loin_de_tous += 1
 	_check(dans_zone and y_max > zone.end.y, "les pastilles apparaissent dans leur zone, à l'échelle de l'écran (y jusqu'à %.0f px)" % y_max)
-	_check(loin_de_tous >= 190, "les pastilles apparaissent loin de tous les lions, pas seulement du premier (%d/200)" % loin_de_tous)
+	_check(loin_de_tous >= 190, "les pastilles apparaissent loin du centre de tous les lions, pas seulement du premier (%d/200)" % loin_de_tous)
+	# Phase 17 : aucun des dix essais assez loin (distance impossible) : le plus loin de tous est gardé
+	var distance_du_jeu: float = spawner.distance_min_du_lion
+	spawner.distance_min_du_lion = 1.0e6
+	var graine := 1717
+	var attendue := Vector2.ZERO
+	var derniere := Vector2.ZERO
+	var ecart_max := -1.0
+	while graine < 1737:  # une graine dont le plus loin n'est pas le dernier essai (celui que garde le solo)
+		seed(graine)
+		ecart_max = -1.0
+		for essai in range(10):
+			derniere = Vector2(randf_range(zone.position.x, zone.end.x), randf_range(zone.position.y * echelle, zone.end.y * echelle))
+			var ecart := INF
+			for l: Node2D in lions:
+				ecart = minf(ecart, derniere.distance_to(l.global_position + l.CENTRE))
+			if ecart > ecart_max:
+				ecart_max = ecart
+				attendue = derniere
+		if attendue != derniere:
+			break
+		graine += 1
+	seed(graine)
+	var gardee: Vector2 = spawner._position_pickup_aleatoire()
+	spawner.distance_min_du_lion = distance_du_jeu
+	seed(20260925)
+	_check(gardee == attendue and attendue != derniere,
+		"sans essai assez loin, la pastille naît au plus loin des lions des dix essais, pas au dernier (%.0f px du plus proche)" % ecart_max)
+	# Extra (revue de capture) : aucune pastille ne naît sous la bande du HUD (les vignettes), où
+	# elle se retrouverait partiellement cachée
+	var y_min_pastilles := INF
+	for i in range(200):
+		y_min_pastilles = minf(y_min_pastilles, spawner._position_pickup_aleatoire().y)
+	_check(y_min_pastilles >= ReglesBataille.HAUTEUR_BANDE_HUD - 0.01,
+		"les pastilles n'apparaissent jamais sous la bande du HUD (y min %.0f px, attendu >= %.0f px)"
+			% [y_min_pastilles, ReglesBataille.HAUTEUR_BANDE_HUD])
 	var haut: float = ville.position.y - ville.tex_size.y / 2.0
 	var ys: Array[float] = []
 	for i in range(60):
@@ -223,8 +259,8 @@ func _tester_apparitions() -> void:
 		and ys.max() > haut + HAUTEURS_JET[1],
 		"les ennemis apparaissent à l'échelle de l'écran et atteignent la bande de peinture (y de %.0f à %.0f)" % [ys.min(), ys.max()])
 
-	# Pastilles : la suivante arrive après le ramassage, même si aucune couleur n'est débloquée
-	spawner.delai_entre_pickups = 0.5
+	# Pastilles : la suivante arrive après le ramassage, même si aucune couleur n'est débloquée (le délai
+	# est celui des règles de bataille : `delai_entre_pickups`, celui du solo, n'y compte pas)
 	var premiere: Node2D = null
 	for i in range(120):
 		premiere = get_first_node_in_group("pickup")
@@ -239,7 +275,7 @@ func _tester_apparitions() -> void:
 		and GS.joueurs.filter(func(j: Joueur) -> bool: return j.crans > 1).size() == 1,
 		"une pastille donne un cran au lion qui la touche, à lui seul")
 	var suivante: Node2D = null
-	for i in range(90):
+	for i in range(int((ReglesBataille.DELAI_ENTRE_PASTILLES + 0.5) * Engine.physics_ticks_per_second)):
 		suivante = get_first_node_in_group("pickup")
 		if suivante != null:
 			break
@@ -254,6 +290,64 @@ func _tester_apparitions() -> void:
 	for e in etoiles:
 		e.free()
 	GS.joueur_local().bonus_restant = 0.0
+	await _liberer(main)
+
+
+## Phase 17 : le rythme des pastilles à 4 joueurs, lions immobiles, ennemis écartés : une pastille
+## toutes les 4 s jusqu'à trois à la fois, jamais plus ; une pastille que personne ne prend expire au
+## bout de 12 s, et une autre la remplace 4 s plus tard.
+func _tester_rythme_pastilles() -> void:
+	print("-- Rythme des pastilles à 4")
+	var main := await _charger_bataille(0)
+	var ecarter := func() -> void:
+		for ennemi in get_nodes_in_group("ennemi") + get_nodes_in_group("boss"):
+			ennemi.queue_free()
+	physics_frame.connect(ecarter)
+	await _attendre_depart()
+	var depart: float = GS.temps_ecoule
+	var arrivees: Array[float] = []  # secondes de manche de chaque arrivée
+	var departs: Array[float] = []
+	var vues := {}
+	var plus_grand_nombre := 0
+	var premiere: Node2D = null
+	var ramassees := 0
+	var crans_avant := 0
+	for j: Joueur in GS.joueurs:
+		crans_avant += j.crans
+	for f in range(int(26.0 * Engine.physics_ticks_per_second)):
+		await physics_frame
+		var presentes := get_nodes_in_group("pickup")
+		plus_grand_nombre = maxi(plus_grand_nombre, presentes.size())
+		var t: float = GS.temps_ecoule - depart
+		for p: Node in presentes:
+			if not vues.has(p.get_instance_id()):
+				vues[p.get_instance_id()] = t
+				arrivees.append(t)
+				if arrivees.size() == 1:
+					premiere = p
+		if arrivees.size() >= 1 and not is_instance_valid(premiere) and departs.is_empty():
+			departs.append(t)  # (un objet libéré ne se compare pas à null : is_instance_valid seul)
+	physics_frame.disconnect(ecarter)
+	for j: Joueur in GS.joueurs:
+		ramassees += j.crans
+	ramassees -= crans_avant
+	var arrondies: Array = arrivees.map(func(t: float) -> String: return "%.1f" % t)
+	_check(ramassees == 0, "(pré-condition) aucun lion, immobile, ne ramasse de pastille (%d)" % ramassees)
+	_check(plus_grand_nombre == ReglesBataille.PASTILLES_A_4_JOUEURS_ET_PLUS and arrivees.size() >= 4
+		and absf(arrivees[1] - arrivees[0] - ReglesBataille.DELAI_ENTRE_PASTILLES) < 0.1
+		and absf(arrivees[2] - arrivees[1] - ReglesBataille.DELAI_ENTRE_PASTILLES) < 0.1,
+		"à 4, une pastille toutes les 4 s jusqu'à trois à la fois, jamais plus (arrivées %s)" % [arrondies])
+	_check(not departs.is_empty() and absf(departs[0] - arrivees[0] - ReglesBataille.DUREE_DE_VIE_PASTILLE) < 0.1
+		and absf(arrivees[3] - departs[0] - ReglesBataille.DELAI_ENTRE_PASTILLES) < 0.1,
+		"une pastille que personne ne prend expire au bout de 12 s (%.1f s), une autre arrive 4 s plus tard (%.1f s)"
+			% [departs[0] - arrivees[0] if not departs.is_empty() else -1.0, arrivees[3] - departs[0] if not departs.is_empty() and arrivees.size() >= 4 else -1.0])
+	# Au plafond, une arrivée de plus (celle qu'un départ et la suite des arrivées programment parfois en
+	# même temps) n'ajoute rien
+	var au_plafond := get_nodes_in_group("pickup").size()
+	main.get_node("Spawner")._spawn_prochain_pickup()
+	await _frames(1)
+	_check(au_plafond == ReglesBataille.PASTILLES_A_4_JOUEURS_ET_PLUS and get_nodes_in_group("pickup").size() == au_plafond,
+		"au plafond (%d), une pastille de plus ne peut pas arriver" % au_plafond)
 	await _liberer(main)
 
 
@@ -284,6 +378,17 @@ func _tester_peintre() -> void:
 	await _frames(3)
 	_check(j3.est_etourdi() and j3.etourdi_restant > ReglesBataille.DUREE_ETOURDI_ENNEMI - 0.2 and j3.vies == 3,
 		"le peintre étourdit le lion de bataille qu'il touche, sans lui ôter de vie")
+	_check(is_equal_approx(j3.invulnerable_restant - j3.etourdi_restant, ReglesBataille.DUREE_REPIT_ENNEMI),
+		"puis lui laisse %.0f s de répit pour fuir, même s'il reste dessous (%.2f s)" % [ReglesBataille.DUREE_REPIT_ENNEMI, j3.invulnerable_restant - j3.etourdi_restant])
+	# Phase 17 : en bataille, le peintre se repose deux fois plus longtemps hors de l'écran qu'en solo
+	boss._changer_etat(boss.Etat.REPOS)
+	var attendu: float = boss.duree_repos * ReglesBataille.FACTEUR_REPOS_PEINTRE * boss.facteur_vitesse()
+	var ticks := 0
+	while boss.etat == boss.Etat.REPOS and ticks < 600:
+		await physics_frame
+		ticks += 1
+	_check(absf(ticks / 60.0 - attendu) < 0.05 and attendu > 3.8,
+		"en bataille, la pause du peintre entre deux passages dure deux fois celle du solo (%.2f s, attendu %.2f s)" % [ticks / 60.0, attendu])
 	await _liberer(main)
 
 
@@ -461,6 +566,10 @@ func _mesurer_passe(niveau: int, crans: int) -> Vector2:
 
 func _tester_reglage_territoire() -> void:
 	print("-- Réglage du territoire sur une passe pleine vitesse")
+	# Les motifs des tampons (couverture du solo) suivent le hasard global : semé ici, cette mesure ne
+	# dépend plus de ce que les sections d'avant ont tiré (phase 17 : la section du rythme des pastilles
+	# l'avait poussée de 1,22 à 1,29, près de la borne de 1,3)
+	seed(20260925)
 	root.content_scale_size = Vector2i(TAILLE_BATAILLE)  # l'écran d'une bataille (sans Main dans cette section)
 	var rapport_min := INF
 	var rapport_max := 0.0

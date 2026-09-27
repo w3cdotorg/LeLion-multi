@@ -11,7 +11,7 @@ signal etat_change(etat: Etat)
 @export var duree_entree := 3.0
 @export var duree_pause := 1.0
 @export var duree_sortie := 3.0
-@export var duree_repos := 2.0
+@export var duree_repos := 2.0           # en solo ; en bataille, fois `Regles.facteur_repos_peintre`
 @export var acceleration_max := 0.65     # facteur de durée en fin de partie (avancement des règles)
 @export var depassement_annonce := 40.0  # pixels visibles pendant l'annonce
 
@@ -106,7 +106,7 @@ func _changer_etat(nouvel_etat: Etat) -> void:
 	match etat:
 		Etat.REPOS:
 			position.x = _x_hors_ecran()
-			_tween.tween_interval(duree_repos * facteur_vitesse())
+			_tween.tween_interval(duree_repos * GameState.regles.facteur_repos_peintre() * facteur_vitesse())
 			_tween.tween_callback(_changer_etat.bind(Etat.ANNONCE))
 		Etat.ANNONCE:
 			position.x = _x_annonce()

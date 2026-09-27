@@ -426,17 +426,18 @@ func _tester_regles_bataille() -> void:
 	_check(a.est_etourdi() and b.est_etourdi() and a.etourdissements_infliges == 1 and b.etourdissements_infliges == 1,
 		"un trade tête-à-tête dans la même frame étourdit les deux lions (aucun n'est ignoré comme agresseur déjà étourdi)")
 
-	# Ennemis : 2,5 s sans barbouillage, puis 1 s d'immunité ; aucune vie perdue
+	# Ennemis : 2,5 s sans barbouillage, puis 3 s de répit (phase 17 : le temps de fuir le peintre) ;
+	# aucune vie perdue
 	for i in range(10):
 		r.lion_touche_par_ennemi(bleu, Vector2(1, 2))  # le peintre signale le contact à chaque frame
 	_check(bleu.est_etourdi() and is_equal_approx(bleu.etourdi_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI)
-		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_IMMUNITE)
+		and is_equal_approx(bleu.invulnerable_restant, ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_REPIT_ENNEMI)
 		and barbouillages.size() == 2 and barbouillages[1].a == 0.0 and bleu.vies == 3,
-		"un ennemi étourdit 2,5 s sans barbouillage (un seul étourdissement pour dix contacts), sans vie perdue")
-	bleu.avancer(ReglesBataille.DUREE_ETOURDI_ENNEMI + 0.5)
+		"un ennemi étourdit 2,5 s sans barbouillage (un seul étourdissement pour dix contacts), sans vie perdue, puis laisse 3 s de répit")
+	bleu.avancer(ReglesBataille.DUREE_ETOURDI_ENNEMI + ReglesBataille.DUREE_REPIT_ENNEMI - 0.1)
 	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
-	_check(barbouillages.size() == 2, "un ennemi ne ré-étourdit pas un lion immunisé")
-	bleu.avancer(1.0)
+	_check(barbouillages.size() == 2, "un ennemi ne ré-étourdit pas un lion pendant son répit (le peintre encore dessus)")
+	bleu.avancer(0.2)
 	gs.pret = false
 	r.lion_touche_par_ennemi(bleu, Vector2(1, 2))
 	r.lion_touche_par_vomi(bleu, rouge, Vector2.ZERO)
@@ -2067,6 +2068,34 @@ func _tester_chrono_bataille() -> void:
 	_check(ReglesBataille.parts([1, 1, 1]) == [34, 33, 33] and ReglesBataille.parts([2, 1]) == [67, 33]
 		and ReglesBataille.parts([5, 9, 5, 0]) == [26, 48, 26, 0] and parts_a_4 == [25, 20, 24, 31],
 		"les parts font 100 à elles toutes, le reste de l'arrondi aux plus grands restes, jamais à un joueur sans cellule (%s)" % [parts_a_4])
+
+	# Le rythme de la manche (phase 17) : pastilles et peintre ; le solo ne change pas
+	var solo := ReglesSolo.new(gs)
+	_check(solo.pastilles_en_meme_temps() == 1 and solo.pastille_peut_arriver(5) and solo.delai_entre_pastilles(6.0) == 6.0
+		and solo.duree_de_vie_pastille() == 0.0 and solo.facteur_repos_peintre() == 1.0
+		and not solo.pastilles_loin_des_lions(),
+		"en solo, une pastille à la fois, 6 s après le départ de la précédente, sans fin de vie ; le peintre se repose comme avant")
+	var plafonds: Array[int] = []
+	for nb in [2, 3, 4, 6]:
+		gs.configurer_bataille(nb)
+		plafonds.append(gs.regles.pastilles_en_meme_temps())
+	var b6: Regles = gs.regles
+	_check(plafonds == [2, 2, 3, 3] and b6.pastille_peut_arriver(2) and not b6.pastille_peut_arriver(3),
+		"en bataille, deux pastilles à la fois de 2 à 3 joueurs, trois de 4 à 6, jamais plus (%s)" % [plafonds])
+	_check(b6.delai_entre_pastilles(6.0) == ReglesBataille.DELAI_ENTRE_PASTILLES and ReglesBataille.DELAI_ENTRE_PASTILLES == 4.0
+		and b6.duree_de_vie_pastille() == 12.0 and b6.facteur_repos_peintre() == 2.0 and b6.pastilles_loin_des_lions(),
+		"en bataille, une pastille toutes les 4 s, qui expire au bout de 12 s si personne ne la prend ; le peintre se repose deux fois plus")
+	# Extra (revue de capture) : la zone des pastilles remonte sous la bande du HUD en bataille (les
+	# vignettes), jamais en solo (pas de HUD au-dessus du jeu)
+	var zone_repere := Rect2(150, 80, 1700, 300)
+	_check(solo.zone_pickups_ajustee(zone_repere) == zone_repere,
+		"en solo, la zone des pastilles n'est pas ajustée (pas de bande de HUD au-dessus du jeu)")
+	var zone_ajustee: Rect2 = b6.zone_pickups_ajustee(zone_repere)
+	var echelle_bataille := ReglesBataille.TAILLE_ECRAN.y / float(Regles.TAILLE_ECRAN_SOLO.y)
+	_check(zone_ajustee.position.y > zone_repere.position.y and is_equal_approx(zone_ajustee.end.y, zone_repere.end.y)
+		and is_equal_approx(zone_ajustee.position.y * echelle_bataille, ReglesBataille.HAUTEUR_BANDE_HUD),
+		"en bataille, la zone des pastilles remonte sous la bande du HUD, sans changer son bas (%s)" % [zone_ajustee])
+	gs.configurer_solo()
 
 
 ## Phase 17 : les étiquettes de pseudo de lions qui se touchent s'écartent à l'horizontale, sans
