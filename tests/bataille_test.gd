@@ -59,6 +59,9 @@ func _frames(n: int) -> void:
 func _run() -> void:
 	print("== test de bataille LeLion ==")
 	GS = root.get_node("GameState")
+	# Textes attendus en français, quelle que soit la langue du système (la CI tourne en anglais) ;
+	# sans passer par Parametres, qui mémoriserait la langue dans les préférences du joueur.
+	TranslationServer.set_locale("fr")
 	seed(20260925)  # apparitions, ennemis et motifs des tampons reproductibles d'un passage à l'autre
 	await _tester_fin_pendant_intro()
 	await _tester_scene()
