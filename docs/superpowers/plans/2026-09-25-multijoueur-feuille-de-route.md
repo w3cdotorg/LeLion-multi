@@ -466,4 +466,21 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   aucune fin n'est émise d'un seul côté, aucun écran solo ne s'ouvre) — à dire aux testeurs d'un
   essai LAN avant la phase 17. La fin devra être décidée par l'hôte et envoyée par RPC ; le chrono de
   chaque client démarre à la fin de **sa propre** intro, décalé de la latence : il ne doit rien
-  terminer lui-même.
+  terminer lui-même ;
+- **phase 18** (M2 de la revue finale 16, `Scripts/InterpolationLion.gd:90-92`) : pendant un accroc
+  Wi-Fi de 200 à 420 ms, le lion distant extrapole 3 ticks puis glisse en arrière (jusqu'à 2,8 px par
+  tick) avant de sauter en avant de 21 à 54 px à la reprise ; c'est le prix du correctif du lion figé
+  (désync-report du scénario 11), mais visible en jeu normal. À corriger en repoussant le glissement
+  arrière après un silence plus long (≥ 500 ms), ou en le rendant inutile par le message de fin de
+  manche de cette phase (les lions distants reçoivent alors directement leur état final) ;
+- **phase 18** (M5 de la revue finale 16) : la décision de fin de manche devra aussi arrêter
+  `PredictionLocale` chez chaque client (pas d'API aujourd'hui : se caler sur l'état final, remettre
+  `_decalage` à zéro, cesser de lire les actions de ce poste), en plus de donner leur état final aux
+  lions distants ; le point déjà noté ci-dessus sur la fin de manche (phase 18) couvre le besoin, pas
+  ce crochet côté prédiction ;
+- **phase 17** (M5 de la revue finale 16) : tout ce que le HUD ou des effets accrochent au lion local
+  doit suivre sa position affichée (`lion.position + lion.visuel.position`), pas son corps seul (le
+  décalage de correction, phase 16, ne bouge que l'affichage) ;
+- **phase 19** (M5 de la revue finale 16) : `PredictionLocale._journal` (jusqu'à 20 000 entrées par
+  manche) et ses statistiques ne sont que de l'instrumentation de test, livrée telle quelle dans le
+  jeu ; sans danger, mais à borner ou retirer.
