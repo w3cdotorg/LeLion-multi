@@ -500,3 +500,21 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - **phase 19** (M5 de la revue finale 16) : `PredictionLocale._journal` (jusqu'à 20 000 entrées par
   manche) et ses statistiques ne sont que de l'instrumentation de test, livrée telle quelle dans le
   jeu ; sans danger, mais à borner ou retirer.
+- **phase 18** (M3 de la revue finale 17, `Scripts/Manche.gd:512` `_recevoir_depart` et les RPC de
+  réactions `_recevoir_etourdi`/`_recevoir_crans`/`_recevoir_bonus`, canal 0, alors que la fin de
+  manche part sur `CANAL_PEINTURE`) : un cran pris, un étourdissement ou un départ dans la dernière
+  image avant le gong (ou un paquet du canal 0 retransmis sous perte) peut arriver chez un client
+  après sa fin de manche ; le HUD figé de l'hôte le montre déjà, pas celui du client, et
+  `HUDBataille.gd:86-88` ne se rafraîchit plus une fois l'arbre en pause (seul `marquer_parti` le
+  fait). À corriger en joignant au message de fin l'état final de chaque joueur (crans, étourdi,
+  bonus, statistiques de l'hôte) et la liste `_partis`, appliqués par le client avant
+  `terminer_partie` ; à défaut, passer `_recevoir_depart` et les réactions sur `CANAL_PEINTURE`, et
+  brancher le rafraîchissement du HUD sur les signaux des joueurs pour qu'il suive même en pause.
+  L'écran Résultats de la phase 18 construira ses titres sur ces valeurs : à faire avant lui, ou en
+  tête de la phase 18 ;
+- **phase 18** (M5 de la revue finale 17, antérieur à la branche, `Scripts/Main.gd:186`
+  `_sur_hote_perdu`) : si un client tient Espace (vomir) quand l'hôte disparaît en pleine manche,
+  l'arbre se met en pause avant qu'aucun lion n'arrête la boucle (`Audio._vomi`, en
+  `PROCESS_MODE_ALWAYS`) : elle continue sur le titre. `Audio.arreter_vomi` n'est appelé que par un
+  lion, le menu local et la fin normale de partie (`Audio._on_partie_terminee`). À corriger par
+  `Audio.arreter_vomi()` dans `Main._sur_hote_perdu`, et/ou en filet de sécurité dans `Titre._ready`.
