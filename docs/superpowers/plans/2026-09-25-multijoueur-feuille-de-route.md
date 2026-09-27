@@ -199,10 +199,11 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   17 à 61 ms chez l'hôte comme chez un client (lignes `MESURE`) ; la frame la plus longue tout
   court (18 à 70 ms) ne génère pas toujours (quatre processus Godot sur un Mac).
   Pas de pré-génération. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs ;
-- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phases 16 et 17) : le
-  test réseau prend ~157 s sur ce Mac (140 s avant la phase 17), dont ~52 s pour le scénario 11
-  (`DUREE11=45`, décision de l'utilisateur), ~38 s pour le scénario 12 (la manche sous latence
-  simulée, `DUREE12=20`) et ~17 s pour le scénario 13 (la fin au chrono, `DUREE13=10`), sous le
+- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phases 16 à 18) : le
+  test réseau prend ~170 s sur ce Mac (169 à 178 s mesurés en phase 18 ; ~157 s en phase 17, 140 s
+  avant), dont ~52 s pour le scénario 11 (`DUREE11=45`, décision de l'utilisateur), ~38 s pour le
+  scénario 12 (la manche sous latence simulée, `DUREE12=20`) et le scénario 13 prolongé en phase 18
+  (la fin au chrono, `DUREE13=10`, puis l'écran Résultats, la revanche de 6 s et le retour au salon), sous le
   `timeout 300` du pas « Test réseau » de `ci.yml` ; le banc de la prédiction (`tests/prediction_test.gd`)
   a son propre pas, ~1 s. Au-delà de ~200 s, raccourcir un scénario ou relever ce `timeout` ;
 - (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19) le
