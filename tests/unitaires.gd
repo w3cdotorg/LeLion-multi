@@ -45,6 +45,7 @@ func _run() -> void:
 	_tester_interpolation_lion()
 	_tester_chrono_bataille()
 	_tester_placement_pseudos()
+	_tester_bilan_manche()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -2143,6 +2144,65 @@ func _tester_placement_pseudos() -> void:
 	xs = PlacementPseudos.repartir([court, large], 2000.0)
 	_check(xs[0] + court.size.x + PlacementPseudos.ECART <= xs[1],
 		"deux lions à distance de contact (92 px) : le pseudo large reste sur le lion de droite, jamais basculé sur celui de gauche (%s)" % [xs])
+
+
+## Phase 18 : le bilan de la manche, relevé par l'hôte au gong et envoyé à chaque client (format
+## réseau), et ce que l'écran Résultats en tire : classement, parts, meneurs, les trois titres.
+func _tester_bilan_manche() -> void:
+	print("-- Bilan de la manche (phase 18)")
+	var joueurs: Array[Joueur] = []
+	for i in range(4):
+		var j := Joueur.new()
+		j.index = i
+		j.reinitialiser(3)
+		joueurs.append(j)
+	joueurs[1].crans = 5
+	joueurs[0].etourdissements_infliges = 3
+	joueurs[2].etourdissements_infliges = 3
+	joueurs[3].cellules_volees = 120
+	joueurs[1].chocs = 7
+	var etats: Dictionary[int, PackedByteArray] = {
+		0: EtatLion.encoder(900, 0, Vector2(100.5, 200.25), Vector2(350, 0), Vector2.ZERO, 1),
+		1: EtatLion.encoder(900, 42, Vector2(640, 300), Vector2.ZERO, Vector2(-80, 10), -1),
+		3: EtatLion.encoder(880, 7, Vector2(1500, 410), Vector2.ZERO, Vector2.ZERO, 1)}
+	var bilan := BilanManche.relever(joueurs, [300, 900, 300, 0] as Array[int], [3] as Array[int], etats, 90.004)
+	_check(bilan.nb_joueurs() == 4 and bilan.cellules == [300, 900, 300, 0] and bilan.crans == [1, 5, 1, 1]
+		and bilan.etourdissements == [3, 0, 3, 0] and bilan.volees == [0, 0, 0, 120] and bilan.chocs == [0, 7, 0, 0]
+		and bilan.partis == [false, false, false, true] and bilan.lions.keys() == [0, 1] and is_equal_approx(bilan.temps, 90.004),
+		"le bilan relève, par joueur, cellules, crans, statistiques de l'hôte et départ ; l'état final des lions encore là (pas celui d'un parti)")
+	var recu := BilanManche.decoder(bilan.encoder(), 4)
+	_check(recu != null and recu.resume() == bilan.resume() and recu.lions[1] == etats[1],
+		"le bilan fait l'aller-retour du format réseau, états des lions compris (%s)" % ("" if recu == null else recu.resume()))
+	_check(bilan.encoder()[2].size() == 2 * BilanManche.TAILLE_LION and bilan.resume().contains("L1@640.0,300.0,-1"),
+		"deux lions de %d octets ; le résumé donne leur place et leur sens" % BilanManche.TAILLE_LION)
+	var e: Array = bilan.encoder()
+	var entiers_crans_nuls: PackedInt32Array = (e[1] as PackedInt32Array).duplicate()
+	entiers_crans_nuls[1] = 0
+	var lions_doubles: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lions_doubles.append_array((e[2] as PackedByteArray).slice(0, BilanManche.TAILLE_LION))
+	var lion_parti: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lion_parti.append(3)
+	lion_parti.append_array(etats[3])
+	var lion_illisible: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lion_illisible[BilanManche.TAILLE_LION - 1] = 0  # l'orientation du premier lion : ni 1 ni -1
+	var refuses: Array = [null, "bilan", [], [90.0, e[1]], [NAN, e[1], e[2]], [-1.0, e[1], e[2]], [90.0, e[1], e[2]].slice(0, 2),
+		[90.0, (e[1] as PackedInt32Array).slice(1), e[2]], [90.0, entiers_crans_nuls, e[2]], [90.0, e[1], lions_doubles],
+		[90.0, e[1], lion_parti], [90.0, e[1], lion_illisible], [90.0, e[1], (e[2] as PackedByteArray).slice(1)], [90, e[1], e[2]]]
+	_check(refuses.all(func(r: Variant) -> bool: return BilanManche.decoder(r, 4) == null) and BilanManche.decoder(e, 3) == null,
+		"un bilan mal formé est refusé : autre type, chrono non fini, négatif ou entier, champs manquants, crans nuls, lion en double, d'un parti, illisible ou tronqué, autre nombre de joueurs")
+	_check(bilan.rangs() == [2, 1, 2, 0] and bilan.parts() == [20, 60, 20, 0] and bilan.meneurs() == [1],
+		"rangs, parts et meneurs viennent des cellules du bilan (%s, %s)" % [bilan.rangs(), bilan.parts()])
+	_check(bilan.classement() == [1, 0, 2, 3], "le classement : le plus de cellules d'abord, les ex æquo par index, sans cellule à la fin (%s)" % [bilan.classement()])
+	_check(bilan.laureats(&"vicieux") == [0, 2] and bilan.record(&"vicieux") == 3 and bilan.laureats(&"voleur") == [3]
+		and bilan.laureats(&"tamponneur") == [1] and bilan.record(&"tamponneur") == 7,
+		"les trois titres : les ex æquo le partagent, un parti peut le porter (le voleur, parti)")
+	var vide := BilanManche.relever(joueurs.slice(0, 2) as Array[Joueur], [0, 0] as Array[int], [] as Array[int], {} as Dictionary[int, PackedByteArray], 90.0)
+	for j in joueurs:
+		j.reinitialiser(3)
+	var calme := BilanManche.relever(joueurs, [0, 0, 0, 0] as Array[int], [] as Array[int], {} as Dictionary[int, PackedByteArray], 90.0)
+	_check(vide.meneurs().is_empty() and vide.parts() == [0, 0] and vide.classement() == [0, 1]
+		and BilanManche.TITRES.all(func(t: StringName) -> bool: return calme.laureats(t).is_empty() and calme.record(t) == 0),
+		"personne n'a peint : aucun meneur, 0 % partout ; personne n'a étourdi, volé ni percuté : aucun titre")
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
