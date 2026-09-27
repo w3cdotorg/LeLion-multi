@@ -24,6 +24,8 @@ extends Node
 ## suite par son pare-chocs (`PareChocs.choc_simule`), notés au tick où ils arrivent et rejoués avec
 ## lui ; l'hôte fait foi, le recalage absorbe l'écart. Les réactions décidées par l'hôte
 ## (étourdissement, recul d'un coup) arrivent dans ses états : jamais notées ni rejouées ici.
+## À la fin de la manche (phase 18, M5 de la revue finale 16), `arreter` : plus de lecture des actions de
+## ce poste, plus de pas ni de rejeu, aucun décalage ; le lion garde l'état final posé par l'hôte.
 ## Nœud : il nomme `Lion` ; les tests `--script` ne le nomment pas.
 
 ## Au-delà de cet écart (px) entre l'ancienne prédiction et la nouvelle, le lion est recalé d'un coup.
@@ -45,6 +47,8 @@ var numero_accuse := 0
 var etats_recus := 0
 var recalages := 0
 var rejeu_max := 0
+## Vrai une fois la manche finie (`arreter`).
+var arretee := false
 
 var _lion: Lion
 ## Les actions de ce poste, lues une fois par tick.
@@ -77,6 +81,8 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if arretee:
+		return
 	var suspendues := _lion.commandes.suspendues
 	var direction_lue := Vector2.ZERO if suspendues else _locales.direction()
 	var vomir_lu := false if suspendues else _locales.vomir()
@@ -99,6 +105,18 @@ func _physics_process(delta: float) -> void:
 	if _decalage.length() < DECALAGE_NEGLIGEABLE:
 		_decalage = Vector2.ZERO
 	_lion.visuel.position = _decalage
+
+
+## La manche est finie (phase 18, `Lion.poser_etat_final`) : les actions de ce poste ne sont plus lues,
+## le lion ne fait plus de pas ni de rejeu, son décalage d'affichage tombe à zéro et plus aucun paquet ne
+## part (l'historique est vidé).
+func arreter() -> void:
+	arretee = true
+	_historique.clear()
+	_decalage = Vector2.ZERO
+	_lion.commandes.direction_voulue = Vector2.ZERO
+	_lion.commandes.vomir_voulu = false
+	_lion.visuel.position = Vector2.ZERO
 
 
 ## Le paquet de commandes à envoyer à l'hôte : la dernière lue et jusqu'à REDONDANCE précédentes

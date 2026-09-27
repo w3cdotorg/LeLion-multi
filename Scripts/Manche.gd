@@ -35,11 +35,13 @@ extends Node
 ##   le grise, phase 17) ; un hôte perdu arrête la manche du client (la scène de jeu affiche le message
 ##   et revient au titre).
 ## - Fin de manche (phase 17) : décidée par l'hôte seul (son chrono, ses règles), elle part après ses
-##   derniers tampons et son territoire, sur le même canal fiable ordonné, avec son chrono et ses
-##   scores ; chaque client la reçoit, prend le chrono de l'hôte et termine sa manche (tout se fige, le
-##   HUD montre la fin), puis n'envoie plus de commandes. Le chrono d'un client, parti à la fin de sa
-##   propre intro, ne termine jamais rien lui-même. L'état final de chaque lion viendra avec cette fin
-##   en phase 18.
+##   derniers tampons et son territoire, sur le même canal fiable ordonné, avec son bilan (phase 18,
+##   `BilanManche` : son chrono, les cellules, crans et statistiques de chaque joueur, les départs,
+##   l'état final de chaque lion) ; chaque client la reçoit, prend le chrono de l'hôte, pose l'état final
+##   de chaque lion (sa prédiction s'arrête), les crans et les statistiques de l'hôte, et termine sa
+##   manche (tout se fige), puis n'envoie plus de commandes. Sur chaque poste, `bilan_recu` donne ce
+##   bilan à l'écran Résultats. Le chrono d'un client, parti à la fin de sa propre intro, ne termine
+##   jamais rien lui-même.
 ## Nœud de scène : il nomme `Reseau` et `GameState` ; les tests `--script` ne le nomment pas.
 
 ## Chez l'hôte puis chez chaque client : la barrière de chargement est passée, la manche commence.
@@ -50,6 +52,9 @@ signal joueur_parti(index: int)
 ## Sur chaque poste : le joueur d'index `index` a quitté la manche (chez l'hôte à son départ ; chez un
 ## client quand l'hôte l'annonce, en passant la barrière pour un départ d'avant) : le HUD le grise.
 signal depart_vu(index: int)
+## Sur chaque poste, une fois la manche finie (phase 18) : le bilan de l'hôte (chez l'hôte, relevé au
+## gong ; chez un client, reçu avec la fin et déjà appliqué), que montre l'écran Résultats.
+signal bilan_recu(bilan: BilanManche)
 
 ## Délai de la barrière de chargement, en secondes : au-delà, les joueurs dont la scène n'est pas
 ## chargée sont exclus.
@@ -86,6 +91,8 @@ var finie := false
 ## le test réseau : le décalage de la latence, sans conséquence, puisque le chrono de ce poste prend
 ## celui de l'hôte).
 var ecart_chrono_fin := 0.0
+## Le bilan de la manche une fois finie (`bilan_recu`) ; null avant.
+var bilan: BilanManche
 ## Hôte : la suite des méthodes passées à `_envoyer`, dans l'ordre (I2, revue finale phase 17) : lue
 ## par les tests (smoke, réseau) pour prouver que les derniers tampons et le territoire partent
 ## avant la fin de manche, sur le même canal fiable ordonné. Jamais vidée d'elle-même : au test de
@@ -120,6 +127,10 @@ var _temps_chargement := 0.0
 var _temps_manche := 0.0
 ## Client : la prédiction du lion de ce poste, qui lit ses commandes et les numérote.
 var _prediction: PredictionLocale
+## Sur chaque poste : le lion de chaque joueur, par index (`suivre_lion`) ; chez l'hôte, leur état final
+## entre dans le bilan ; chez un client, chacun y prend le sien. Celui d'un joueur parti y reste, libéré :
+## chaque lecture passe par `_lion_de`.
+var _lions: Dictionary[int, Lion] = {}
 
 
 func _ready() -> void:
@@ -160,6 +171,7 @@ func _exit_tree() -> void:
 ## lues et numérotées par sa prédiction, partiront vers l'hôte (jamais par `_commandes`, qu'un client
 ## ne remplit pas).
 func suivre_lion(lion: Lion) -> void:
+	_lions[lion.joueur.index] = lion
 	var local := lion.joueur == GameState.joueur_local()
 	if _hote and not local:
 		_commandes[lion.joueur.index] = lion.commandes
@@ -466,32 +478,85 @@ func _duree_valide(v: Variant) -> bool:
 
 
 ## Chez l'hôte : la manche est finie (son chrono, ou le test réseau qui la fige). Ses derniers tampons
-## et son territoire partent d'abord, puis la fin, sur le même canal fiable ordonné : chez un client,
-## la fin arrive après eux, les scores définitifs déjà appliqués.
+## et son territoire partent d'abord, puis la fin et son bilan, sur le même canal fiable ordonné : chez
+## un client, la fin arrive après eux, les scores définitifs déjà appliqués.
 func _sur_fin_de_partie(_victoire: bool) -> void:
 	if not barriere or finie:
 		return
 	finie = true
 	_diffuser_tampons()
 	_diffuser_territoire()
-	var territoire: Territoire = _ville.territoire
-	_envoyer(&"_recevoir_fin_manche", [GameState.temps_ecoule, PackedInt32Array() if territoire == null else territoire.scores()])
+	bilan = relever_bilan()
+	_envoyer(&"_recevoir_fin_manche", [bilan.encoder()])
+	bilan_recu.emit(bilan)
 
 
-## Chez un client : la manche est finie chez l'hôte, à son chrono `temps`, sur ses scores `scores`
-## (déjà appliqués : la fin suit son dernier territoire sur le même canal ; un écart est signalé). Le
-## chrono de ce poste prend celui de l'hôte, puis la manche se termine ici aussi.
-@rpc("authority", "call_remote", "reliable", CANAL_PEINTURE)
-func _recevoir_fin_manche(temps: Variant, scores: Variant) -> void:
-	if not actif or finie or not (temps is float) or not is_finite(temps) or temps < 0.0:
-		return
-	finie = true
+## Le bilan de la manche tel que ce poste le voit en ce moment : le chrono, les cellules de chaque
+## joueur (le territoire), ses crans et ses statistiques, les départs, l'état de chaque lion encore là.
+## Celui de l'hôte au gong fait foi (`_sur_fin_de_partie`).
+func relever_bilan() -> BilanManche:
+	var etats: Dictionary[int, PackedByteArray] = {}
+	for index: int in _lions:
+		var l := _lion_de(index)
+		if l != null:
+			etats[index] = EtatLion.encoder(Engine.get_physics_frames(), l.commandes.numero_applique, l.position,
+				l.deplacement.vitesse, l.deplacement.recul, l.direction_du_lion)
+	return BilanManche.relever(GameState.joueurs, _cellules_par_joueur(), _partis, etats, GameState.temps_ecoule)
+
+
+## Le lion du joueur d'index `index` s'il est encore dans l'arbre, sinon null (jamais apparu, ou parti :
+## libéré).
+func _lion_de(index: int) -> Lion:
+	var l: Variant = _lions.get(index)
+	return l if is_instance_valid(l) and (l as Lion).is_inside_tree() else null
+
+
+## Les cellules de chaque joueur, dans l'ordre des index, lues sur le territoire (aucune sans lui).
+func _cellules_par_joueur() -> Array[int]:
 	var territoire: Territoire = null if _ville == null else _ville.territoire
-	if territoire != null and (not (scores is PackedInt32Array) or scores != territoire.scores()):
-		push_error("Manche : scores de fin désynchronisés de l'hôte (%s au lieu de %s)" % [territoire.scores(), scores])
-	ecart_chrono_fin = temps - GameState.temps_ecoule
-	GameState.temps_ecoule = temps
+	var cellules: Array[int] = []
+	for j in GameState.joueurs:
+		cellules.append(0 if territoire == null else territoire.cellules_de(j.index))
+	return cellules
+
+
+## Chez un client : la manche est finie chez l'hôte ; `recu`, son bilan (`BilanManche.encoder`), arrive
+## après son dernier territoire sur le même canal (des cellules qui diffèrent sont signalées). Le chrono
+## de ce poste prend celui de l'hôte, chaque lion son état final (la prédiction du lion de ce poste
+## s'arrête), chaque joueur ses crans et ses statistiques de l'hôte (qui seul les tient) ; les départs
+## du bilan sont vus (ceux dont l'annonce, sur un autre canal, n'est pas encore arrivée) ; puis la manche
+## se termine ici aussi. Un bilan illisible (jamais d'un hôte de la même version) est signalé, et la
+## manche se termine sur ce que sait ce poste. Les réactions de l'hôte encore en route (canal 0)
+## s'appliquent encore à leur arrivée : elles précèdent sa fin chez lui ; l'écran Résultats ne lit que le
+## bilan.
+@rpc("authority", "call_remote", "reliable", CANAL_PEINTURE)
+func _recevoir_fin_manche(recu: Variant) -> void:
+	if not actif or finie:
+		return
+	var lu := BilanManche.decoder(recu, GameState.joueurs.size())
+	if lu == null:
+		push_error("Manche : bilan de fin de l'hôte illisible, la manche se termine sur ce que sait ce poste")
+		lu = relever_bilan()
+	finie = true
+	if _cellules_par_joueur() != lu.cellules:
+		push_error("Manche : scores de fin désynchronisés de l'hôte (%s au lieu de %s)" % [_cellules_par_joueur(), lu.cellules])
+	ecart_chrono_fin = lu.temps - GameState.temps_ecoule
+	GameState.temps_ecoule = lu.temps
+	for index: int in lu.lions:
+		var l := _lion_de(index)
+		if l != null:
+			l.poser_etat_final(lu.lions[index])
+	for i in range(lu.nb_joueurs()):
+		var j: Joueur = GameState.joueurs[i]
+		j.recevoir_crans(lu.crans[i])
+		j.etourdissements_infliges = lu.etourdissements[i]
+		j.cellules_volees = lu.volees[i]
+		j.chocs = lu.chocs[i]
+		if lu.partis[i]:
+			depart_vu.emit(i)
+	bilan = lu
 	GameState.terminer_partie(true)
+	bilan_recu.emit(bilan)
 
 
 # --- Départs ----------------------------------------------------------------------------------------

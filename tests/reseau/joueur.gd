@@ -1282,7 +1282,7 @@ func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
 	var tics_attendus := mini(ReglesBataille.SECONDES_TIC, ceili(duree) - 1)
 	_check(paused and hud.fin.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
 		"tout se fige sur le panneau de fin, le chrono à 0:00, %d tics sur %d attendus" % [hud.tics_joues, tics_attendus])
-	print("FIN %s" % hud.resume())
+	print("FIN %s bilan=%s lions=%s" % [hud.resume(), manche.bilan.resume() if manche.bilan != null else "", _lions_affiches(main)])
 	if hote:
 		var rester := _option("rester", "")
 		print("HOTE RESTE")
@@ -1299,6 +1299,13 @@ func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
 			"« L'hôte a quitté la partie » à la place du panneau de fin")
 		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
 			"puis retour au titre, hors réseau")
+
+
+## Les lions de ce poste tels qu'ils s'affichent (le corps et le décalage de la prédiction), en une ligne
+## (phase 18 : la même partout une fois l'état final de l'hôte posé, même lancés en pleine course au gong).
+func _lions_affiches(main: Node) -> String:
+	return ";".join(main.lions.map(func(l: Node) -> String:
+		return "%s@%.1f,%.1f,%d" % [l.name, l.position.x + l.visuel.position.x, l.position.y + l.visuel.position.y, l.direction_du_lion]))
 
 
 ## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).

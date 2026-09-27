@@ -1333,6 +1333,16 @@ func _run() -> void:
 	_check(not repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_force") == 0.0
 		and repl._clignotement != null and repl._clignotement.is_running(),
 		"la fin d'étourdissement reçue efface étoiles et barbouillage, l'immunité clignote")
+	# Phase 18 : la fin de manche pose sur la réplique l'état final de l'hôte, au pixel près ; elle ne
+	# bouge plus, même quand un état de l'hôte encore en route arrive après
+	var final_hote := EtatLion.encoder(1011, 0, Vector2(700 + 11 * pas_repl, 500), Vector2(350, 0), Vector2(40, 0), -1)
+	_check(not repl.poser_etat_final(PackedByteArray([1, 2, 3])) and not repl.fige and repl.poser_etat_final(final_hote),
+		"un état final illisible est refusé sans rien changer ; celui de l'hôte est posé")
+	repl.etat_reseau = EtatLion.encoder(1012, 0, Vector2(900, 500), Vector2(350, 0), Vector2.ZERO, 1)
+	await _frames(3)
+	_check(repl.fige and repl.position == Vector2(700 + 11 * pas_repl, 500) and repl.direction_du_lion == -1 and repl.velocity == Vector2.ZERO
+		and repl.deplacement.vitesse == Vector2.ZERO and repl.deplacement.recul == Vector2.ZERO,
+		"la réplique prend l'état final de l'hôte (place, sens, à l'arrêt) et ne suit plus les états arrivés après (x = %.1f)" % repl.position.x)
 	repl.free()
 	set_multiplayer(null, poste_lion.get_path())
 	pair_lion.close()
@@ -2156,12 +2166,27 @@ func _tester_manche_reseau() -> void:
 		_check(not manche._tampons.is_empty() and not ville.territoire._changements.is_empty(),
 			"(pré-condition) un tampon et une case de territoire sont en attente, pas encore diffusés")
 		manche.envois_ordre.clear()
+		GS.joueurs[0].chocs = 4  # les statistiques de l'hôte, que lui seul tient : elles partent avec la fin
+		GS.joueurs[1].cellules_volees = 17
+		var bilans_vus: Array = []
+		manche.bilan_recu.connect(func(b: RefCounted) -> void: bilans_vus.append(b))
 		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
 		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
 		GS.terminer_partie(true)
 		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
 		_check(manche.envois_ordre == ([&"_recevoir_tampons", &"_recevoir_territoire", &"_recevoir_fin_manche"] as Array[StringName]),
 			"I2 : les derniers tampons et le territoire partent avant la fin, sur le même canal (%s)" % [manche.envois_ordre])
+		# Phase 18 : la fin porte le bilan de l'hôte : cellules, crans, statistiques, départs, l'état final
+		# de chaque lion encore là (pas celui de Bob, parti)
+		var bilan: BilanManche = manche.bilan
+		var cellules_fin: Array[int] = [ville.territoire.cellules_de(0), ville.territoire.cellules_de(1)]
+		_check(bilan != null and bilans_vus.size() == 1 and bilans_vus[0] == bilan and bilan.cellules == cellules_fin
+			and bilan.chocs == [4, 0] and bilan.volees == [0, 17] and bilan.partis == [false, true] and bilan.lions.keys() == [0]
+			and EtatLion.decoder(bilan.lions[0]).position == main.lion.position and is_equal_approx(bilan.temps, GS.temps_ecoule),
+			"la fin porte le bilan de l'hôte, annoncé sur ce poste : cellules, statistiques, Bob parti, l'état final de son lion (%s)"
+				% ("" if bilan == null else bilan.resume()))
+		_check(bilan != null and BilanManche.decoder(bilan.encoder(), 2) != null and BilanManche.decoder(bilan.encoder(), 2).resume() == bilan.resume(),
+			"le bilan envoyé se relit à l'identique chez un client")
 		# Un hôte perdu (chez un client) : message, tout se fige
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
