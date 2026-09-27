@@ -2,7 +2,7 @@ extends SceneTree
 ## Un poste du test réseau, lancé par tests/reseau/lancer.sh (un processus Godot par poste) :
 ##   godot --headless --script tests/reseau/joueur.gd -- --role=<rôle> [options]
 ## Rôles : hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client,
-## manche-muet, bout-hote, bout-client, latence-hote, latence-client.
+## manche-muet, bout-hote, bout-client, latence-hote, latence-client, chrono-hote, chrono-client.
 ## Communes : --port=N (défaut 17777), --pseudo=texte, --port-balise=N (port des balises de
 ##   découverte, émises par un hôte et écoutées par un écouteur ; défaut : --port + 1000),
 ##   --diffusion (balises en vraie diffusion, comme en jeu ; sans elle, vers 127.0.0.1 seulement).
@@ -113,6 +113,17 @@ extends SceneTree
 ##   --fige=chemin. Une fois ses commandes d'après l'arrêt accusées par l'hôte, écrit « PREDICTION … »
 ##   (erreurs de prédiction, recalages, à-coups, plus long rejeu) et vérifie : aucun recalage, l'erreur
 ##   rarement au-delà de 16 px, sous 4 px 150 ms après l'arrêt ; puis sa propre « EMPREINTE ».
+## Fin de manche au chrono (phase 17), par les vraies scènes : 1 hôte + 2 clients (derrière le relais),
+##   une manche courte de --duree-manche=S secondes (`ReglesBataille.duree_manche`, sur chaque poste),
+##   sur le niveau --niveau=L choisi par l'hôte. Chaque poste fait sa passe de peinture (--sens), puis
+##   attend la fin : chez l'hôte par son chrono, chez un client par la fin reçue de l'hôte (son chrono
+##   pris sur celui de l'hôte : « ECART_CHRONO <s> », l'écart qu'il avait) ; tout se fige sur le panneau
+##   de fin, 0:00, les tics des dernières secondes comptés ; « FIN <HUD> » (chrono, pseudos, parts,
+##   rangs : la même ligne sur chaque poste).
+##   Chrono-hôte : --clients=N, --niveau=L, --duree-manche=S, --rester=chemin (« HOTE RESTE », puis,
+##   ce fichier créé, sort par Échap : le titre, hors réseau).
+##   Chrono-client : --sens=1|-1, --duree-manche=S ; attend le départ de l'hôte (« L'hôte a quitté la
+##   partie » à la place du panneau de fin, puis le titre).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -132,6 +143,10 @@ const TICKS_REPOS_AVANT_GEL := 30
 const ECART_PREDICTION := 4.0
 const TICKS_CONVERGENCE := 9
 const A_COUP := 350.0 / 60.0 * 1.5
+## Fin de manche au chrono : écart toléré entre le chrono de l'hôte et celui d'un client quand la fin y
+## arrive, en secondes (la latence de l'intro et celle de la fin se compensent : reste la gigue du relais,
+## 40 ms, et une image de chaque côté).
+const ECART_CHRONO := 0.25
 ## Vitesse (px/s) au-delà de laquelle un lion ramasse une pastille « au vol », ou percute l'hôte.
 const VITESSE_AU_VOL := 150.0
 const VITESSE_CHOC := 250.0
@@ -233,8 +248,10 @@ func _run() -> void:
 		await _jouer_bout(role == "bout-hote")
 	elif role == "latence-hote" or role == "latence-client":
 		await _jouer_latence(role == "latence-hote")
+	elif role == "chrono-hote" or role == "chrono-client":
+		await _jouer_chrono(role == "chrono-hote")
 	else:
-		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote, bout-client, latence-hote ou latence-client")
+		_check(false, "rôle inconnu : --role=hote, client, lent, ecouteur, salon-hote, salon-client, manche-hote, manche-client, manche-muet, bout-hote, bout-client, latence-hote, latence-client, chrono-hote ou chrono-client")
 	_check(not reseau.en_ligne() and root.multiplayer.multiplayer_peer is OfflineMultiplayerPeer
 		and root.multiplayer.is_server() and reseau.inscrits.is_empty() and reseau.index_local == -1
 		and not decouverte.ecoute_active(),
@@ -842,7 +859,8 @@ func _jouer_passe(main: Node, sens: int) -> void:
 ## L'empreinte de la manche sur ce poste : territoire (propriétaire compté de chaque cellule), scores,
 ## tampons (nombre diffusé par l'hôte ou reçu par un client, et l'empreinte de leur suite), lions
 ## (position, orientation, crans, étourdi, gerbe XXL), apparitions (ennemis et pastilles : nom et position),
-## niveau et, pour la manche de bout en bout, les réactions de chaque joueur vues ici. Pas l'image
+## niveau, le HUD de la bataille (phase 17 : chrono, pseudos, parts, rangs, départs) et, pour la manche
+## de bout en bout, les réactions de chaque joueur vues ici. Pas l'image
 ## de la ville : les mêmes tampons y sont dessinés à l'identique (smoke test), mais une coulure qui
 ## descend encore quand un tampon la recouvre passe dessus ou dessous selon le rythme de chaque poste.
 func _empreinte(main: Node, manche: Node, hote: bool) -> String:
@@ -869,9 +887,9 @@ func _empreinte(main: Node, manche: Node, hote: bool) -> String:
 	indices.sort()
 	for i: int in indices:
 		reactions.append("%d:%d,%d,%d" % [i, _reactions[i][0], _reactions[i][1], _reactions[i][2]])
-	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s niveau=%d reactions=%s" % [hash(proprietaires), territoire.scores(),
+	return "territoire=%d scores=%s tampons=%d:%d lions=%s apparitions=%s niveau=%d hud=%s reactions=%s" % [hash(proprietaires), territoire.scores(),
 		manche.tampons_diffuses if hote else manche.tampons_recus, manche.empreinte_tampons, ";".join(lions), ";".join(apparitions),
-		root.get_node("GameState").niveau_courant, ";".join(reactions)]
+		root.get_node("GameState").niveau_courant, main.hud_bataille.resume(), ";".join(reactions)]
 
 
 ## Fige la manche chez l'hôte (`terminer_partie` : l'arbre se met en pause, la manche diffuse encore)
@@ -1191,6 +1209,61 @@ func _animer_latence_client(main: Node, manche: Node) -> void:
 	_check(prediction.erreurs_au_dela(16.0) * 10 <= etats, "l'erreur de prédiction dépasse rarement 16 px (%d fois sur %d)" % [prediction.erreurs_au_dela(16.0), etats])
 	_check(apres >= 0.0 and apres < ECART_PREDICTION, "150 ms après l'arrêt de ses commandes, l'erreur de prédiction reste sous %.0f px (%.2f px)" % [ECART_PREDICTION, apres])
 	await _finir_manche_client(main, manche)
+
+
+## Rôles « chrono-hote » et « chrono-client » (phase 17, voir l'en-tête) : une manche courte que le
+## chrono de l'hôte termine ; chaque poste la voit finir sur le même HUD, puis l'hôte sort par Échap et
+## ses clients le voient partir.
+func _jouer_chrono(hote: bool) -> void:
+	var duree := float(_option("duree-manche", "10"))
+	var script_regles: Script = load("res://Scripts/ReglesBataille.gd")
+	script_regles.duree_manche = duree
+	var main := await _rejoindre_la_manche(hote)
+	if main != null:
+		await _finir_au_chrono(main, hote, duree)
+	script_regles.duree_manche = ReglesBataille.DUREE_MANCHE
+	_effacer_scores()
+
+
+func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
+	var gs: Node = root.get_node("GameState")
+	var manche: Node = main.get_node("Manche")
+	var hud: CanvasLayer = main.hud_bataille
+	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
+	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	print("INTRO")
+	_check(hud != null and hud.vignettes.size() == gs.joueurs.size() and gs.joueurs.size() == 3
+		and hud.vignettes[gs.joueur_local().index].badge.text == "TOI",
+		"le HUD de la bataille : une vignette par joueur (1 hôte et 2 clients), « TOI » sur celle de ce poste")
+	await _jouer_passe(main, int(_option("sens", "1")))
+	_check(await _attendre(func() -> bool: return not gs.partie_en_cours, duree + 10.0), "la manche se termine")
+	if hote:
+		_check(manche.finie and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
+			"le chrono de l'hôte termine la manche à %.0f s (%.3f s)" % [duree, gs.temps_ecoule])
+	else:
+		print("ECART_CHRONO %.3f" % manche.ecart_chrono_fin)
+		_check(manche.finie and absf(manche.ecart_chrono_fin) <= ECART_CHRONO and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
+			"la fin de l'hôte termine la manche de ce client, son chrono pris sur celui de l'hôte (%.3f s, écart %.3f s)" % [gs.temps_ecoule, manche.ecart_chrono_fin])
+	var tics_attendus := mini(ReglesBataille.SECONDES_TIC, ceili(duree) - 1)
+	_check(paused and hud.fin.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
+		"tout se fige sur le panneau de fin, le chrono à 0:00, %d tics sur %d attendus" % [hud.tics_joues, tics_attendus])
+	print("FIN %s" % hud.resume())
+	if hote:
+		var rester := _option("rester", "")
+		print("HOTE RESTE")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
+		var echap := InputEventAction.new()
+		echap.action = &"pause"
+		echap.pressed = true
+		root.push_input(echap)
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
+			"Échap, la manche finie : l'hôte revient au titre, hors réseau")
+	else:
+		_check(await _attendre(func() -> bool: return _issue == "hote_perdu"), "l'hôte finit par partir")
+		_check(main.get_node_or_null("HotePerdu/Message") != null and not hud.fin.visible,
+			"« L'hôte a quitté la partie » à la place du panneau de fin")
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
+			"puis retour au titre, hors réseau")
 
 
 ## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).
