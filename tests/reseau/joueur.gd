@@ -1432,23 +1432,40 @@ func _rencontres(main: Node, gs: Node, bande: Rect2) -> void:
 	moi.etourdi.disconnect(sur_gerbe_client)
 	_check(par_client[0], "la gerbe de %s, vomie à ses commandes, étourdit le lion de l'hôte" % j3.pseudo)
 
-	# Un choc : un client lancé à pleine vitesse percute le lion de l'hôte, arrêté sur sa route
+	# Un choc : un client lancé à pleine vitesse percute le lion de l'hôte, arrêté sur sa route. L'hôte
+	# n'est posé devant lui que libre de tout contact (un lion qui le touche déjà ne « rentre » plus
+	# dans son pare-chocs : pas de choc, mesuré) et loin des autres lions (qui le percuteraient à la
+	# place). Le choc attendu est celui qui fait bouger le compte de l'hôte, quel que soit le lion
+	# (un client de passage peut le percuter avant) : il doit compter aussi pour ce lion-là, au même
+	# tick. Plusieurs chocs peuvent tomber dans ce tick (mesuré : deux clients comptés au même tick,
+	# 1 fois sur 200) : chaque choc comptant pour ses deux lions, les clients gagnent alors autant de
+	# chocs que l'hôte, plus deux par choc entre clients ; un choc compté d'un seul côté rompt la parité.
 	var chocs_hote := moi.chocs
 	fin = Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
-	var percuteur: Node2D = null
-	var chocs_percuteur := 0
+	var chocs_clients: Array = []  # ceux de chaque client au début du tick que l'on attend
+	var libre := func(place: Vector2, sauf: Node2D) -> bool:
+		return main.lions.all(func(autre: Node2D) -> bool:
+			return autre == lion_hote or autre == sauf or autre.global_position.distance_to(place) >= ISOLEMENT)
 	while moi.chocs == chocs_hote and Time.get_ticks_msec() < fin:
-		if lion_hote.velocity.length() < 1.0:
+		chocs_clients = clients.map(func(l: Node2D) -> int: return l.joueur.chocs)
+		if lion_hote.velocity.length() < 1.0 and lion_hote.pare_chocs.get_overlapping_areas().is_empty():
 			for l: Node2D in clients:
 				var dans_le_ciel := Rect2(300, 150, 1300, 550).has_point(l.global_position)
-				if l.velocity.length() >= VITESSE_CHOC and not l.joueur.est_etourdi() and dans_le_ciel:
-					percuteur = l
-					chocs_percuteur = l.joueur.chocs
-					lion_hote.global_position = l.global_position + l.velocity.normalized() * 80.0
+				var place: Vector2 = l.global_position + l.velocity.normalized() * 80.0
+				if l.velocity.length() >= VITESSE_CHOC and not l.joueur.est_etourdi() and dans_le_ciel and libre.call(place, l):
+					lion_hote.global_position = place
 					break
 		await physics_frame
-	_check(moi.chocs > chocs_hote and percuteur != null and percuteur.joueur.chocs > chocs_percuteur,
-		"le lion de %s percute celui de l'hôte : un choc compté pour les deux" % ("?" if percuteur == null else percuteur.joueur.pseudo))
+	var partenaires: Array[String] = []
+	var gagnes_clients := 0
+	for i in range(clients.size()):
+		var gagnes: int = clients[i].joueur.chocs - chocs_clients[i]
+		gagnes_clients += gagnes
+		if gagnes != 0:
+			partenaires.append(clients[i].joueur.pseudo)
+	var gagnes_hote := moi.chocs - chocs_hote
+	_check(gagnes_hote >= 1 and gagnes_clients >= gagnes_hote and (gagnes_clients - gagnes_hote) % 2 == 0,
+		"le lion de %s percute celui de l'hôte : un choc compté pour les deux (hôte +%d, clients +%d)" % [", ".join(partenaires), gagnes_hote, gagnes_clients])
 
 
 func _animer_bout_client(main: Node, manche: Node, gs: Node, programme: Programme) -> void:
