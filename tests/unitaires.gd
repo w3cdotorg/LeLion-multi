@@ -1847,12 +1847,14 @@ func _tester_interpolation_lion() -> void:
 	var en_route: Array = []  # [tick d'arrivée, instant de l'hôte]
 	var xs: Array[float] = []
 	var retards: Array[float] = []
+	var dernier_recu := -1
 	for t in range(600):
 		if rng.randf() >= 0.05:
 			en_route.append([t + 3.0 + rng.randf_range(-1.2, 1.2), t])
 		for m: Array in en_route:
 			if m[0] <= t:
 				interp.ajouter(m[1], Vector2(m[1] * vitesse / 60.0, 100.0), Vector2(vitesse, 0.0), 1)
+				dernier_recu = maxi(dernier_recu, m[1])
 		en_route = en_route.filter(func(m: Array) -> bool: return m[0] > t)
 		interp.avancer(1.0)
 		var vu := interp.echantillon()
@@ -1871,13 +1873,19 @@ func _tester_interpolation_lion() -> void:
 		"sous la gigue et les pertes, le lion affiché avance d'un pas régulier, sans recul ni saut (%.2f à %.2f px par tick, pour %.2f)" % [pas_min, pas_max, vitesse / 60.0])
 	_check(retard_moyen > InterpolationLion.RETARD + 1.0 and retard_moyen < InterpolationLion.RETARD + 5.0,
 		"avec %.1f ticks de retard en moyenne sur l'hôte (le retard d'affichage et la latence)" % retard_moyen)
-	var fin := xs[-1]
+	# Plus aucun état (un hôte figé, en fin de manche) : le lion va un peu plus loin sur sa vitesse, puis
+	# revient sur le dernier état reçu, à l'arrêt, au pixel près (celui de l'hôte figé).
+	var dernier_etat := Vector2(dernier_recu * vitesse / 60.0, 100.0)
+	var plus_loin := -INF
 	for t in range(30):
 		interp.avancer(1.0)
-	var arret: Vector2 = interp.echantillon().position
+		plus_loin = maxf(plus_loin, interp.echantillon().position.x)
+	var arret: Dictionary = interp.echantillon()
 	interp.avancer(1.0)
-	_check(arret == interp.echantillon().position and arret.x <= 599 * vitesse / 60.0 + InterpolationLion.EXTRAPOLATION_MAX * vitesse / 60.0 + 0.01 and arret.x > fin,
-		"plus aucun état : le lion continue sur sa vitesse %d ticks au plus, puis s'arrête" % int(InterpolationLion.EXTRAPOLATION_MAX))
+	_check(plus_loin > dernier_etat.x and plus_loin <= dernier_etat.x + InterpolationLion.EXTRAPOLATION_MAX * vitesse / 60.0 + 0.01,
+		"plus aucun état : le lion continue sur sa vitesse %d ticks au plus (%.2f px au-delà du dernier état)" % [int(InterpolationLion.EXTRAPOLATION_MAX), plus_loin - dernier_etat.x])
+	_check(arret.position == dernier_etat and arret.vitesse == Vector2.ZERO and interp.echantillon().position == dernier_etat,
+		"puis revient sur le dernier état reçu, à l'arrêt, et y reste : un hôte figé laisse le lion là où il l'a chez lui (x = %.2f pour %.2f)" % [arret.position.x, dernier_etat.x])
 	var desordre := InterpolationLion.new(60)
 	desordre.ajouter(10, Vector2(0, 0), Vector2.ZERO, 1)
 	desordre.ajouter(12, Vector2(20, 0), Vector2.ZERO, -1)

@@ -1263,8 +1263,8 @@ func _run() -> void:
 		"la réplique suit les états reçus, interpolés avec un peu de retard (x = %.1f) : position, vitesse (son animation), orientation, vomi (particules)" % repl.position.x)
 	await _frames(30)
 	var arret_repl: Vector2 = repl.position
-	_check(arret_repl.is_equal_approx(Vector2(700 + (11 + InterpolationLion.EXTRAPOLATION_MAX) * pas_repl, 500)),
-		"plus aucun état : la réplique continue sur sa vitesse %d ticks, puis s'arrête (x = %.1f)" % [int(InterpolationLion.EXTRAPOLATION_MAX), arret_repl.x])
+	_check(arret_repl.is_equal_approx(Vector2(700 + 11 * pas_repl, 500)) and repl.velocity == Vector2.ZERO,
+		"plus aucun état (hôte figé) : la réplique finit arrêtée sur le dernier état reçu, pas au-delà (x = %.1f)" % arret_repl.x)
 	repl.vomi_de_l_hote = false
 	for i in range(3):
 		await process_frame

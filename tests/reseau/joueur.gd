@@ -71,8 +71,8 @@ extends SceneTree
 ##   revue finale phase 14 : chronomètre l'écart entre l'exclusion d'un absent et la barrière,
 ##   « ECART_EXCLUSION <ms> »). Écrit « HOTE PRET »,
 ##   « BARRIERE prets=… exclus=… », « DEPART VU », puis, une fois les lions arrêtés et les coulures
-##   finies, fige la manche (`terminer_partie`) : « EMPREINTE <territoire, scores, tampons,
-##   lions, apparitions> » et « FIGE ».
+##   finies, fige la manche, lions au repos (`_figer_au_repos`) : « EMPREINTE <territoire, scores,
+##   tampons, lions, apparitions> » et « FIGE ».
 ##   Manche-client : --sens=1|-1 (sa passe de peinture, vers la droite ou la gauche), --partir (quitte
 ##   la manche par le menu local une fois sa passe faite : « PARTI »), --fige=chemin (une fois ce
 ##   fichier créé par lancer.sh, attend ses coulures puis écrit sa propre « EMPREINTE »), puis attend
@@ -96,7 +96,7 @@ extends SceneTree
 ##   écrit « A TUER <pseudo> » : lancer.sh arrache son poste (KILL, sans un paquet de plus) et crée
 ##   --tue ; l'hôte chronomètre la détection du départ (« ECART_DEPART <ms> ») et écrit « DEPART VU ».
 ##   À DUREE_CALME s de la fin, écrit « CALME » ; lions arrêtés, coulures finies et la manche arrivée
-##   à son terme, il la fige :
+##   à son terme, il la fige, lions au repos :
 ##   « STATS … », « EMPREINTE … », « FIGE ».
 ##   Bout-client : --graine=N, --calme=chemin (joue son programme jusqu'à ce fichier, puis écrit
 ##   « CALME VU »), --fige=chemin (comme un client de la manche : sa propre « EMPREINTE »).
@@ -122,6 +122,10 @@ const DELAI_ETAPE := 15.0  # secondes au plus pour chaque attente
 ## Manche de bout en bout : secondes de jeu avant les rencontres, puis avant la fin où tout se calme.
 const DEBUT_RENCONTRES := 20.0
 const DUREE_CALME := 4.0
+## Ticks physiques de l'hôte (500 ms) pendant lesquels chaque lion reste au repos avant que l'hôte fige
+## la manche (`_figer_au_repos`) : bien plus que le retard d'affichage d'un lion distant chez un client
+## (6 ticks) et la latence de localhost, même sous charge.
+const TICKS_REPOS_AVANT_GEL := 30
 ## Prédiction sous latence : l'erreur de prédiction doit converger sous ECART_PREDICTION px en
 ## TICKS_CONVERGENCE ticks (150 ms) après l'arrêt des commandes (spec §10) ; au-delà d'A_COUP px d'une
 ## image physique à l'autre (pleine vitesse et moitié en plus), l'affichage du lion local saute.
@@ -870,6 +874,40 @@ func _empreinte(main: Node, manche: Node, hote: bool) -> String:
 		root.get_node("GameState").niveau_courant, ";".join(reactions)]
 
 
+## Fige la manche chez l'hôte (`terminer_partie` : l'arbre se met en pause, la manche diffuse encore)
+## une fois chaque lion au repos, dans l'état qu'il diffuse (ni vitesse, ni vitesse commandée, ni
+## recul), depuis TICKS_REPOS_AVANT_GEL ticks au moins ; faux si ce repos n'arrive pas dans
+## DELAI_ETAPE (la manche se fige quand même). Les empreintes de fin de manche ne sont des égalités
+## que si rien ne bouge plus quand l'hôte se fige : il n'envoie plus d'état neuf, et la prédiction
+## d'un client, qui ne distingue pas un hôte figé d'un Wi-Fi coupé, continue ce que fait son propre
+## lion sans plus jamais se recaler (plan de la phase 16, point 5 de la revue ; une fin de manche
+## décidée par l'hôte et appliquée à réception reste à faire). Le calme vérifié plus tôt ne suffit
+## pas : pendant l'attente du terme, un ennemi ou un choc relance un lion (mesuré : un recul encore en
+## cours au gel, 0,7 px d'écart chez le client dont c'est le lion). Ni le repos à la seule image du
+## gel : chez un client, les lions distants s'affichent 6 ticks en retard, et son lion prédit peut
+## encore buter contre l'un d'eux, là où il était chez l'hôte (mesuré : 2,5 px d'écart, lions
+## étourdis ensemble juste avant le gel). Le repos se vérifie jusque dans l'image où la manche se
+## fige, sans tick physique entre les deux.
+func _figer_au_repos(main: Node, gs: Node) -> bool:
+	var au_repos := func() -> bool:
+		return main.lions.all(func(l: Node) -> bool:
+			return l.velocity == Vector2.ZERO and l.deplacement.vitesse == Vector2.ZERO and l.deplacement.recul == Vector2.ZERO)
+	# Pas de lambda pour `depuis` : une lambda capture les variables locales par valeur.
+	var depuis := -1  # tick physique où le repos de tous a commencé (-1 : un lion bouge)
+	var fin := Time.get_ticks_msec() + int(DELAI_ETAPE * 1000.0)
+	while Time.get_ticks_msec() < fin:
+		if not au_repos.call():
+			depuis = -1
+		elif depuis < 0:
+			depuis = Engine.get_physics_frames()
+		if depuis >= 0 and Engine.get_physics_frames() - depuis >= TICKS_REPOS_AVANT_GEL:
+			break
+		await process_frame
+	var repos: bool = au_repos.call() and depuis >= 0 and Engine.get_physics_frames() - depuis >= TICKS_REPOS_AVANT_GEL
+	gs.terminer_partie(false)  # tout se fige chez l'hôte (bataille) ; la manche diffuse encore
+	return repos
+
+
 func _finir_manche_hote(main: Node, manche: Node, gs: Node) -> void:
 	var ville: Node2D = main.get_node("Ville")
 	_check(await _attendre(func() -> bool: return _departs.size() >= 2), "le client parti en pleine manche (et le muet exclu) sont partis (%d)" % _departs.size())
@@ -898,7 +936,7 @@ func _finir_manche_hote(main: Node, manche: Node, gs: Node) -> void:
 		return main.lions.all(func(l: Node) -> bool: return l.velocity == Vector2.ZERO) and ville.coulures.is_empty()
 	_check(await _attendre(calme), "les lions s'arrêtent, les coulures finissent")
 	await _pause(0.3)
-	gs.terminer_partie(false)  # tout se fige chez l'hôte (bataille) ; la manche diffuse encore
+	_check(await _figer_au_repos(main, gs), "chaque lion au repos depuis %d ticks quand l'hôte fige la manche" % TICKS_REPOS_AVANT_GEL)
 	await _pause(1.0)
 	_check(ville.territoire.cellules_de(index_parti) == cellules_parti, "les cellules du parti restent jusqu'au bout")
 	print("EMPREINTE %s" % _empreinte(main, manche, true))
@@ -1094,7 +1132,7 @@ func _animer_latence_hote(main: Node, manche: Node, gs: Node) -> void:
 		print("COMMANDES %s appliquees=%d sautees=%d numero=%d file_max=%d" % [l.joueur.pseudo, c.appliquees, c.sautees, c.numero_applique, c.file_max_vue])
 		_check(c.numero_applique > 600 and c.appliquees + c.sautees == c.numero_applique and c.sautees * 100 <= c.numero_applique,
 			"les commandes de %s : aucune appliquée deux fois, %d sautées sur %d (redondance)" % [l.joueur.pseudo, c.sautees, c.numero_applique])
-	gs.terminer_partie(false)
+	_check(await _figer_au_repos(main, gs), "chaque lion au repos depuis %d ticks quand l'hôte fige la manche" % TICKS_REPOS_AVANT_GEL)
 	await _pause(1.0)
 	print("EMPREINTE %s" % _empreinte(main, manche, true))
 	print("FIGE")
@@ -1287,7 +1325,7 @@ func _animer_bout_hote(main: Node, manche: Node, gs: Node, programme: Programme)
 		return main.lions.all(func(l: Node) -> bool: return l.velocity == Vector2.ZERO) and ville.coulures.is_empty()
 	_check(await _attendre(calme), "les lions s'arrêtent, les coulures finissent")
 	_check(await _attendre(func() -> bool: return gs.temps_ecoule >= duree), "la manche va jusqu'au bout de ses %.0f s" % duree)
-	gs.terminer_partie(false)  # tout se fige chez l'hôte (bataille) ; la manche diffuse encore
+	_check(await _figer_au_repos(main, gs), "chaque lion au repos depuis %d ticks quand l'hôte fige la manche" % TICKS_REPOS_AVANT_GEL)
 	await _pause(1.0)
 	print("STATS chocs=%s etourdissements=%s vols=%s crans=%s" % [gs.joueurs.map(func(j: Joueur) -> int: return j.chocs),
 		gs.joueurs.map(func(j: Joueur) -> int: return j.etourdissements_infliges),
