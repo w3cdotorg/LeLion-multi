@@ -67,6 +67,22 @@ jobs:
           DIFFUSION=1 timeout 300 bash tests/reseau/lancer.sh 2>&1 | tee reseau.log
           if grep -nE "SCRIPT ERROR|SHADER ERROR" reseau.log; then echo "::error::erreur de script dans le test réseau"; exit 1; fi
 
+      - name: Captures (déroulé sans rendu, les scripts de captures gardés en vie)
+        shell: bash
+        run: |
+          set -o pipefail
+          D="$(mktemp -d)"
+          timeout 180 godot --headless --script tests/screenshots.gd -- --dossier="$D" 2>&1 | tee captures.log
+          timeout 120 godot --headless --script tests/deux_fenetres.gd -- --role=client --dossier="$D" > deux_fenetres_client.log 2>&1 &
+          CLIENT=$!
+          timeout 120 godot --headless --script tests/deux_fenetres.gd -- --role=hote --dossier="$D" 2>&1 | tee deux_fenetres_hote.log
+          wait "$CLIENT"
+          cat deux_fenetres_client.log
+          if grep -nE "SCRIPT ERROR|SHADER ERROR|❌" captures.log deux_fenetres_hote.log deux_fenetres_client.log; then echo "::error::erreur dans un script de captures"; exit 1; fi
+          [ "$(grep -c "📸" captures.log)" -eq 37 ] || { echo "::error::tests/screenshots.gd n'a pas déroulé ses 37 captures"; exit 1; }
+          [ "$(grep -c "📸" deux_fenetres_hote.log)" -eq 5 ] && [ "$(grep -c "📸" deux_fenetres_client.log)" -eq 6 ] \
+            || { echo "::error::tests/deux_fenetres.gd n'a pas déroulé ses captures (5 pour l'hôte, 6 pour le client)"; exit 1; }
+
       - name: Exporter en Web
         shell: bash
         run: |
