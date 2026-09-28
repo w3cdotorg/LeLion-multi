@@ -42,24 +42,59 @@ func taille_ecran() -> Vector2i:
 	return TAILLE_ECRAN_SOLO
 
 
-## Met l'écran à `taille` (`content_scale_size`, spec §7) et, quand l'écran change de format dans
-## une fenêtre (ni plein écran, ni maximisée, ni headless), règle la hauteur de la fenêtre sur le
-## nouveau format en gardant sa largeur : hors du solo (écran Réseau, salon, bataille en 16:9),
-## l'écran ne s'affiche plus avec des bandes dans la fenêtre du solo (1400×454 devient 1400×788), et
-## le titre la rend au solo. Un écran qui ne change pas (du titre au solo) laisse la fenêtre telle que
-## le joueur l'a mise. Appelée par le titre, l'écran Réseau, le salon et la scène de jeu.
+## Met l'écran à `taille` (`content_scale_size`, spec §7) et, dans une fenêtre (ni plein écran, ni
+## maximisée, ni headless) : quand l'écran change de format, règle la hauteur de la fenêtre sur le
+## nouveau format en gardant sa largeur (hors du solo, écran Réseau, salon, bataille en 16:9, l'écran ne
+## s'affiche plus avec des bandes dans la fenêtre du solo : 1400×454 devient 1400×788, et le titre la
+## rend au solo) ; puis, toujours, la garde dans la zone utile de son écran (M7 de la revue finale 14 :
+## sans la barre des tâches, barre de titre comprise), réduite au même format et recentrée au besoin (une
+## fenêtre du solo élargie à 1920 px passait en 1920×1080 plus sa barre de titre sur un écran 1080p : le
+## bas de la ville et le HUD sous la barre des tâches). Une fenêtre qui tient déjà dans son écran, au même
+## format, reste telle que le joueur l'a mise. Appelée par le titre (le premier écran du jeu), l'écran
+## Réseau, le salon et la scène de jeu.
 static func appliquer_ecran(arbre: SceneTree, taille: Vector2i) -> void:
 	var avant := arbre.root.content_scale_size
 	arbre.root.content_scale_size = taille
-	if avant == taille or DisplayServer.get_name() == "headless" \
-			or DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+	if DisplayServer.get_name() == "headless" or DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
 		return
-	DisplayServer.window_set_size(taille_fenetre(taille, DisplayServer.window_get_size()))
+	var fenetre := DisplayServer.window_get_size()
+	var voulue := fenetre if avant == taille else taille_fenetre(taille, fenetre)
+	var zone := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+	var bords := DisplayServer.window_get_size_with_decorations() - fenetre
+	voulue = taille_bornee(voulue, zone.size - bords)
+	if voulue != fenetre:
+		DisplayServer.window_set_size(voulue)
+	var coin := DisplayServer.window_get_position_with_decorations()
+	var place := position_dans(coin, voulue + bords, zone)
+	if place != coin:
+		DisplayServer.window_set_position(place + DisplayServer.window_get_position() - coin)
 
 
 ## La fenêtre de largeur `fenetre.x` au format de l'écran `ecran`.
 static func taille_fenetre(ecran: Vector2i, fenetre: Vector2i) -> Vector2i:
 	return Vector2i(fenetre.x, roundi(fenetre.x * float(ecran.y) / ecran.x))
+
+
+## La fenêtre `fenetre`, réduite à son format pour tenir dans `place` (M7) ; telle quelle si elle y tient
+## déjà, ou si `place` n'a pas de surface (écran inconnu). Le côté qui limite prend exactement la place.
+static func taille_bornee(fenetre: Vector2i, place: Vector2i) -> Vector2i:
+	if place.x <= 0 or place.y <= 0 or (fenetre.x <= place.x and fenetre.y <= place.y):
+		return fenetre
+	if fenetre.x * place.y >= fenetre.y * place.x:
+		return Vector2i(place.x, floori(place.x * float(fenetre.y) / fenetre.x))
+	return Vector2i(floori(place.y * float(fenetre.x) / fenetre.y), place.y)
+
+
+## Le coin d'une fenêtre de taille `taille` (bords compris) posée en `coin`, ramené dans la zone `zone`
+## (M7) : inchangé si elle y tient ; collé au bord qu'elle dépasse sinon ; au coin de la zone si elle est
+## plus grande qu'elle. Comme `taille_bornee` : `coin` inchangé si `zone` n'a pas de surface (écran
+## inconnu) plutôt que de reposer la fenêtre au hasard.
+static func position_dans(coin: Vector2i, taille: Vector2i, zone: Rect2i) -> Vector2i:
+	if zone.size.x <= 0 or zone.size.y <= 0:
+		return coin
+	return Vector2i(
+		clampi(coin.x, zone.position.x, maxi(zone.position.x, zone.end.x - taille.x)),
+		clampi(coin.y, zone.position.y, maxi(zone.position.y, zone.end.y - taille.y)))
 
 
 ## Avancement de la partie, de 0 (début) à 1 (fin en vue), qui accélère le peintre et les

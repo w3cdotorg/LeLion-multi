@@ -120,7 +120,9 @@ de jeu.
   « Version différente de l'hôte (x.y) ». Salon plein ou manche en cours : refus explicite.
   Elle passe par l'authentification de `SceneMultiplayer` (octets bruts avant tout RPC : deux
   versions différentes se comprennent encore assez pour se refuser). La version est
-  `application/config/version`. L'hôte refuse dans l'ordre : demande mal formée (autre programme),
+  `application/config/version`, qui est aussi celle du protocole : chaque changement du protocole la
+  fait augmenter, ce que tiennent les tests unitaires (une empreinte du protocole notée avec sa version,
+  phase 19). L'hôte refuse dans l'ordre : demande mal formée (autre programme),
   version différente, manche en cours, partie pleine ; il inscrit l'accepté au moment de répondre
   (deux demandes simultanées ne prennent pas la même place), lui donne le plus petit index libre et
   la première couleur libre de la palette, et coupe son pseudo à 12 caractères. Un refusé ferme
@@ -151,7 +153,9 @@ de jeu.
   (Échap, B) quitte le salon pour l'écran Réseau. Aucun contrôle du salon ne prend le focus : une
   action n'agit qu'à l'appui (ni répétition du clavier, ni stick tenu, même déjà penché à l'ouverture
   du salon ; phase 18). Les clients voient aussi les places seulement réservées (leur nombre part avec
-  la table, phase 18). Au retour d'une manche (Retour au salon, depuis l'écran Résultats, phase 18) :
+  la table, phase 18) ; chaque table est numérotée, et un client ne repose jamais une table plus
+  ancienne que la dernière posée, d'où qu'elle vienne, ni ne joue une manche sur une autre table ou un
+  autre niveau que ceux de son lancement (phase 19). Au retour d'une manche (Retour au salon, depuis l'écran Résultats, phase 18) :
   la même table sans les partis, personne prêt, la manche plus en cours (les arrivées de nouveau
   acceptées, la balise l'annonce), le niveau gardé.
 - **Commandes** : chaque joueur utilise les commandes actuelles de son PC (clavier ou manette).
@@ -296,7 +300,9 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
 - En entrant dans une scène multi (salon compris), `get_tree().root.content_scale_size` passe à
   2000×1125, et revient à 2000×648 au retour au titre. La scène de jeu applique l'écran de ses
   règles (`Regles.taille_ecran()`) en entrant dans l'arbre ; l'écran titre remet le solo
-  (`configurer_solo()`) et son écran.
+  (`configurer_solo()`) et son écran. Dans une fenêtre, la hauteur suit le format de l'écran, et la
+  fenêtre reste dans la zone utile de son écran, barre de titre comprise (réduite à son format au
+  besoin, phase 19) ; la fenêtre par défaut fait 1400×454 (le titre, au format du solo).
 - Le dégradé du ciel et le centre de la caméra sont calculés depuis la taille du viewport. Les
   hauteurs d'apparition des ennemis et des pastilles, réglées pour les 648 px du solo, suivent la
   hauteur de l'écran ; le peintre garde sa taille du solo (65 % de 648 px), comme les lions et
@@ -403,7 +409,7 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   Depuis la phase 12, la découverte : balise vers 127.0.0.1 (ports de balise 18778 et suivants),
   partie vue puis rejointe par sa balise, balise suivante à 2 joueurs, expiration 3 s après la
   dernière balise alors que le processus de l'hôte vit encore, port des balises occupé par un
-  second écouteur ; la vraie diffusion avec `DIFFUSION=1`, hors CI. Depuis la phase 13, le salon
+  second écouteur ; la vraie diffusion avec `DIFFUSION=1`, en CI depuis la phase 19. Depuis la phase 13, le salon
   (scénario 8, par les vraies scènes) : 1 hôte + 3 clients arrivés dans l'ordre, départ d'un client
   (sa carte se libère), deux demandes de couleur au même feu arbitrées par l'hôte, bouton Démarrer
   regrisé par un client repassé non prêt et démarrage alors refusé, puis démarrage par l'hôte, tous
@@ -443,21 +449,30 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   partie solo et une réplique de client rejouées tick par tick (hasard semé, `--fixed-fps 60`) ; leur
   empreinte (l'état observable de chaque lion à chaque tick) prouve qu'une refonte du lion ne change
   rien. Deux passages consécutifs identiques font le verdict.
-- **Visuel** : `tests/screenshots.gd` étendu (salon, manche à 6 couleurs, résultats), deux vraies
-  fenêtres en localhost pour une partie manuelle.
+- **Visuel** (phase 19) : `tests/screenshots.gd` en parties (le solo, l'écran Réseau, le salon, la
+  manche à 6 couleurs, l'écran Résultats : 37 captures) et `tests/deux_fenetres.gd` (un hôte et un
+  client dans deux vraies fenêtres, du salon aux Résultats et à l'hôte perdu) ; sans rendu, les deux
+  déroulent tout sans rien écrire, et la CI les lance ainsi.
 - **Windows** : test manuel de l'`.exe` issu de la CI sur un PC de la LAN (le développement se fait
-  sur macOS).
+  sur macOS), avec la fiche de l'essai LAN (`docs/essai-lan.md`, phase 19), dont les réponses font la
+  phase 19 bis.
 
 ## 11. Build et distribution
 
-- Preset **Windows Desktop** (x86_64) avec `.pck` intégré, donc un seul `.exe`.
-- CI : le job existant (smoke test) + tests unitaires + test réseau, puis export Windows publié
-  en artefact `LeLion-multi-windows.zip`. Le déploiement GitHub Pages hérité du solo est retiré.
+- Preset **Windows Desktop** (x86_64) avec `.pck` intégré, donc un seul `.exe`, à l'icône du jeu, nommé
+  « LeLion multi » dans ses propriétés et dans la fenêtre du pare-feu, à la version du jeu sur quatre
+  nombres (phase 19 : `application/modify_resources`, vérifiés par la CI).
+- CI : tests unitaires, smoke test, bataille locale, banc de la prédiction, test réseau (vraie
+  diffusion comprise), déroulé des captures, puis exports Web (le solo) et Windows, métadonnées de l'exe
+  vérifiées, artefact `LeLion-multi-windows` (un zip, 30 jours). Le déploiement GitHub Pages hérité du
+  solo est retiré.
 - Pas de templates d'export sur le Mac de développement : l'`.exe` vient de la CI (ou d'une
   installation locale des templates si besoin).
 - README : section « Jouer en LAN » (ports 7777/7778 UDP, SmartScreen « Exécuter quand même »,
   pare-feu Windows sur l'hôte en réseau Privé, repli par IP, hôte en Ethernet si possible, Wi-Fi
-  5 GHz).
+  5 GHz), faite en phase 19 : en français, avec aussi le pare-feu de chaque joueur (port 7778), la
+  réparation d'un « Annuler », le Wi-Fi maillé et un dépannage message par message ; le reste du
+  README en anglais.
 
 ## 12. Phases (le découpage exact viendra du plan)
 

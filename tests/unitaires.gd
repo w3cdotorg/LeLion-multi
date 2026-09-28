@@ -3,6 +3,9 @@ extends SceneTree
 ## Logique pure (Joueur, puis territoire, couleurs, protocole…), sans charger de scène de jeu.
 
 var _echecs := 0
+## La version du protocole et son empreinte, mesurées (`_tester_protocole`).
+const PROTOCOLE_VERSION := "0.19"
+const PROTOCOLE_EMPREINTE := 2537463811
 
 
 func _init() -> void:
@@ -47,6 +50,7 @@ func _run() -> void:
 	_tester_placement_pseudos()
 	_tester_bilan_manche()
 	_tester_manches_enchainees()
+	_tester_protocole()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1686,6 +1690,22 @@ func _tester_joueur_replique() -> void:
 	_check(Regles.taille_fenetre(ReglesBataille.TAILLE_ECRAN, Vector2i(1400, 454)) == Vector2i(1400, 788)
 		and Regles.taille_fenetre(Regles.TAILLE_ECRAN_SOLO, Vector2i(1400, 788)) == Vector2i(1400, 454),
 		"hors du solo, la fenêtre prend le format 16:9 (1400×788), et le reprend du solo au retour (1400×454)")
+	# Phase 19 (M7 de la revue finale 14) : la fenêtre tient dans la zone utile de son écran, au même format
+	var place_1080p := Vector2i(1920, 1040 - 31)  # 1080p moins la barre des tâches (40) et la barre de titre (31)
+	_check(Regles.taille_bornee(Vector2i(1920, 1080), place_1080p) == Vector2i(1793, 1009)
+		and Regles.taille_bornee(Vector2i(1400, 788), place_1080p) == Vector2i(1400, 788)
+		and Regles.taille_bornee(Vector2i(1400, 454), Vector2i(1366, 697)) == Vector2i(1366, 442)
+		and Regles.taille_bornee(Vector2i(1400, 788), Vector2i.ZERO) == Vector2i(1400, 788),
+		"une fenêtre qui dépasse la zone utile se réduit à son format (1920×1080 : 1793×1009 sur un écran 1080p ; 1400×454 : 1366×442 sur 1366 px), une fenêtre qui tient ne change pas")
+	var zone := Rect2i(0, 0, 1920, 1040)
+	_check(Regles.position_dans(Vector2i(300, 200), Vector2i(1400, 819), zone) == Vector2i(300, 200)
+		and Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), zone) == Vector2i(520, 221)
+		and Regles.position_dans(Vector2i(-50, -10), Vector2i(1400, 819), zone) == Vector2i(0, 0)
+		and Regles.position_dans(Vector2i(1920 + 100, 0), Vector2i(1400, 819), Rect2i(1920, 0, 1280, 984)) == Vector2i(1920, 0),
+		"une fenêtre qui sort de la zone utile y revient, collée au bord qu'elle dépassait (au coin si elle est plus grande, second écran compris)")
+	_check(Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), Rect2i(0, 0, 0, 0)) == Vector2i(700, 400)
+		and Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), Rect2i(0, 0, 1920, 0)) == Vector2i(700, 400),
+		"une zone utile sans surface (écran inconnu) ne fait pas reposer la fenêtre, comme taille_bornee")
 
 
 
@@ -2284,6 +2304,7 @@ func _tester_manches_enchainees() -> void:
 		and rpc_reseau[&"_recevoir_salon"].get("channel", 0) == 0,
 		"le lancement et le retour au salon partent sur le canal des tampons, du territoire et de la fin (%d) ; la table seule, sur celui de la poignée de main (0)" % canal)
 	# Ils portent leur table : un client la prend d'eux, même si la table du canal 0 ne les a pas précédés
+	reseau.quitter()
 	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
 	var table := [{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Moi", "pret": true},
 		{"id": 5, "index": 1, "couleur": palette[3], "pseudo": "Bob", "pret": true}]
@@ -2293,13 +2314,52 @@ func _tester_manches_enchainees() -> void:
 	var sur_retour := func() -> void: retours[0] += 1
 	reseau.manche_lancee.connect(sur_lancement)
 	reseau.salon_rouvert.connect(sur_retour)
-	reseau._recevoir_manche(table, 2)
+	reseau._recevoir_manche(table, 2, 6, 0, 1)
 	_check(lancements.size() == 1 and lancements[0].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 5] and reseau.niveau_salon == 2
-		and reseau.table_salon.size() == 2 and reseau.manche_en_cours,
-		"le lancement pose sa table et son niveau, puis lance la manche sur elle")
-	reseau._recevoir_retour_salon(table, 1, 4)
-	_check(retours[0] == 1 and not reseau.manche_en_cours and reseau.niveau_salon == 1 and reseau.places_salon == 4,
+		and reseau.niveau_manche == 2 and reseau.table_salon.size() == 2 and reseau.manche_en_cours and reseau.numero_table == 1,
+		"le lancement pose sa table, son niveau et son numéro, puis lance la manche sur elle")
+	reseau._recevoir_retour_salon(table, 1, 4, 0, 2)
+	_check(retours[0] == 1 and not reseau.manche_en_cours and reseau.niveau_salon == 1 and reseau.places_salon == 4 and reseau.numero_table == 2,
 		"le retour au salon pose sa table, son niveau et ses places, puis ramène au salon")
+	# M6 (revue finale de la phase 18) : les deux canaux ne s'attendent pas ; une table plus ancienne que
+	# la dernière posée n'est jamais reposée. Zoé arrive au salon rouvert (canal 0, table 4, une place
+	# encore réservée) avant un retour au salon plus ancien, perdu puis renvoyé (canal ordonné, table 3).
+	var avec_zoe := table + [{"id": 7, "index": 2, "couleur": palette[5], "pseudo": "Zoé", "pret": false}]
+	reseau._recevoir_salon(avec_zoe, 1, 4, 1, 4)
+	reseau._recevoir_retour_salon(table, 0, 6, 0, 3)
+	_check(retours[0] == 2 and not reseau.manche_en_cours and reseau.table_salon.size() == 3 and reseau.places_reservees == 1
+		and reseau.niveau_salon == 1 and reseau.places_salon == 4 and reseau.numero_table == 4,
+		"M6 : un retour au salon plus ancien que la table posée ramène au salon sans la remplacer (Zoé reste, sa place réservée aussi)")
+	reseau._recevoir_salon(table, 0, 6, 0, 3)
+	reseau._recevoir_salon(avec_zoe, 1, 4, 0, "5")
+	_check(reseau.table_salon.size() == 3 and reseau.places_reservees == 1 and reseau.numero_table == 4,
+		"une table plus ancienne, ou sans numéro lisible, n'est pas posée")
+	# Un lancement plus ancien que la table posée (Zoé partie pendant le chargement : table 6 sur le canal 0,
+	# arrivée avant le lancement de la table 5) : la manche se joue sur la table et le niveau du lancement,
+	# ceux de l'hôte ; la table plus récente reste posée.
+	reseau._recevoir_salon(table, 1, 4, 0, 6)
+	reseau._recevoir_manche(avec_zoe, 2, 4, 0, 5)
+	_check(lancements.size() == 2 and lancements[1].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 5, 7] and reseau.niveau_manche == 2
+		and reseau.niveau_salon == 1 and reseau.table_salon.size() == 2 and reseau.numero_table == 6 and reseau.manche_en_cours,
+		"M6 : un lancement plus ancien que la table posée lance la manche sur sa propre table et son niveau, sans reposer la table")
+	reseau.quitter()
+	_check(reseau.numero_table == 0 and reseau.niveau_manche == 0, "hors session, plus de numéro de table ni de niveau de manche")
+	# Chez l'hôte, chaque table diffusée a un numéro de plus
+	reseau.ouvrir_salon(0)
+	var premier: int = reseau.numero_table
+	reseau.definir_niveau(1)
+	_check(premier == 1 and reseau.numero_table == 2, "chez l'hôte, chaque table diffusée prend le numéro suivant (%d puis %d)" % [premier, reseau.numero_table])
+	# Le lancement diffuse une table de plus et porte son numéro (M6) ; le niveau de la manche
+	# (`Reseau.niveau_manche`) devient celui du salon au lancement
+	var id_hote: int = root.multiplayer.get_unique_id()
+	reseau.inscrits[id_hote] = {"index": 0, "couleur": palette[0], "pseudo": "Hôte", "arrive": true, "pret": true}
+	reseau.inscrits[99] = {"index": 1, "couleur": palette[1], "pseudo": "Autre", "arrive": true, "pret": true}
+	var avant_lancement: int = reseau.numero_table
+	var niveau_salon_avant: int = reseau.niveau_salon
+	_check(reseau.lancer_manche() and reseau.numero_table == avant_lancement + 1 and reseau.niveau_manche == niveau_salon_avant
+		and lancements[-1].map(func(f: Dictionary) -> int: return f.id_reseau) == [id_hote, 99],
+		"le lancement diffuse une table de plus (%d) et porte son numéro, le niveau de la manche est celui du salon" % reseau.numero_table)
+	reseau.quitter()
 	reseau.manche_lancee.disconnect(sur_lancement)
 	reseau.salon_rouvert.disconnect(sur_retour)
 	reseau.quitter()
@@ -2323,6 +2383,73 @@ func _tester_manches_enchainees() -> void:
 	gs.configurer_solo()
 	gs.nouvelle_partie()
 	gs.partie_en_cours = false
+
+
+## Phase 19 (M7 de la revue de la phase 11) : `application/config/version` est aussi la version du
+## protocole, présentée à la poignée de main et dans la balise ; deux postes de versions différentes se
+## refusent (« Version différente de l'hôte »), deux postes de la même version doivent donc parler le même
+## protocole. Son empreinte (`_signature_protocole`) change avec lui : une empreinte neuve sous la même
+## version fait échouer ce test, jusqu'à ce que la version augmente et que PROTOCOLE_VERSION et
+## PROTOCOLE_EMPREINTE la notent (la ligne PROTOCOLE de la sortie les donne).
+func _tester_protocole() -> void:
+	print("-- Version du protocole (phase 19)")
+	var lignes := _signature_protocole()
+	var empreinte := "\n".join(lignes).hash()
+	var version: String = ProjectSettings.get_setting("application/config/version")
+	print("PROTOCOLE %s %d (%d lignes)" % [version, empreinte, lignes.size()])
+	if version != PROTOCOLE_VERSION:
+		_check(false, "la version (%s) n'est plus celle que note ce test (%s) : noter ici la version et l'empreinte de la ligne PROTOCOLE" % [version, PROTOCOLE_VERSION])
+	else:
+		_check(empreinte == PROTOCOLE_EMPREINTE,
+			"le protocole (RPC, réplication, formats réseau, balise) est celui de la version %s ; s'il a changé, augmenter application/config/version, puis noter ici la version et l'empreinte de la ligne PROTOCOLE" % version)
+
+
+## Ce qui fait le protocole réseau, une ligne par élément, dans un ordre fixe : chaque RPC des scripts qui
+## en déclarent (nom, nombre d'arguments, mode, transfert, appel local, canal), les propriétés répliquées
+## des scènes (`MultiplayerSynchronizer`) et les scènes que fait apparaître la scène de jeu (`root_path`,
+## `spawn_path`, les en-têtes `[node …]` des `MultiplayerSynchronizer` et `MultiplayerSpawner`, M9 de la
+## revue finale : renommer un tel nœud ou changer son `spawn_path` doit faire échouer ce test), les
+## tailles des formats réseau, et une balise de découverte.
+func _signature_protocole() -> PackedStringArray:
+	var lignes := PackedStringArray()
+	for fichier in _fichiers_du_dossier("res://Scripts", ".gd"):
+		var chemin := "res://Scripts".path_join(fichier)
+		if not FileAccess.get_file_as_string(chemin).contains("@rpc"):
+			continue
+		var script: Script = load(chemin)
+		var nb_arguments := {}
+		for methode: Dictionary in script.get_script_method_list():
+			nb_arguments[String(methode.name)] = methode.args.size()
+		var config: Dictionary = script.get_rpc_config()
+		var noms: Array[String] = []
+		for nom: StringName in config:
+			noms.append(String(nom))
+		noms.sort()  # des String : un tri de StringName ne suit pas l'ordre alphabétique
+		for nom in noms:
+			var c: Dictionary = config[StringName(nom)]
+			lignes.append("%s %s(%d) %s %s %s %s" % [fichier, nom, nb_arguments.get(nom, -1), c.get("rpc_mode"),
+				c.get("transfer_mode"), c.get("call_local"), c.get("channel", 0)])
+	for fichier in _fichiers_du_dossier("res://Scenes", ".tscn"):
+		for ligne in FileAccess.get_file_as_string("res://Scenes".path_join(fichier)).split("\n"):
+			if ligne.begins_with("properties/") or ligne.begins_with("_spawnable_scenes") \
+					or ligne.begins_with("root_path") or ligne.begins_with("spawn_path") \
+					or (ligne.begins_with("[node") and (ligne.contains("type=\"MultiplayerSynchronizer\"") or ligne.contains("type=\"MultiplayerSpawner\""))):
+				lignes.append("%s %s" % [fichier, ligne.strip_edges()])
+	lignes.append("formats %d %d %d %d %d %d %d %d" % [EtatLion.TAILLE, BilanManche.CHAMPS, BilanManche.TAILLE_LION,
+		Commandes.TAILLE_ENTETE, Commandes.TAILLE_COMMANDE, Commandes.REDONDANCE, Peinture.OCTETS_PAR_TAMPON,
+		Territoire.OCTETS_PAR_CHANGEMENT])
+	lignes.append("balise " + load("res://Scripts/Decouverte.gd").encoder_balise("V", 1, 2, 3, true, 0, "P").get_string_from_utf8())
+	return lignes
+
+
+## Les fichiers du dossier `dossier` qui finissent par `suffixe`, triés.
+func _fichiers_du_dossier(dossier: String, suffixe: String) -> PackedStringArray:
+	var fichiers := PackedStringArray()
+	for f in DirAccess.get_files_at(dossier):
+		if f.ends_with(suffixe):
+			fichiers.append(f)
+	fichiers.sort()
+	return fichiers
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

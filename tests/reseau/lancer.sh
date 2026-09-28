@@ -12,8 +12,8 @@
 # Variables : GODOT (défaut : godot), DELAI (secondes au plus par processus, défaut : 40 ; les
 # scénarios 11, 12 et 13, des manches jouées, ont le leur : DUREE11 + 60, DUREE12 + 50, DUREE13 +
 # DUREE13B + 60),
-# DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion : hors CI, où la diffusion n'a pas
-# été mesurée ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
+# DIFFUSION=1 (ajoute le scénario 7, balises en vraie diffusion ; le pas « Test réseau » de la CI le
+# pose depuis la phase 19 ; le scénario 6 couvre le même chemin en envoi direct vers 127.0.0.1).
 # Chaque étape s'enchaîne sur un événement observé (une ligne d'un journal, un compte de l'hôte),
 # 15 s au plus (DELAI_ETAPE de joueur.gd, 150 × 0,1 s ici ; plus pour les étapes de la manche
 # entière du scénario 11, qui durent ce que dure le jeu) ; seules restent, côté client

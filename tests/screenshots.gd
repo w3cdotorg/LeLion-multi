@@ -1,8 +1,31 @@
 extends SceneTree
-## Capture d'écran pilotée : godot --script tests/screenshots.gd (rendu réel requis, pas headless)
-## Écrit dans le dossier passé par --dossier=<chemin> (défaut : user://).
+## Captures pilotées, avec le vrai rendu (pas headless en local ; la CI les déroule sans rendu (pas « Captures »)) :
+##   godot --path . --rendering-driver opengl3 --script tests/screenshots.gd -- --dossier=<dossier> [--parties=solo,reseau,salon,bataille,resultats]
+## Écrit ses PNG dans <dossier> (défaut : user://), par partie (toutes par défaut) :
+##   solo       le titre, une partie solo (gerbe à 3 puis 7 couleurs, ennemis, pause, défaite), une
+##              victoire avec record, le peintre du Village ;
+##   reseau     le titre et son bouton Multijoueur, l'écran Réseau (vide, liste, IP invalide, connexion,
+##              refus de version, anglais, port des balises occupé ; phase 12 bis) ;
+##   salon      l'hôte seul, le salon à 3 (bouton grisé puis actif), à 6 aux pseudos larges, en anglais,
+##              vu d'un client (tous prêts, un joueur qui arrive ; phase 13) ;
+##   bataille   la manche à 6 couleurs (départ, en jeu : parts, rangs, couronnes, crans, gerbe XXL,
+##              étourdi, parti ; les dix dernières secondes), une égalité à 2 en anglais (phase 17) ;
+##   resultats  l'écran Résultats d'une bataille à 6 (animation, hôte local, client, hôte en réseau,
+##              hôte resté seul), une égalité à 2 en anglais (phase 18).
+## La partie à deux vraies fenêtres (un hôte et un client) est dans `tests/deux_fenetres.gd`, une vraie
+## manche à 4 capturée dans `tests/bataille_test.gd -- --captures=<dossier>`.
+## N'utilise ni le port 7777 ni le 7778 d'une vraie partie, ni les records et réglages du joueur
+## (`user://scores_captures.cfg`, effacé à la fin). Ennemis et pastilles écartés en bataille : les
+## scores, crans, statistiques et départs sont posés à la main. Compilé avant les autoloads : les lit
+## par `root.get_node`, charge les scènes à l'exécution.
+
+const PARTIES := ["solo", "reseau", "salon", "bataille", "resultats"]
+const PORT_JEU := 17890
+const PORT_SANS_HOTE := 17891
+const PORT_BALISE := 17899
 
 var dossier := "user://"
+var parties: PackedStringArray = PackedStringArray(PARTIES)
 var GS: Node
 
 
@@ -10,23 +33,63 @@ func _init() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dossier="):
 			dossier = arg.trim_prefix("--dossier=")
+		elif arg.begins_with("--parties="):
+			parties = arg.trim_prefix("--parties=").split(",", false)
 	call_deferred("_run")
 
 
 func _attendre(secondes: float) -> void:
-	await create_timer(secondes).timeout
+	await create_timer(secondes, true).timeout
 
 
 func _shot(nom: String) -> void:
+	if DisplayServer.get_name() == "headless":
+		print("📸 %s (headless : rien d'écrit)" % nom)  # le déroulé seul se vérifie
+		return
 	await RenderingServer.frame_post_draw
-	var img := root.get_viewport().get_texture().get_image()
-	img.save_png(dossier.path_join(nom + ".png"))
-	print("📸 ", nom)
+	var image := root.get_texture().get_image()
+	var chemin := dossier.path_join(nom + ".png")
+	image.save_png(chemin)
+	print("📸 %s (%dx%d)" % [chemin, image.get_width(), image.get_height()])
 
 
 func _run() -> void:
+	for partie in parties:
+		if not PARTIES.has(partie):
+			printerr("--parties : « %s » inconnue (%s)" % [partie, ", ".join(PARTIES)])
+			quit(1)
+			return
 	GS = root.get_node("GameState")
+	var scores: Node = root.get_node("Scores")
+	scores.chemin = "user://scores_captures.cfg"
+	scores.effacer()
+	root.get_node("Parametres").definir_langue("fr")
+	if parties.has("solo"):
+		await _solo()
+	# Une fenêtre au format du multi, même si les réglages de ce poste demandent le plein écran
+	# (préférence non modifiée) : `Regles.appliquer_ecran` ne règle que les fenêtres.
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	DisplayServer.window_set_size(Vector2i(1400, 788))
+	if parties.has("reseau"):
+		await _reseau()
+	if parties.has("salon"):
+		await _salon()
+	if parties.has("bataille"):
+		await _bataille()
+	if parties.has("resultats"):
+		await _resultats()
+	root.get_node("Parametres").definir_langue("fr")
+	GS.configurer_solo()
+	scores.effacer()
+	quit(0)
+
+
+# --- Solo ------------------------------------------------------------------------------------------
+
+
+func _solo() -> void:
 	var titre: Control = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
 	root.add_child(titre)
 	await _attendre(0.2)
 	await _shot("00_titre")
@@ -79,10 +142,9 @@ func _run() -> void:
 	await _attendre(3.5)
 	await _shot("04_game_over")
 
-	# Victoire avec record précédent
+	# Victoire avec record précédent, un coup encaissé en route
 	paused = false
 	main.free()
-	root.get_node("Scores").chemin = "user://scores_captures.cfg"
 	root.get_node("Scores").effacer()
 	root.get_node("Scores").enregistrer("skyline/facile", 95.0)
 	GS.niveau_courant = 0
@@ -92,6 +154,10 @@ func _run() -> void:
 	await _attendre(0.2)
 	for i in range(7):
 		GS.regles.pastille_ramassee(GS.joueur_local(), i)
+	# Phase 19 : le coup après la fin de l'intro (`GameState.demarrer`) ; pendant l'intro, les règles
+	# l'ignorent (la manche n'est pas encore en cours).
+	while not GS.pret:
+		await process_frame
 	GS.temps_ecoule = 71.0
 	GS.regles.lion_touche_par_ennemi(GS.joueur_local(), Vector2.INF)
 	GS.signaler_progression(0.91)
@@ -121,4 +187,330 @@ func _run() -> void:
 	await _shot("05_village_boss")
 	Input.action_release("vomir")
 	main.free()
-	quit(0)
+	current_scene = null
+
+
+# --- Écran Réseau (phase 12 bis) --------------------------------------------------------------------
+
+
+func _reseau() -> void:
+	var scores: Node = root.get_node("Scores")
+	var params: Node = root.get_node("Parametres")
+	var reseau: Node = root.get_node("Reseau")
+	var decouverte: Node = root.get_node("Decouverte")
+	scores.definir_preference("pseudo", "MMMMMMMMMMMM")  # 12 caractères larges : le champ doit les tenir
+	decouverte.port_balise = PORT_BALISE
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+
+	var titre: Control = load("res://Scenes/Titre.tscn").instantiate()
+	titre.demo_autorisee = false
+	root.add_child(titre)
+	await _attendre(0.3)
+	await _shot("reseau_00_titre_multijoueur")
+	titre.bouton_multijoueur.grab_focus()
+	await _attendre(0.1)
+	await _shot("reseau_01_titre_focus_multijoueur")
+	titre.free()
+
+	var ecran: Control = load("res://Scenes/EcranReseau.tscn").instantiate()
+	ecran.port_jeu = PORT_JEU
+	root.add_child(ecran)
+	await _attendre(0.3)
+	await _shot("reseau_02_vide")
+
+	var futur := Time.get_ticks_msec() + 600000  # ces parties n'expirent pas pendant les captures
+	var zoe := {"version": reseau.version, "port": 7777, "nb_joueurs": 2, "places": 6, "manche_en_cours": false, "niveau": 1, "pseudo": "Zoé"}
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.20", zoe, futur)
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.21", zoe.merged({"pseudo": "Anna", "nb_joueurs": 6}, true), futur)
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.22", zoe.merged({"pseudo": "Bob", "version": "0.10"}, true), futur)
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.23", zoe.merged({"pseudo": "Chloé", "manche_en_cours": true, "niveau": 2}, true), futur)
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.24", zoe.merged({"pseudo": "MMMMMMMMMMMM", "nb_joueurs": 5, "niveau": 0}, true), futur)
+	decouverte.parties_changees.emit()
+	await _attendre(0.2)
+	await _shot("reseau_03_liste")
+	ecran.boutons_parties["192.168.1.20:7777"].grab_focus()
+	await _attendre(0.1)
+	await _shot("reseau_04_focus_partie")
+
+	ecran.champ_ip.text = "lelion.local"
+	ecran.rejoindre_par_ip()
+	await _attendre(0.1)
+	await _shot("reseau_05_ip_invalide")
+
+	ecran.champ_ip.text = "127.0.0.1"
+	ecran.port_jeu = PORT_SANS_HOTE
+	ecran.rejoindre_par_ip()
+	await _attendre(0.1)
+	await _shot("reseau_06_connexion")
+	reseau.quitter()
+	reseau.refuse.emit(reseau.REFUS_VERSION, "0.10")
+	await _attendre(0.1)
+	await _shot("reseau_07_refus_version")
+
+	params.definir_langue("en")
+	decouverte.parties.clear()
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.20", zoe, futur)
+	decouverte.enregistrer_partie(decouverte.parties, "192.168.1.21", zoe.merged({"pseudo": "Anna", "nb_joueurs": 6}, true), futur)
+	decouverte.parties_changees.emit()
+	await _attendre(0.2)
+	await _shot("reseau_08_anglais")
+	params.definir_langue("fr")
+	ecran.free()
+	decouverte.parties.clear()
+
+	var intrus := PacketPeerUDP.new()
+	intrus.bind(decouverte.port_balise, "0.0.0.0")
+	var ecran2: Control = load("res://Scenes/EcranReseau.tscn").instantiate()
+	root.add_child(ecran2)
+	await _attendre(0.3)
+	await _shot("reseau_09_ecoute_impossible")
+	ecran2.free()
+	intrus.close()
+
+
+# --- Salon (phase 13) ------------------------------------------------------------------------------
+
+
+## Un autre joueur arrive au salon de l'hôte (simulé dans `Reseau.inscrits`, comme le smoke test).
+func _arrive(reseau: Node, id: int, index: int, couleur: Color, pseudo: String, pret: bool) -> void:
+	reseau.inscrits[id] = {"index": index, "couleur": couleur, "pseudo": pseudo, "arrive": false, "pret": false}
+	reseau._sur_pair_connecte(id)
+	if pret:
+		reseau.definir_pret(id, true)
+
+
+func _salon() -> void:
+	var params: Node = root.get_node("Parametres")
+	var reseau: Node = root.get_node("Reseau")
+	var decouverte: Node = root.get_node("Decouverte")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	decouverte.port_balise = PORT_BALISE
+	decouverte.destinations_forcees = PackedStringArray(["127.0.0.1"])
+	GS.niveau_courant = 1
+
+	# L'hôte seul, pseudo de 12 caractères larges : Démarrer grisé, « Il faut au moins 2 joueurs »
+	reseau.pseudo = "MMMMMMMMMMMM"
+	reseau.heberger(PORT_JEU)
+	var salon: Control = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(salon)
+	await _attendre(0.4)
+	await _shot("salon_00_hote_seul")
+
+	# ◉ Salon à 3 : l'hôte, Bob prêt, Zoé pas encore : Démarrer grisé avec sa raison
+	_arrive(reseau, 5, 1, palette[1], "Bob", true)
+	_arrive(reseau, 6, 2, palette[4], "Zoé", false)
+	await _attendre(0.2)
+	await _shot("salon_01_a_3")
+
+	# Tous prêts : Démarrer s'active chez l'hôte
+	reseau.definir_pret(1, true)
+	reseau.definir_pret(6, true)
+	await _attendre(0.3)
+	await _shot("salon_02_bouton_actif")
+	reseau.definir_pret(6, false)
+	await _attendre(0.2)
+
+	# Six joueurs, pseudos larges, niveau Village
+	_arrive(reseau, 7, 3, palette[3], "WWWWWWWWWWWW", true)
+	_arrive(reseau, 8, 4, palette[2], "Chloé", false)
+	_arrive(reseau, 9, 5, palette[5], "Léa-Marie 2", true)
+	salon.changer_niveau(1)
+	await _attendre(0.2)
+	await _shot("salon_03_a_6")
+	params.definir_langue("en")
+	await _attendre(0.2)
+	await _shot("salon_04_anglais")
+	params.definir_langue("fr")
+	salon.retour(false)
+	salon.free()
+
+	# Un client : sa vue de la table (celle que l'hôte lui diffuserait)
+	reseau.rejoindre("127.0.0.1", PORT_SANS_HOTE)
+	var id_local: int = root.multiplayer.get_unique_id()
+	reseau.table_salon.assign([
+		{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Hôte", "pret": true},
+		{"id": id_local, "index": 1, "couleur": palette[3], "pseudo": "Moi", "pret": false},
+		{"id": 12, "index": 3, "couleur": palette[5], "pseudo": "Tom", "pret": true}])
+	reseau.niveau_salon = 0
+	var client: Control = load("res://Scenes/Salon.tscn").instantiate()
+	root.add_child(client)
+	await _attendre(0.4)
+	await _shot("salon_05_client")
+	reseau.table_salon[1].pret = true
+	reseau.salon_change.emit()
+	await _attendre(0.2)
+	await _shot("salon_06_client_tous_prets")
+	# Phase 18 : un joueur arrive encore (une place réservée, sans carte) : le client le sait
+	reseau.places_reservees = 1
+	reseau.salon_change.emit()
+	await _attendre(0.2)
+	await _shot("salon_07_client_joueur_qui_arrive")
+	client.free()
+	reseau.quitter()
+
+
+# --- Bataille et Résultats (phases 17 et 18) ---------------------------------------------------------
+
+
+## Donne à chaque joueur `parts[i]` cellules peignables de la ville (comptées), par le même chemin
+## qu'un client (`Territoire.appliquer_changements`).
+func _poser_scores(territoire: Territoire, parts: Array) -> void:
+	var cellules: Array[int] = []
+	for c in range(territoire.taille_grille.x * territoire.taille_grille.y):
+		if territoire._peignables[c] == 1:
+			cellules.append(c)
+	var octets := PackedByteArray()
+	var k := 0
+	for i in range(parts.size()):
+		for n in range(parts[i]):
+			var o := octets.size()
+			octets.resize(o + 3)
+			octets.encode_u16(o, cellules[k])
+			octets.encode_u8(o + 2, i + 1)
+			k += 1
+	territoire.appliquer_changements(octets)
+
+
+## Une bataille locale à `nb` (ce poste est l'hôte, le joueur 1 est « TOI ») sur le niveau `niveau`,
+## ennemis et pastilles écartés à chaque image, jusqu'à la fin de l'intro.
+func _charger(nb: int, pseudos: Array, niveau: int) -> Node:
+	paused = false
+	GS.niveau_courant = niveau
+	GS.difficulte_courante = 0
+	GS.configurer_bataille(nb)
+	for i in range(nb):
+		GS.joueurs[i].pseudo = pseudos[i]
+	change_scene_to_file("res://Scenes/Main.tscn")
+	await _attendre(0.3)
+	var main: Node = current_scene
+	if not physics_frame.is_connected(_ecarter_ennemis):
+		physics_frame.connect(_ecarter_ennemis)
+	while not GS.pret:
+		await process_frame
+	return main
+
+
+func _ecarter_ennemis() -> void:
+	for ennemi in get_nodes_in_group("ennemi") + get_nodes_in_group("boss") + get_nodes_in_group("pickup"):
+		ennemi.queue_free()
+
+
+func _poser_lions(main: Node, places: Array) -> void:
+	for i in range(main.lions.size()):
+		var l: Node2D = main.lions[i]
+		l.global_position = places[i]
+		l.deplacement.vitesse = Vector2.ZERO
+		l.deplacement.recul = Vector2.ZERO
+
+
+func _quitter_la_bataille() -> void:
+	physics_frame.disconnect(_ecarter_ennemis)
+	paused = false
+	if current_scene != null:
+		current_scene.free()
+		current_scene = null
+	GS.configurer_solo()
+
+
+func _bataille() -> void:
+	var params: Node = root.get_node("Parametres")
+	var main := await _charger(6, ["Clément", "WWWWWWWWWWWW", "Zoé", "Bob", "Léa-Marie 2", "Max"], 1)
+	var t: Territoire = main.ville.territoire
+	_poser_lions(main, [Vector2(150, 520), Vector2(620, 600), Vector2(700, 600), Vector2(1250, 450), Vector2(1600, 300), Vector2(1864, 700)])
+	await _attendre(0.3)
+	await _shot("bataille_01_depart_a_6")
+
+	# ◉ Manche à 6 couleurs : des parts de la ville, des crans, une gerbe XXL, un étourdi, un parti ;
+	# deux lions côte à côte
+	_poser_scores(t, [260, 410, 180, 90, 410, 30])
+	for i in range(3):
+		GS.joueurs[0].gagner_cran()
+	for i in range(6):
+		GS.joueurs[1].gagner_cran()
+	GS.joueurs[4].gagner_cran()
+	GS.regles.etoile_ramassee(GS.joueurs[0])
+	GS.regles.lion_touche_par_ennemi(GS.joueurs[3], Vector2.INF)
+	main.hud_bataille.marquer_parti(5)
+	var parti: Node = main.lions[5]
+	main._oublier_lion(parti)  # comme un départ en réseau : son lion disparaît
+	parti.queue_free()
+	GS.temps_ecoule = 41.2
+	await _attendre(0.4)
+	_poser_lions(main, [Vector2(150, 520), Vector2(620, 600), Vector2(712, 600), Vector2(1250, 450), Vector2(1600, 300)])
+	await _attendre(0.1)
+	await _shot("bataille_02_en_jeu_a_6")
+
+	# Les dix dernières secondes : le chrono rouge
+	GS.temps_ecoule = 84.35
+	await _attendre(0.2)
+	await _shot("bataille_03_dix_dernieres_secondes")
+
+	# À deux, ex æquo, en anglais
+	params.definir_langue("en")
+	main = await _charger(2, ["Anna", "Bruno"], 0)
+	_poser_lions(main, [Vector2(0, 500), Vector2(95, 500)])
+	_poser_scores(main.ville.territoire, [300, 300])
+	GS.temps_ecoule = 60.0
+	await _attendre(0.3)
+	await _shot("bataille_04_egalite_a_2_anglais")
+	params.definir_langue("fr")
+	_quitter_la_bataille()
+
+
+## Un autre écran Résultats sur la même fin, vu d'un autre poste (`hote`, `en_reseau`), à la place du
+## premier.
+func _revoir(main: Node, hote: bool, en_reseau: bool) -> CanvasLayer:
+	var bilan: BilanManche = main.resultats.bilan
+	main.resultats.free()
+	var vue: CanvasLayer = load("res://Scenes/Resultats.tscn").instantiate()
+	main.add_child(vue)
+	main.resultats = vue
+	vue.afficher(bilan, hote, en_reseau)
+	vue.terminer_animation()
+	return vue
+
+
+func _resultats() -> void:
+	var params: Node = root.get_node("Parametres")
+	var main := await _charger(6, ["Clément", "WWWWWWWWWWWW", "Zoé", "Bob", "Léa-Marie 2", "Max"], 1)
+	_poser_scores(main.ville.territoire, [260, 410, 180, 90, 410, 30])
+	var stats := [[3, 120, 9], [5, 340, 4], [0, 60, 12], [1, 0, 2], [5, 280, 4], [0, 0, 1]]
+	for i in range(6):
+		GS.joueurs[i].etourdissements_infliges = stats[i][0]
+		GS.joueurs[i].cellules_volees = stats[i][1]
+		GS.joueurs[i].chocs = stats[i][2]
+	main.hud_bataille.marquer_parti(5)
+	GS.temps_ecoule = 89.5
+	while GS.partie_en_cours:
+		await process_frame
+	await _attendre(0.9)
+	await _shot("resultats_01_animation")
+	main.resultats.marquer_parti(5)
+	await _attendre(3.0)
+	await _shot("resultats_02_hote_local_a_6")
+	var vue := _revoir(main, false, true)
+	vue.marquer_parti(5)
+	await _attendre(0.3)
+	await _shot("resultats_03_client")
+	vue = _revoir(main, true, true)
+	vue.marquer_parti(5)
+	vue._deplacer_selection(1)
+	await _attendre(0.3)
+	await _shot("resultats_04_hote_reseau_niveau_suivant")
+	for i in range(1, 5):
+		vue.marquer_parti(i)
+	await _attendre(0.3)
+	await _shot("resultats_05_hote_seul")
+	params.definir_langue("en")
+	main = await _charger(2, ["Anna", "Bruno"], 2)
+	_poser_scores(main.ville.territoire, [300, 300])
+	GS.joueurs[0].chocs = 6
+	GS.joueurs[1].chocs = 6
+	GS.temps_ecoule = 89.5
+	while GS.partie_en_cours:
+		await process_frame
+	_revoir(main, true, true)
+	await _attendre(0.3)
+	await _shot("resultats_06_egalite_a_2_anglais")
+	params.definir_langue("fr")
+	_quitter_la_bataille()
