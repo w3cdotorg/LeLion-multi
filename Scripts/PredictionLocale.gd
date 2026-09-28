@@ -36,7 +36,8 @@ const DUREE_CORRECTION := 0.04
 const DECALAGE_NEGLIGEABLE := 0.5
 ## Commandes gardées au plus pour le rejeu (2 s) : un hôte figé n'en accuse plus aucune.
 const HISTORIQUE_MAX := 120
-## Erreurs de prédiction gardées pour les statistiques (tests).
+## Erreurs de prédiction gardées pour les statistiques (tests) : 20 000 (5,5 min de jeu, 160 Ko), assez
+## pour une manche de 90 s même sous le relais du test réseau.
 const JOURNAL_MAX := 20000
 
 ## Numéro de la dernière commande lue (0 : aucune encore).
@@ -49,6 +50,10 @@ var recalages := 0
 var rejeu_max := 0
 ## Vrai une fois la manche finie (`arreter`).
 var arretee := false
+## Vrai si l'erreur de chaque état neuf est gardée dans le journal (`erreur_max`, `erreurs_au_dela`,
+## `etats_depuis`) : instrumentation des tests (phase 19, M5 de la revue finale 16), tenue dans les builds
+## de débogage (l'éditeur, les tests headless), jamais dans le jeu livré (l'`.exe` d'export release).
+var journal_actif := OS.is_debug_build()
 
 var _lion: Lion
 ## Les actions de ce poste, lues une fois par tick.
@@ -180,7 +185,7 @@ func _recaler(etat: Dictionary, delta: float) -> void:
 	var avant: Vector2 = _lion.position
 	while not _historique.is_empty() and _historique[0].numero <= accuse:
 		var appliquee: Dictionary = _historique.pop_front()
-		if appliquee.numero == accuse and _journal.size() < JOURNAL_MAX:
+		if journal_actif and appliquee.numero == accuse and _journal.size() < JOURNAL_MAX:
 			_journal.append(Vector2(accuse, (etat.position as Vector2).distance_to(appliquee.predite)))
 	_lion.position = etat.position
 	_lion.deplacement.vitesse = etat.vitesse

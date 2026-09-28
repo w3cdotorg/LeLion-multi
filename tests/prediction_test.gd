@@ -128,12 +128,33 @@ func _run() -> void:
 	await _scenario_ecarts()
 	await _scenario_hote_fige()
 	await _scenario_fin_de_manche()
+	await _scenario_journal()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false
 	GS.pret = false
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
+
+
+## Phase 19 (M5 de la revue finale 16) : le journal des erreurs de prédiction est de l'instrumentation de
+## test, tenue dans les builds de débogage seulement (les tests, l'éditeur) ; coupé (le jeu livré), il ne
+## garde rien, et la prédiction ne change pas (états reçus, recalage, convergence).
+func _scenario_journal() -> void:
+	print("-- Journal de la prédiction coupé (le jeu livré)")
+	_preparer(Vector2(300, 150), Vector2(400, 600), 80.0, 40.0, 5.0, 2100)
+	var p: Node = c1.prediction
+	_check(p.journal_actif == OS.is_debug_build() and p.journal_actif, "(pré-condition) les tests tournent en build de débogage : le journal y est tenu")
+	p.journal_actif = false
+	_presser(Vector2.RIGHT)
+	for i in range(60):
+		await _pas()
+	_relacher()
+	for i in range(30):
+		await _pas()
+	_check(p.etats_recus > 30 and p.etats_depuis(0) == 0 and p.erreur_max() == -1.0 and c1.position.distance_to(h1.position) < ECART_MAX,
+		"journal coupé : %d états reçus, aucun gardé, et le lion du client rejoint celui de l'hôte (%.2f px)" % [p.etats_recus, c1.position.distance_to(h1.position)])
+	await _liberer()
 
 
 # --- Les deux postes ---------------------------------------------------------------------------------
