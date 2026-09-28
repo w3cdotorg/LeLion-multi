@@ -1690,6 +1690,19 @@ func _tester_joueur_replique() -> void:
 	_check(Regles.taille_fenetre(ReglesBataille.TAILLE_ECRAN, Vector2i(1400, 454)) == Vector2i(1400, 788)
 		and Regles.taille_fenetre(Regles.TAILLE_ECRAN_SOLO, Vector2i(1400, 788)) == Vector2i(1400, 454),
 		"hors du solo, la fenêtre prend le format 16:9 (1400×788), et le reprend du solo au retour (1400×454)")
+	# Phase 19 (M7 de la revue finale 14) : la fenêtre tient dans la zone utile de son écran, au même format
+	var place_1080p := Vector2i(1920, 1040 - 31)  # 1080p moins la barre des tâches (40) et la barre de titre (31)
+	_check(Regles.taille_bornee(Vector2i(1920, 1080), place_1080p) == Vector2i(1793, 1009)
+		and Regles.taille_bornee(Vector2i(1400, 788), place_1080p) == Vector2i(1400, 788)
+		and Regles.taille_bornee(Vector2i(1400, 454), Vector2i(1366, 697)) == Vector2i(1366, 442)
+		and Regles.taille_bornee(Vector2i(1400, 788), Vector2i.ZERO) == Vector2i(1400, 788),
+		"une fenêtre qui dépasse la zone utile se réduit à son format (1920×1080 : 1793×1009 sur un écran 1080p ; 1400×454 : 1366×442 sur 1366 px), une fenêtre qui tient ne change pas")
+	var zone := Rect2i(0, 0, 1920, 1040)
+	_check(Regles.position_dans(Vector2i(300, 200), Vector2i(1400, 819), zone) == Vector2i(300, 200)
+		and Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), zone) == Vector2i(520, 221)
+		and Regles.position_dans(Vector2i(-50, -10), Vector2i(1400, 819), zone) == Vector2i(0, 0)
+		and Regles.position_dans(Vector2i(1920 + 100, 0), Vector2i(1400, 819), Rect2i(1920, 0, 1280, 984)) == Vector2i(1920, 0),
+		"une fenêtre qui sort de la zone utile y revient, collée au bord qu'elle dépassait (au coin si elle est plus grande, second écran compris)")
 
 
 
