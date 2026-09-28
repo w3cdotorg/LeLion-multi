@@ -75,9 +75,14 @@ jobs:
           timeout 180 godot --headless --script tests/screenshots.gd -- --dossier="$D" 2>&1 | tee captures.log
           timeout 120 godot --headless --script tests/deux_fenetres.gd -- --role=client --dossier="$D" > deux_fenetres_client.log 2>&1 &
           CLIENT=$!
-          timeout 120 godot --headless --script tests/deux_fenetres.gd -- --role=hote --dossier="$D" 2>&1 | tee deux_fenetres_hote.log
-          wait "$CLIENT"
+          statut_hote=0
+          timeout 120 godot --headless --script tests/deux_fenetres.gd -- --role=hote --dossier="$D" 2>&1 | tee deux_fenetres_hote.log || statut_hote=$?
+          statut_client=0
+          wait "$CLIENT" || statut_client=$?
           cat deux_fenetres_client.log
+          if [ "$statut_hote" -ne 0 ] || [ "$statut_client" -ne 0 ]; then
+            echo "::error::tests/deux_fenetres.gd a échoué (hôte $statut_hote, client $statut_client)"; exit 1
+          fi
           if grep -nE "SCRIPT ERROR|SHADER ERROR|❌" captures.log deux_fenetres_hote.log deux_fenetres_client.log; then echo "::error::erreur dans un script de captures"; exit 1; fi
           [ "$(grep -c "📸" captures.log)" -eq 37 ] || { echo "::error::tests/screenshots.gd n'a pas déroulé ses 37 captures"; exit 1; }
           [ "$(grep -c "📸" deux_fenetres_hote.log)" -eq 5 ] && [ "$(grep -c "📸" deux_fenetres_client.log)" -eq 6 ] \
@@ -106,14 +111,27 @@ jobs:
           sudo apt-get install -y -qq icoutils > /dev/null
           EXE=export/windows/LeLion-multi.exe
           MODELE="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/windows_release_x86_64.exe"
+          test -s "$MODELE" || { echo "::error::le modèle de template Windows est vide ou introuvable"; exit 1; }
           VERSION="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' project.godot)"
+          # `config/version` peut avoir deux ou trois nombres ("0.19" ou "0.19.1") ; la ressource
+          # de version en veut quatre : on complète par des zéros avant de chercher la chaîne.
+          VERSION4="$VERSION"
+          N="$(awk -F. '{print NF}' <<< "$VERSION")"
+          while [ "$N" -lt 4 ]; do VERSION4="${VERSION4}.0"; N=$((N + 1)); done
           # Les chaînes de la ressource de version (UTF-16) : le nom que montrent l'explorateur et la
           # fenêtre du pare-feu, la version du jeu sur quatre nombres.
           wrestool -x --raw --type=16 "$EXE" | strings -el > version_exe.txt
           cat version_exe.txt
           grep -qxF "LeLion multi" version_exe.txt || { echo "::error::le nom LeLion multi manque aux métadonnées de l'exe"; exit 1; }
-          grep -qxF "${VERSION}.0.0" version_exe.txt || { echo "::error::la version ${VERSION}.0.0 manque aux métadonnées de l'exe"; exit 1; }
-          if [ "$(wrestool -x --raw --type=3 "$EXE" | sha256sum)" = "$(wrestool -x --raw --type=3 "$MODELE" | sha256sum)" ]; then
+          grep -qxF "$VERSION4" version_exe.txt || { echo "::error::la version $VERSION4 manque aux métadonnées de l'exe"; exit 1; }
+          # Icône : les deux extractions vont dans des fichiers, pour qu'un échec de wrestool
+          # (icône absente, ressource illisible) ne se traduise pas en une comparaison vide qui
+          # passerait à tort.
+          wrestool -x --raw --type=3 "$EXE" > icone_exe.bin
+          wrestool -x --raw --type=3 "$MODELE" > icone_modele.bin
+          test -s icone_exe.bin || { echo "::error::l'extraction de l'icône de l'exe a échoué (fichier vide)"; exit 1; }
+          test -s icone_modele.bin || { echo "::error::l'extraction de l'icône du modèle a échoué (fichier vide)"; exit 1; }
+          if cmp -s icone_exe.bin icone_modele.bin; then
             echo "::error::l'exe porte encore l'icône de Godot"; exit 1
           fi
 
