@@ -101,12 +101,13 @@ gamepad, with the solo controls; Esc opens a local menu that does not pause the 
 2. **Réseau Privé**, sur chaque PC : Paramètres → Réseau et Internet → Wi-Fi (ou Ethernet) → le
    réseau → **Type de profil réseau** (Windows 11) ou **Profil réseau** (Windows 10) → **Privé**. En
    réseau Public, Windows bloque ce que LeLion reçoit.
-3. **Pare-feu, sur l'hôte** : au premier **Héberger une partie**, Windows affiche « Le Pare-feu
-   Windows Defender a bloqué certaines fonctionnalités de cette application » pour **LeLion multi** :
-   laisser **Réseaux privés** coché et cliquer **Autoriser l'accès** (Windows peut demander le mot de
-   passe d'un administrateur). Sans cela, les autres voient la partie mais ne peuvent pas la rejoindre.
-4. **Pare-feu, sur chaque autre PC** : à la première ouverture de l'écran Multijoueur, la même
-   fenêtre (LeLion y écoute les annonces des parties) : **Autoriser l'accès** aussi.
+3. **Pare-feu** : à la première ouverture de l'écran **Multijoueur**, sur chaque PC, hôte compris
+   (LeLion s'y met à écouter les annonces des parties) : Windows affiche « Le Pare-feu Windows
+   Defender a bloqué certaines fonctionnalités de cette application » pour **LeLion multi** :
+   laisser **Réseaux privés** coché et cliquer **Autoriser l'accès** (Windows peut demander le mot
+   de passe d'un administrateur). Sans cela, les autres voient la partie mais ne peuvent pas la
+   rejoindre. Sur l'hôte, Windows peut redemander au tout premier **Héberger une partie** (une
+   règle par port) : autoriser de la même façon.
 
 Ces fenêtres ne reviennent plus tant que l'exe reste au même endroit.
 

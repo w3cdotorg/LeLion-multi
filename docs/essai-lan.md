@@ -23,8 +23,9 @@ Pour installer et lancer le jeu, suivre la section « Jouer en LAN » du `README
 - [ ] Sur un PC : clic droit sur l'exe → Propriétés → Détails. Description « LeLion multi », version
   du fichier 0.19.0.0, copyright « Copyright 2026 w3cdotorg, GPL-3.0 » ; dans l'explorateur, l'icône
   du jeu (pas celle de Godot). Sinon, noter ce qui s'affiche : _______________
-- [ ] Au premier « Héberger une partie », la fenêtre du pare-feu parle de « LeLion multi » (pas de
-  « Godot Engine »). Sinon, noter le nom affiché : _______________
+- [ ] La fenêtre du pare-feu (écran Multijoueur, ou Héberger) parle de « LeLion multi » (pas de
+  « Godot Engine »). Noter QUAND elle est apparue (à l'écran Multijoueur, ou seulement au premier
+  Héberger, sur quel PC) : _______________ Sinon, noter le nom affiché : _______________
 
 Les PC de la soirée :
 
@@ -161,9 +162,12 @@ Le routeur ou la box : _______________ (un Wi-Fi maillé, TP-Link Deco, eero, Go
 - [ ] Revanche, Niveau suivant et Retour au salon font ce qu'on attend, chez tout le monde : oui /
   non
 - [ ] Chez l'hôte, Échap ouvre une confirmation (« Quitter la partie pour tout le monde ? ») au
-  lieu de quitter tout de suite. Un second Échap, ou Oui, quitte aussitôt ; Espace ou Entrée ne
-  quittent qu'après 1 seconde d'attente ; toute autre touche annule et revient à l'écran Résultats.
-  Ça se passe comme décrit, chez l'hôte comme chez les autres : oui / non, sur le PC : _______
+  lieu de quitter tout de suite. Un second Échap, ou le bouton Oui, confirment aussitôt ; vomir
+  (Espace), démarrer (Tab/Start) et Entrée sont ignorés pendant la première seconde après
+  l'ouverture, puis confirment ensuite ; toute autre touche ou bouton de manette, ou Non, annule
+  et revient à l'écran Résultats. Chez un joueur (pas l'hôte), Échap quitte tout de suite, sans
+  confirmation (son départ n'affecte que lui). Ça se passe comme décrit : oui / non, sur le
+  PC : _______
 
 | Réponse | Ce que fera la phase 19 bis |
 |---|---|
