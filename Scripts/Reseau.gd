@@ -181,7 +181,8 @@ var places_reservees := 0
 var numero_table := 0
 ## Le niveau de la manche lancée (index de `EtatPartie.NIVEAUX`) : chez l'hôte, celui du salon au
 ## lancement ; chez un client, celui que porte le lancement, même quand une table plus récente l'a
-## devancé (M6). Ce que charge chaque poste (`Salon.entrer_en_manche`).
+## devancé (M6). Ce que charge chaque poste (`Salon.entrer_en_manche`). Valide d'un lancement au
+## suivant ; remis à 0 par `quitter()`.
 var niveau_manche := 0
 ## Chez un client : pourquoi l'hôte a été perdu la dernière fois (PERTE_HOTE ou PERTE_EXCLU), posé juste
 ## avant `hote_perdu` ; ce que montrent la scène de jeu et le salon.

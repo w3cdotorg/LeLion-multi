@@ -87,8 +87,11 @@ static func taille_bornee(fenetre: Vector2i, place: Vector2i) -> Vector2i:
 
 ## Le coin d'une fenêtre de taille `taille` (bords compris) posée en `coin`, ramené dans la zone `zone`
 ## (M7) : inchangé si elle y tient ; collé au bord qu'elle dépasse sinon ; au coin de la zone si elle est
-## plus grande qu'elle.
+## plus grande qu'elle. Comme `taille_bornee` : `coin` inchangé si `zone` n'a pas de surface (écran
+## inconnu) plutôt que de reposer la fenêtre au hasard.
 static func position_dans(coin: Vector2i, taille: Vector2i, zone: Rect2i) -> Vector2i:
+	if zone.size.x <= 0 or zone.size.y <= 0:
+		return coin
 	return Vector2i(
 		clampi(coin.x, zone.position.x, maxi(zone.position.x, zone.end.x - taille.x)),
 		clampi(coin.y, zone.position.y, maxi(zone.position.y, zone.end.y - taille.y)))

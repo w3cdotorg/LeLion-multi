@@ -169,9 +169,13 @@ func _ma_fiche() -> Dictionary:
 
 
 ## Le niveau du salon devient celui de la partie : la balise de l'hôte l'annonce (`Decouverte` lit
-## `GameState.niveau_courant`), et chaque poste chargera ce niveau.
+## `GameState.niveau_courant`), et chaque poste chargera ce niveau. Pas pendant un lancement déjà
+## reçu (`_lance`) : une table plus récente du canal 0, reçue la même image que `manche_lancee` mais
+## avant le changement de scène différé, ne doit pas écraser le niveau de la manche qui va se jouer
+## (`entrer_en_manche` l'a déjà mis à `Reseau.niveau_manche`).
 func _sur_salon_change() -> void:
-	GameState.niveau_courant = Reseau.niveau_salon
+	if not _lance:
+		GameState.niveau_courant = Reseau.niveau_salon
 	_afficher()
 
 
