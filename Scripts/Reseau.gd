@@ -41,7 +41,9 @@ extends Node
 ## comprise (sinon un tampon, un territoire ou une fin retardés par une perte arriveraient dans la
 ## manche neuve). La table diffusée à chaque changement du salon reste sur le canal 0, celui de la
 ## poignée de main : sur le canal 1, la première table d'un arrivant pouvait devancer la fin de son
-## authentification et être jetée (vu en préparant la phase 18, sous le relais du test réseau).
+## authentification et être jetée (vu en préparant la phase 18, sous le relais du test réseau). Phase 19
+## (M6) : chaque table est numérotée ; un client ne repose jamais une table plus ancienne que la dernière
+## posée, d'où qu'elle vienne, et joue chaque manche sur la table et le niveau de son lancement.
 ##
 ## Autoload : les tests `--script`, compilés avant l'enregistrement des autoloads, le récupèrent
 ## par `root.get_node("Reseau")` et ne le nomment pas.
@@ -129,6 +131,11 @@ const DELAI_DEPART := 1000
 ## Canal ENet du lancement et du retour au salon, table comprise : le canal fiable ordonné de la manche
 ## (`Manche.CANAL_PEINTURE`, spec §4), phase 18.
 const CANAL_ORDONNE := 1
+
+## Ce que `_poser_salon` fait d'une table reçue de l'hôte (M6) : posée, plus ancienne que la dernière
+## posée (ignorée), ou illisible (ignorée, signalée).
+enum Pose { POSEE, PERIMEE, ILLISIBLE }
+
 ## Pour `adresse_ipv4`, la validation de l'écran Réseau (fonction statique : l'autoload n'est pas
 ## nommé). `Decouverte.gd` précharge aussi ce script : ce préchargement croisé passe en Godot 4.7.
 const _Decouverte := preload("res://Scripts/Decouverte.gd")
@@ -165,6 +172,17 @@ var places_salon := EtatPartie.NB_JOUEURS_MAX
 ## table (phase 18, M2 de la revue finale 13 : sans elles, un client lisait « l'hôte peut démarrer »
 ## pendant qu'un joueur arrivait, le bouton de l'hôte grisé).
 var places_reservees := 0
+## Numéro de la table du salon (M6, revue finale de la phase 18) : chez l'hôte, celui de la dernière
+## diffusée (un de plus à chaque `_diffuser_salon`) ; chez un client, celui de la dernière posée. La table
+## voyage sur deux canaux qui ne s'attendent pas (seule sur le canal 0, avec le lancement et le retour au
+## salon sur le canal ordonné) : chez un client, une table plus ancienne que la dernière posée (un
+## lancement ou un retour perdu puis renvoyé, arrivé après une table plus récente du canal 0) n'est
+## jamais reposée. 0 hors session.
+var numero_table := 0
+## Le niveau de la manche lancée (index de `EtatPartie.NIVEAUX`) : chez l'hôte, celui du salon au
+## lancement ; chez un client, celui que porte le lancement, même quand une table plus récente l'a
+## devancé (M6). Ce que charge chaque poste (`Salon.entrer_en_manche`).
+var niveau_manche := 0
 ## Chez un client : pourquoi l'hôte a été perdu la dernière fois (PERTE_HOTE ou PERTE_EXCLU), posé juste
 ## avant `hote_perdu` ; ce que montrent la scène de jeu et le salon.
 var raison_perte := PERTE_HOTE
@@ -280,6 +298,8 @@ func quitter() -> void:
 	niveau_salon = 0
 	places_salon = EtatPartie.NB_JOUEURS_MAX
 	places_reservees = 0
+	numero_table = 0
+	niveau_manche = 0
 	_exclu = false
 	index_local = -1
 	couleur_locale = Color.TRANSPARENT
@@ -583,7 +603,7 @@ func revenir_au_salon() -> bool:
 	definir_silence(SILENCE_SESSION)
 	ouvrir_salon(niveau_salon)
 	if en_ligne():
-		_recevoir_retour_salon.rpc(table_salon, niveau_salon, places_salon)
+		_recevoir_retour_salon.rpc(table_salon, niveau_salon, places_salon, places_reservees, numero_table)
 	salon_rouvert.emit()
 	return true
 
@@ -600,9 +620,10 @@ func _lancer() -> bool:
 	definir_silence(SILENCE_CHARGEMENT)
 	compacter_index(inscrits)
 	index_local = inscrits[multiplayer.get_unique_id()].index
+	niveau_manche = niveau_salon
 	_diffuser_salon()
 	if en_ligne():
-		_recevoir_manche.rpc(table_salon, niveau_salon)
+		_recevoir_manche.rpc(table_salon, niveau_salon, places_salon, places_reservees, numero_table)
 	manche_lancee.emit(fiches_de_manche(table_salon, multiplayer.get_unique_id()))
 	return true
 
@@ -710,16 +731,17 @@ static func fiches_de_manche(table: Array[Dictionary], id_local: int) -> Array[D
 	return fiches
 
 
-## Chez l'hôte : reconstruit `table_salon` depuis `inscrits` (arrivés seulement), la diffuse aux
-## clients (`rpc()` ne vise que les pairs connectés, donc arrivés : jamais une place seulement
-## réservée, M4) et émet `salon_change` ici.
+## Chez l'hôte : reconstruit `table_salon` depuis `inscrits` (arrivés seulement), la numérote (M6) et la
+## diffuse aux clients (`rpc()` ne vise que les pairs connectés, donc arrivés : jamais une place seulement
+## réservée, M4), puis émet `salon_change` ici.
 func _diffuser_salon() -> void:
 	if not multiplayer.is_server():
 		return
 	table_salon = table_de(inscrits)
 	places_reservees = inscrits.size() - table_salon.size()
+	numero_table += 1
 	if en_ligne():
-		_recevoir_salon.rpc(table_salon, niveau_salon, places_salon, places_reservees)
+		_recevoir_salon.rpc(table_salon, niveau_salon, places_salon, places_reservees, numero_table)
 	salon_change.emit()
 
 
@@ -737,23 +759,29 @@ func _demande_pret(pret: Variant) -> void:
 		definir_pret(multiplayer.get_remote_sender_id(), pret)
 
 
-## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible), avec le
-## niveau, les places et les places seulement réservées.
+## Chez un client : la table du salon diffusée par l'hôte (ignorée si elle est illisible ou plus ancienne
+## que la dernière posée), avec le niveau, les places, les places seulement réservées et son numéro.
 @rpc("authority", "call_remote", "reliable")
-func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant) -> void:
-	if not _poser_salon(table, niveau, nb_places, reservees):
+func _recevoir_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant, numero: Variant) -> void:
+	if _poser_salon(table, niveau, nb_places, reservees, numero) == Pose.ILLISIBLE:
 		push_warning("Reseau : table du salon illisible, ignorée")
 
 
-## Chez un client : pose la table du salon reçue de l'hôte, son niveau, ses places et ses places
-## seulement réservées ; ce poste y lit son index et sa couleur, puis `salon_change`. Faux, sans rien
-## changer, pour une table illisible (`lire_table`) ou des valeurs hors plage.
-func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant) -> bool:
+## Chez un client : pose la table du salon reçue de l'hôte, son niveau, ses places, ses places seulement
+## réservées et son numéro ; ce poste y lit son index et sa couleur, puis `salon_change` (POSEE). Rien ne
+## change pour une table illisible (`lire_table`), des valeurs hors plage (ILLISIBLE), ou une table plus
+## ancienne que la dernière posée (PERIMEE, M6 : un numéro égal est la même table, arrivée par l'autre
+## canal, reposée sans dommage).
+func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant, numero: Variant) -> Pose:
 	var lue := lire_table(table)
 	if lue.is_empty() or not (niveau is int) or niveau < 0 or niveau >= EtatPartie.NIVEAUX.size() \
 			or not (nb_places is int) or nb_places < EtatPartie.NB_JOUEURS_MIN or nb_places > EtatPartie.NB_JOUEURS_MAX \
-			or not (reservees is int) or reservees < 0 or reservees > EtatPartie.NB_JOUEURS_MAX - lue.size():
-		return false
+			or not (reservees is int) or reservees < 0 or reservees > EtatPartie.NB_JOUEURS_MAX - lue.size() \
+			or not (numero is int) or numero < 1:
+		return Pose.ILLISIBLE
+	if numero < numero_table:
+		return Pose.PERIMEE
+	numero_table = numero
 	table_salon = lue
 	niveau_salon = niveau
 	places_salon = nb_places
@@ -763,29 +791,37 @@ func _poser_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees
 			index_local = fiche.index
 			couleur_locale = fiche.couleur
 	salon_change.emit()
-	return true
+	return Pose.POSEE
 
 
 ## Chez un client : l'hôte lance la manche, sur la table compactée et le niveau `table`, `niveau` (phase
 ## 18 : avec le lancement, sur le canal ordonné, que la table diffusée sur le canal 0 peut ne pas
-## précéder). Le chargement commence : silence toléré SILENCE_CHARGEMENT.
+## précéder), ses places, ses places réservées et son numéro. La manche se joue toujours sur la table et
+## le niveau du lancement, ceux de l'hôte, même quand une table plus récente du canal 0 (un départ pendant
+## le chargement) l'a devancé et reste posée (M6). Le chargement commence : silence toléré
+## SILENCE_CHARGEMENT.
 @rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
-func _recevoir_manche(table: Variant, niveau: Variant) -> void:
-	var fiches := fiches_de_manche(table_salon, multiplayer.get_unique_id()) if _poser_salon(table, niveau, places_salon, 0) else [] as Array[Dictionary]
+func _recevoir_manche(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant, numero: Variant) -> void:
+	var fiches: Array[Dictionary] = []
+	if _poser_salon(table, niveau, nb_places, reservees, numero) != Pose.ILLISIBLE:
+		fiches = fiches_de_manche(lire_table(table), multiplayer.get_unique_id())
 	if fiches.is_empty():
 		push_warning("Reseau : lancement de manche sur une table illisible, ignoré")
 		return
+	niveau_manche = niveau
 	manche_en_cours = true
 	definir_silence(SILENCE_CHARGEMENT)
 	manche_lancee.emit(fiches)
 
 
-## Chez un client : l'hôte ramène tout le monde au salon (phase 18), sur la table `table`, son niveau et
-## ses places (la même que celle diffusée juste avant, sur le canal 0 ; aucune place n'est réservée
-## pendant une manche). Une table illisible est signalée, le retour a lieu quand même.
+## Chez un client : l'hôte ramène tout le monde au salon (phase 18), sur la table `table`, son niveau, ses
+## places, ses places réservées et son numéro (la même que celle diffusée juste avant, sur le canal 0).
+## Une table illisible est signalée ; une table plus ancienne que la dernière posée (une arrivée au salon
+## rouvert, diffusée sur le canal 0, a devancé ce retour perdu puis renvoyé) est ignorée, sans bruit
+## (M6) ; le retour a lieu dans les deux cas.
 @rpc("authority", "call_remote", "reliable", CANAL_ORDONNE)
-func _recevoir_retour_salon(table: Variant, niveau: Variant, nb_places: Variant) -> void:
-	if not _poser_salon(table, niveau, nb_places, 0):
+func _recevoir_retour_salon(table: Variant, niveau: Variant, nb_places: Variant, reservees: Variant, numero: Variant) -> void:
+	if _poser_salon(table, niveau, nb_places, reservees, numero) == Pose.ILLISIBLE:
 		push_warning("Reseau : table du retour au salon illisible, ignorée")
 	manche_en_cours = false
 	definir_silence(SILENCE_SESSION)

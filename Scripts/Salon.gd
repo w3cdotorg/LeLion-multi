@@ -182,11 +182,11 @@ func _sur_manche_lancee(fiches: Array[Dictionary]) -> void:
 
 
 ## Sur chaque poste, au lancement d'une manche (depuis le salon, ou depuis l'écran Résultats : Revanche,
-## Niveau suivant, phase 18) : le niveau du salon devient celui de la partie, les règles de bataille et la
-## table des joueurs sont branchées (`GameState.configurer_bataille_reseau`), puis la scène de jeu se
-## charge.
+## Niveau suivant, phase 18) : le niveau de la manche lancée (`Reseau.niveau_manche`, M6) devient celui de
+## la partie, les règles de bataille et la table des joueurs sont branchées
+## (`GameState.configurer_bataille_reseau`), puis la scène de jeu se charge.
 static func entrer_en_manche(arbre: SceneTree, fiches: Array[Dictionary]) -> void:
-	GameState.niveau_courant = Reseau.niveau_salon
+	GameState.niveau_courant = Reseau.niveau_manche
 	GameState.configurer_bataille_reseau(fiches)
 	arbre.change_scene_to_file(SCENE_JEU)
 
