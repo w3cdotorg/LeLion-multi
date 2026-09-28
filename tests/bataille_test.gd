@@ -858,6 +858,12 @@ func _tester_resultats() -> void:
 	await _frames(1)
 	var r: CanvasLayer = main.resultats
 	_check(r != null and r.visible and not main.hud_bataille.visible and paused, "la manche finie, l'écran Résultats remplace le HUD, tout figé")
+	# M2 de la revue finale : les boutons de choix, invisibles pendant l'animation (`modulate.a` à 0),
+	# restaient cliquables ; un clic direct (`.pressed.emit()`, comme un test, en plus du mouse_filter
+	# ignoré) ne doit rien choisir avant la fin
+	_check(not r.animation_finie, "(pré-condition) l'animation du bilan tourne encore")
+	r.bouton_revanche.pressed.emit()
+	_check(r.choix.is_empty(), "M2 : un bouton de choix cliqué pendant l'animation ne choisit rien (garde-fou, en plus du mouse_filter ignoré)")
 	var parts := ReglesBataille.parts(cellules)
 	_check(r.lignes.map(func(l: Dictionary) -> int: return l.index) == [1, 3, 0, 2]
 		and r.lignes.map(func(l: Dictionary) -> int: return l.cible) == [parts[1], parts[3], 0, 0] and parts[1] + parts[3] == 100,
@@ -884,15 +890,19 @@ func _tester_resultats() -> void:
 		and not r.bouton_revanche.disabled and r.bouton_suivant.text == "Niveau suivant : Métropole" and r.etat.text == ""
 		and [r.bouton_revanche, r.bouton_suivant, r.bouton_quitter].all(func(b: Button) -> bool: return b.focus_mode == Control.FOCUS_NONE),
 		"en bataille locale : Revanche, Niveau suivant (Métropole) et Quitter, sans Retour au salon ; aucun ne prend le focus")
-	# Au clavier : Espace tenu depuis le gong n'agit pas ; un appui termine l'animation ; un choix n'est pris
-	# qu'une seconde après
+	# Au clavier : Espace tenu depuis le gong n'agit pas ; un appui frais de vomir/démarrer/valider ne
+	# termine plus l'animation (M1 de la revue finale phase 18 : seules les flèches et Échap la
+	# terminent) ; un choix n'est pris qu'une seconde après la fin
 	await _appuyer(&"vomir", true)  # un événement de plus de la touche tenue
 	_check(not r.animation_finie and r.choix.is_empty(), "Espace tenu depuis le gong ne coupe pas l'animation et ne choisit rien")
 	await _appuyer(&"vomir", false)
 	Input.action_release("vomir")
+	await _appuyer(&"vomir", true)  # un appui frais, cette fois (relâché juste avant)
+	await _appuyer(&"vomir", false)
+	_check(not r.animation_finie and r.choix.is_empty(), "M1 : un appui frais de vomir, pendant l'animation, ne la termine plus (seules les flèches et Échap le font)")
 	await _appuyer(&"deplacer_droite", true)
 	await _appuyer(&"deplacer_droite", false)
-	_check(r.animation_finie and r.selection == &"revanche", "un appui pendant l'animation la termine, sans changer le choix sélectionné")
+	_check(r.animation_finie and r.selection == &"revanche", "une flèche pendant l'animation la termine, sans changer le choix sélectionné")
 	await _appuyer(&"deplacer_droite", true)
 	await _appuyer(&"deplacer_droite", false)
 	_check(r.selection == &"revanche", "juste après l'animation, un appui ne choisit encore rien (Espace martelé au gong)")
@@ -905,10 +915,13 @@ func _tester_resultats() -> void:
 	var suivante: Node = await _attendre_nouvelle_scene(avant)
 	await _appuyer(&"vomir", false)
 	await _verifier_manche_neuve(suivante, 1, "Niveau suivant")
-	# Revanche, à la souris : le même niveau
+	# Revanche, à la souris (M7 de la revue finale : le vrai bouton cliqué, pas `choisir` appelé
+	# directement) ; un clic n'agit qu'une fois l'animation finie (M2), comme un vrai clic n'arriverait
+	# qu'alors (le bouton n'ignore plus la souris qu'à ce moment-là)
 	GS.terminer_partie(true)
 	await _frames(1)
-	suivante.resultats.choisir(&"revanche")
+	suivante.resultats.terminer_animation()
+	suivante.resultats.bouton_revanche.pressed.emit()
 	var revanche: Node = await _attendre_nouvelle_scene(suivante.get_instance_id())
 	await _verifier_manche_neuve(revanche, 1, "Revanche")
 	# Extra (décision utilisateur, 27/09) : l'hôte, sur l'écran Résultats, ne quitte qu'après
@@ -922,22 +935,63 @@ func _tester_resultats() -> void:
 	await _appuyer(&"ui_cancel", false)
 	_check(current_scene == revanche and r2.confirmation_quitter and r2.choix.is_empty(),
 		"un premier Échap ne quitte pas : il demande confirmation à l'hôte (« Quitter la partie pour tout le monde ? »)")
-	_check(r2.etat.text == tr("RESULTATS_QUITTER_CONFIRMATION"), "la question de confirmation s'affiche (%s)" % r2.etat.text)
-	await _appuyer(&"deplacer_droite", true)
-	await _appuyer(&"deplacer_droite", false)
+	_check(r2.etat.text == tr("RESULTATS_QUITTER_CONFIRMATION") and r2.aide.text == tr("RESULTATS_AIDE_CONFIRMATION"),
+		"la question de confirmation s'affiche, et l'aide bascule sur la sienne (P1 de la revue finale : %s)" % r2.aide.text)
+	# M7 de la revue finale : le bouton Non (cliqué), pas seulement une touche mappée, annule aussi
+	r2.bouton_non.pressed.emit()
 	_check(not r2.confirmation_quitter and r2.choix.is_empty() and current_scene == revanche,
-		"une autre touche (Non) annule la confirmation, sans quitter ni rien choisir d'autre")
+		"le bouton Non (cliqué) annule la confirmation, sans quitter ni rien choisir d'autre")
 	await _appuyer(&"ui_cancel", true)
 	await _appuyer(&"ui_cancel", false)
 	_check(r2.confirmation_quitter, "(pré-condition) la confirmation redemandée")
-	# la touche de validation (Entrée, Start) confirme comme un second Échap (celui-ci : le scénario 13)
+	# M3 de la revue finale : n'importe quelle touche, même sans action mappée (ici Q), annule aussi
+	var touche_q := InputEventKey.new()
+	touche_q.keycode = KEY_Q
+	touche_q.pressed = true
+	root.push_input(touche_q)
+	await _frames(1)
+	touche_q.pressed = false
+	root.push_input(touche_q)
+	await _frames(1)
+	_check(not r2.confirmation_quitter and current_scene == revanche,
+		"M3 : une touche quelconque, non mappée (Q), annule aussi la confirmation")
+	# M7 de la revue finale : le bouton Quitter (cliqué) l'ouvre aussi
+	r2.bouton_quitter.pressed.emit()
+	_check(r2.confirmation_quitter, "le bouton Quitter (cliqué) ouvre aussi la confirmation")
+	# M1 de la revue finale : juste après l'ouverture, vomir/démarrer/valider ne confirment pas encore
+	# (le même geste qui vient d'ouvrir la confirmation ne doit pas la valider tout seul)
+	await _appuyer(&"demarrer", true)
+	await _appuyer(&"demarrer", false)
+	_check(r2.confirmation_quitter and current_scene == revanche,
+		"M1 : la touche de validation, juste après l'ouverture de la confirmation, ne confirme pas encore")
+	await _frames(int(r2.DELAI_CHOIX * Engine.physics_ticks_per_second) + 5)
+	# la touche de validation (Entrée, Start) confirme comme un second Échap, le délai passé (le
+	# scénario 13 du test réseau vérifie le même délai)
 	var avant_titre := revanche.get_instance_id()  # capturé avant : la confirmation va libérer la scène
 	await _appuyer(&"demarrer", true)
 	var apres_confirmation: Node = await _attendre_nouvelle_scene(avant_titre)
 	await _appuyer(&"demarrer", false)
 	_check(apres_confirmation != null and apres_confirmation.scene_file_path == "res://Scenes/Titre.tscn",
-		"la touche de validation (Entrée, Start) confirme : retour au titre")
+		"la touche de validation (Entrée, Start), le délai passé, confirme : retour au titre")
 	apres_confirmation.free()
+	await _frames(1)
+	GS.niveau_courant = 0
+	# M7 de la revue finale : le bouton Oui (cliqué) confirme aussitôt, sans attendre DELAI_CHOIX (lui
+	# seul, avec un second Échap, n'a pas ce délai : décision utilisateur du 27/09)
+	var main4 := await _charger_bataille(0)
+	await _attendre_depart()
+	GS.terminer_partie(true)
+	await _frames(1)
+	var r4: CanvasLayer = main4.resultats
+	r4.terminer_animation()
+	r4.bouton_quitter.pressed.emit()
+	_check(r4.confirmation_quitter, "(pré-condition) la confirmation ouverte par le bouton Quitter")
+	var avant_titre2 := main4.get_instance_id()
+	r4.bouton_oui.pressed.emit()
+	var titre_final: Node = await _attendre_nouvelle_scene(avant_titre2)
+	_check(titre_final != null and titre_final.scene_file_path == "res://Scenes/Titre.tscn",
+		"le bouton Oui (cliqué) confirme aussitôt, sans attendre DELAI_CHOIX : retour au titre")
+	titre_final.free()
 	await _frames(1)
 	GS.niveau_courant = 0
 

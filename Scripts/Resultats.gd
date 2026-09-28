@@ -11,17 +11,23 @@ extends CanvasLayer
 ## demandent au moins deux joueurs encore là. Un client voit « En attente de l'hôte… ». Chacun peut
 ## quitter (Quitter, Échap : le titre, qui quitte le réseau). Le choix part en signal (`choix_fait`) :
 ## c'est la scène de jeu qui le suit.
-## Commandes : aucun bouton ne prend le focus (la souris les clique) ; gauche et droite choisissent
-## parmi les choix de l'hôte, vomir (ou Tab, Start) valide, Échap (ou B) quitte ; une action n'agit qu'à
-## l'appui, jamais tenue depuis la manche (Espace tenu au gong ne choisit rien) ; un appui pendant
-## l'animation la termine ; un choix au clavier n'est pris que DELAI_CHOIX après la fin de l'animation
-## (un joueur qui martèle Espace au gong ne relance pas la manche sans le vouloir). Tourne l'arbre en
-## pause (la manche finie le fige).
+## Commandes : aucun bouton ne prend le focus (la souris les clique, ignorée pendant l'animation : voir
+## M2 de la revue finale, `mouse_filter` dans `_animer`/`terminer_animation`) ; gauche et droite
+## choisissent parmi les choix de l'hôte, vomir (ou Tab, Start) valide, Échap (ou B) quitte ; une action
+## n'agit qu'à l'appui, jamais tenue depuis la manche (Espace tenu au gong ne choisit rien) ; pendant
+## l'animation, seules gauche, droite et Échap la terminent (M1 de la revue finale : vomir, Tab/Start et
+## la validation restent sans effet, pour ne pas relancer la manche d'un Espace martelé au gong) ; un
+## choix au clavier n'est pris que DELAI_CHOIX après la fin de l'animation. Tourne l'arbre en pause (la
+## manche finie le fige).
 ## Extra (décision utilisateur, 27/09) : le départ de l'hôte ramène tout le monde au titre (le réseau
 ## quitté, ou l'unique poste de la bataille locale) ; Échap ou le bouton Quitter lui demandent donc
-## confirmation (« Quitter la partie pour tout le monde ? ») avant d'agir. Un second Échap, Oui ou la
-## touche de validation confirment ; toute autre touche ou Non annulent. Un client, dont le départ ne
-## retire que lui, n'a pas cette confirmation.
+## confirmation (« Quitter la partie pour tout le monde ? », Oui mis en évidence comme le choix
+## sélectionné, P1 de la revue finale) avant d'agir. Un second Échap ou Oui confirment aussitôt ; vomir
+## ou la touche de validation ne confirment qu'après DELAI_CHOIX depuis l'ouverture de la confirmation
+## (`_depuis_confirmation`, M1 de la revue finale : sinon le même geste qui l'ouvre la validerait) et
+## sont ignorés avant (ni confirmation ni annulation) ; toute autre touche ou bouton de manette, mappé
+## ou non (M3 de la revue finale), ou Non, annulent. Un client, dont le départ ne retire que lui, n'a
+## pas cette confirmation.
 
 signal choix_fait(choix: StringName)
 
@@ -69,8 +75,9 @@ var selection: StringName = &"revanche"
 var animation_finie := false
 ## Vrai le temps que l'hôte confirme un départ (Échap ou le bouton Quitter, une première fois) :
 ## « Quitter la partie pour tout le monde ? », Oui/Non, avant d'émettre `choix_fait`. Un second Échap
-## ou la touche de validation valent Oui ; toute autre touche ou le bouton Non annulent, sans rien
-## choisir d'autre.
+## ou le bouton Oui valent Oui aussitôt ; vomir ou la touche de validation ne valent Oui qu'après
+## DELAI_CHOIX (`_depuis_confirmation`, M1 de la revue finale) ; toute autre touche ou bouton de
+## manette, ou le bouton Non, annulent, sans rien choisir d'autre.
 var confirmation_quitter := false
 
 @onready var titre: Label = $Centre/Colonne/Titre
@@ -91,6 +98,10 @@ var confirmation_quitter := false
 var _tween: Tween
 ## Temps écoulé depuis la fin de l'animation (secondes) : DELAI_CHOIX avant un choix au clavier.
 var _depuis_animation := 0.0
+## Temps écoulé depuis l'ouverture de la confirmation de départ (secondes) : DELAI_CHOIX avant que
+## vomir ou la touche de validation ne valent Oui (M1 de la revue finale phase 18) ; avant ce délai,
+## ils sont ignorés, pour ne pas confirmer par le même geste qui vient d'ouvrir la confirmation.
+var _depuis_confirmation := 0.0
 ## Actions tenues : une action n'agit qu'à l'appui (voir `_unhandled_input`), jamais tenue depuis la
 ## manche : l'état de chaque action est relevé à l'ouverture.
 var _tenues: Dictionary[StringName, bool] = {}
@@ -105,6 +116,14 @@ func _ready() -> void:
 	_style_selection.set_border_width_all(4)
 	_style_selection.set_corner_radius_all(6)
 	_style_selection.set_content_margin_all(8)
+
+
+## M9 de la revue finale : la fenêtre perd le focus (alt-tab...) avec une touche tenue, dont le
+## relâchement (hors focus) n'arrive jamais ici ; sans ceci, la reprise du focus la croirait tenue
+## depuis toujours et un premier appui réel n'agirait pas.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_tenues.clear()
 
 
 ## Montre le bilan `bilan_` : `hote_` vrai sur le poste qui choisit pour tous, `en_reseau_` vrai en
@@ -130,7 +149,6 @@ func afficher(bilan_: BilanManche, hote_: bool, en_reseau_: bool) -> void:
 	bouton_suivant.visible = hote
 	var suivant: Dictionary = GameState.NIVEAUX[posmod(GameState.niveau_courant + 1, GameState.NIVEAUX.size())]
 	bouton_suivant.text = tr("RESULTATS_SUIVANT") % tr(suivant.nom)
-	aide.text = tr("RESULTATS_AIDE_HOTE" if hote else "RESULTATS_AIDE")
 	selection = &"revanche" if hote else &"quitter"
 	rafraichir()
 	_animer()
@@ -139,6 +157,8 @@ func afficher(bilan_: BilanManche, hote_: bool, en_reseau_: bool) -> void:
 func _process(delta: float) -> void:
 	if animation_finie:
 		_depuis_animation += delta
+	if confirmation_quitter:
+		_depuis_confirmation += delta
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -152,15 +172,29 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			_agir(action)
 		return
+	# M3 de la revue finale : pendant la confirmation de départ, n'importe quelle autre touche du
+	# clavier ou bouton de manette (mappé ou non à une action connue) l'annule, pas seulement
+	# deplacer_gauche/droite. Un relâchement (`not event.is_pressed()`) n'annule rien : sinon le
+	# relâchement de la touche qui a ouvert la confirmation l'annulerait aussitôt.
+	if confirmation_quitter and event.is_pressed() and not event.is_echo() \
+			and (event is InputEventKey or event is InputEventJoypadButton):
+		get_viewport().set_input_as_handled()
+		annuler_confirmation_quitter()
 
 
 ## Un appui sur `action` (jamais tenue depuis l'ouverture). Pendant la confirmation de départ de
-## l'hôte, seuls comptent : un second Échap, vomir ou la validation (Oui), ou toute autre touche (Non,
-## annule sans rien faire d'autre).
+## l'hôte, seuls comptent : un second Échap (confirme aussitôt), vomir ou la validation (confirment
+## seulement après DELAI_CHOIX depuis l'ouverture, sinon ignorés : M1 de la revue finale), ou toute
+## autre touche mappée (annule, comme `_unhandled_input` pour les autres).
 func _agir(action: StringName) -> void:
 	if confirmation_quitter:
-		if action in [&"ui_cancel", &"vomir", &"demarrer", &"ui_accept"]:
+		if action == &"ui_cancel":
 			choisir(&"quitter")
+		elif action in [&"vomir", &"demarrer", &"ui_accept"]:
+			if _depuis_confirmation >= DELAI_CHOIX:
+				choisir(&"quitter")
+			# sinon : ignoré, ni confirmation ni annulation (le geste qui vient d'ouvrir la
+			# confirmation ne doit pas la valider tout seul)
 		else:
 			annuler_confirmation_quitter()
 		return
@@ -168,7 +202,10 @@ func _agir(action: StringName) -> void:
 		choisir(&"quitter")
 		return
 	if not animation_finie:
-		terminer_animation()
+		# M1 de la revue finale : seules les flèches terminent l'animation ; vomir, Tab/Start et la
+		# validation (Espace martelé au gong, par exemple) n'ont plus aucun effet pendant qu'elle tourne.
+		if action in [&"deplacer_gauche", &"deplacer_droite"]:
+			terminer_animation()
 		return
 	if not hote or _depuis_animation < DELAI_CHOIX:
 		return
@@ -186,13 +223,20 @@ func _agir(action: StringName) -> void:
 ## boutons se grisent jusqu'à `annuler_choix`. Le départ de l'hôte (`quitter`) ramènerait tout le
 ## monde au titre : une première fois, il ouvre la confirmation (`confirmation_quitter`) au lieu de
 ## partir tout de suite ; un client, dont le départ n'affecte que lui, part sans confirmation.
+## Garde-fou (M2 de la revue finale) : les boutons sont invisibles (`modulate.a`) et leur `mouse_filter`
+## ignoré tant que l'animation tourne (`_animer`), mais un appui direct (`.pressed.emit()`, un test par
+## exemple) doit rester sans effet : seul Quitter (Échap ou son bouton) peut agir avant la fin, en la
+## terminant lui-même.
 func choisir(voulu: StringName) -> void:
 	if bilan == null or not choix.is_empty() or not possible(voulu):
+		return
+	if not animation_finie and voulu != &"quitter":
 		return
 	if voulu == &"quitter" and hote and not confirmation_quitter:
 		if not animation_finie:
 			terminer_animation()  # la question ne s'ouvre pas sur des barres encore en train de monter
 		confirmation_quitter = true
+		_depuis_confirmation = 0.0
 		rafraichir()
 		return
 	confirmation_quitter = false
@@ -227,8 +271,16 @@ func marquer_parti(index: int) -> void:
 
 
 ## Les boutons et les lignes à jour : départs, choix possibles, sélection, et la confirmation de
-## départ de l'hôte (qui masque les boutons habituels derrière Oui/Non).
+## départ de l'hôte (qui masque les boutons habituels derrière Oui/Non, Oui mis en évidence : P1 de la
+## revue finale).
 func rafraichir() -> void:
+	if hote:
+		# M5 de la revue finale : la sélection ne doit jamais rester sur un choix devenu impossible ou
+		# invisible (un joueur qui part rend Revanche/Niveau suivant impossibles, par exemple), sans
+		# quoi rien ne serait mis en évidence et vomir/la validation ne choisiraient plus rien.
+		var possibles := _choix_possibles()
+		if not selection in possibles and not possibles.is_empty():
+			selection = possibles[0]
 	for l in lignes:
 		var i: int = l.index
 		var badges := PackedStringArray()
@@ -248,14 +300,22 @@ func rafraichir() -> void:
 				b.add_theme_stylebox_override(nom, _style_selection)
 			else:
 				b.remove_theme_stylebox_override(nom)
+	for nom in ["normal", "hover"]:
+		if confirmation_quitter:
+			bouton_oui.add_theme_stylebox_override(nom, _style_selection)
+		else:
+			bouton_oui.remove_theme_stylebox_override(nom)
 	boutons.visible = not confirmation_quitter
 	confirmation_quitter_conteneur.visible = confirmation_quitter
 	if confirmation_quitter:
 		etat.text = tr("RESULTATS_QUITTER_CONFIRMATION")
-	elif hote:
-		etat.text = "" if possible(&"revanche") else tr("SALON_ATTENTE_JOUEURS")
+		aide.text = tr("RESULTATS_AIDE_CONFIRMATION")
 	else:
-		etat.text = tr("RESULTATS_ATTENTE_HOTE")
+		aide.text = tr("RESULTATS_AIDE_HOTE" if hote else "RESULTATS_AIDE")
+		if hote:
+			etat.text = "" if possible(&"revanche") else tr("SALON_ATTENTE_JOUEURS")
+		else:
+			etat.text = tr("RESULTATS_ATTENTE_HOTE")
 
 
 ## Vrai si le choix `voulu` peut se faire sur ce poste : Quitter toujours ; Revanche et Niveau suivant
@@ -294,7 +354,8 @@ func texte_gagnant(meneurs: PackedStringArray) -> String:
 	return tr("BATAILLE_EGALITE") % ", ".join(meneurs)
 
 
-## Affiche tout d'un coup (fin de l'animation, ou un appui qui la coupe).
+## Affiche tout d'un coup (fin de l'animation, ou un appui qui la coupe). M2 de la revue finale : les
+## boutons de choix reprennent leur clic (`mouse_filter`), invisibles et ignorés jusque-là.
 func terminer_animation() -> void:
 	if animation_finie:
 		return
@@ -307,6 +368,8 @@ func terminer_animation() -> void:
 	for c in cartes_titres:
 		(c.cadre as Control).modulate.a = 1.0
 	boutons.modulate.a = 1.0
+	for b in _boutons():
+		b.mouse_filter = Control.MOUSE_FILTER_STOP
 
 
 func _animer() -> void:
@@ -316,6 +379,10 @@ func _animer() -> void:
 	for c in cartes_titres:
 		(c.cadre as Control).modulate.a = 0.0
 	boutons.modulate.a = 0.0
+	# M2 de la revue finale : les boutons sont invisibles (`modulate.a`) mais recevraient encore les
+	# clics sans ceci.
+	for b in _boutons():
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tween = create_tween().set_parallel(true)
 	var debut := 0.0
 	for l in lignes:
@@ -337,15 +404,21 @@ func _ecrire_part(l: Dictionary, part: float) -> void:
 
 
 func _deplacer_selection(sens: int) -> void:
-	var possibles: Array[StringName] = []
-	for c in CHOIX:
-		if possible(c) and (_boutons()[CHOIX.find(c)] as Button).visible:
-			possibles.append(c)
+	var possibles := _choix_possibles()
 	if possibles.is_empty():
 		return
 	var k := possibles.find(selection)
 	selection = possibles[posmod(k + sens, possibles.size())] if k >= 0 else possibles[0]
 	rafraichir()
+
+
+## Les choix (parmi CHOIX, dans son ordre) à la fois possibles (`possible`) et visibles sur ce poste.
+func _choix_possibles() -> Array[StringName]:
+	var possibles: Array[StringName] = []
+	for c in CHOIX:
+		if possible(c) and (_boutons()[CHOIX.find(c)] as Button).visible:
+			possibles.append(c)
+	return possibles
 
 
 func _boutons() -> Array[Button]:

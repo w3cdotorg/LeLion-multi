@@ -2223,8 +2223,9 @@ func _tester_manche_reseau() -> void:
 		audio.demarrer_vomi()
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible and not audio._vomi.playing,
-			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige, la boucle du vomi s'arrête")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible and not audio._vomi.playing
+			and resultats.process_mode == Node.PROCESS_MODE_DISABLED,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige, la boucle du vomi s'arrête, l'écran Résultats caché ne prend plus les touches (M4 de la revue finale)")
 		paused = false
 		main.free()
 		await _frames(1)
@@ -2288,9 +2289,11 @@ func _tester_resultats_reseau() -> void:
 	await _frames(1)
 	_check(main.resultats != null and main.resultats.hote and main.resultats.possible(&"revanche") and main.resultats.possible(&"salon"),
 		"(pré-condition) la manche finie, l'écran Résultats de l'hôte, Bob encore là : Revanche possible")
-	# Revanche : la manche se relance chez tous, la scène de jeu se recharge et attend chaque joueur
+	# Revanche : la manche se relance chez tous, la scène de jeu se recharge et attend chaque joueur ;
+	# M7 de la revue finale : le vrai bouton cliqué (un clic n'agit qu'une fois l'animation finie, M2)
 	var id_premiere := main.get_instance_id()
-	main.resultats.choisir(&"revanche")
+	main.resultats.terminer_animation()
+	main.resultats.bouton_revanche.pressed.emit()
 	var revanche: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_premiere)
 	_check(revanche != null and revanche.get_instance_id() != id_premiere and not is_instance_valid(main) and lancements[0] == 1 and reseau.manche_en_cours
 		and not paused and revanche.en_reseau and not revanche.get_node("Manche").barriere and reseau.scenes_chargees == [1]
@@ -2303,7 +2306,8 @@ func _tester_resultats_reseau() -> void:
 	GS.terminer_partie(true)
 	await _frames(1)
 	var id_revanche := revanche.get_instance_id()
-	revanche.resultats.choisir(&"suivant")
+	revanche.resultats.terminer_animation()
+	revanche.resultats.bouton_suivant.pressed.emit()  # M7 de la revue finale : le vrai bouton cliqué
 	var suivante: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_revanche)
 	_check(suivante != null and lancements[0] == 2 and GS.niveau_courant == 1 and reseau.niveau_salon == 1 and not paused,
 		"Niveau suivant : la manche se relance sur le niveau suivant (Métropole), annoncé à chaque poste avec la table")
@@ -2317,19 +2321,38 @@ func _tester_resultats_reseau() -> void:
 	_check(resultats.partis == [false, true] and resultats.lignes.any(func(l: Dictionary) -> bool: return l.index == 1 and l.badge.text == "PARTI")
 		and not resultats.possible(&"revanche") and resultats.bouton_revanche.disabled and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
 		"Bob part sur l'écran Résultats : sa ligne se grise, Revanche et Niveau suivant attendent deux joueurs")
+	# M5 de la revue finale : Revanche (sélectionnée à l'ouverture) devient impossible avec Bob parti ;
+	# la sélection ne doit pas y rester sans rien mettre en évidence : Retour au salon, le premier
+	# choix de CHOIX encore possible et visible
+	_check(resultats.selection == &"salon", "M5 : la sélection quitte Revanche (devenu impossible) pour Retour au salon, encore possible")
 	resultats.choix = &"revanche"  # le choix fait (boutons grisés) au moment même où Bob part
 	suivante._sur_choix_resultats(&"revanche")  # l'hôte qui ne peut plus suivre : refusé, le choix se regrise
 	await _frames(2)
 	_check(current_scene == suivante and lancements[0] == 2 and resultats.choix.is_empty() and reseau.manche_en_cours,
 		"une relance que l'hôte ne peut plus suivre est refusée : l'écran reste, on peut encore choisir")
-	# Retour au salon : la même table (Bob en moins), personne prêt, les arrivées de nouveau acceptées
+	# Retour au salon : la même table (Bob en moins), personne prêt, les arrivées de nouveau acceptées ;
+	# M7 de la revue finale : le vrai bouton cliqué (un clic n'agit qu'une fois l'animation finie, M2)
 	var balise_manche: bool = reseau.manche_en_cours
-	resultats.choisir(&"salon")
+	# M8 de la revue finale : la vérification plus bas (aucune connexion aux autoloads) tournait après
+	# que l'ancien Main (`suivante`) soit libéré par le changement de scène : un objet déjà libéré ne
+	# peut plus détenir de connexion, qu'il se soit bien désabonné ou non dans `_exit_tree`, donc la
+	# vérification ne pouvait jamais échouer. On la fait plutôt dans `tree_exited`, juste après que
+	# `suivante` ait quitté l'arbre mais avant sa libération (encore un objet valide à cet instant).
+	var connexions_avant_liberation: Array[String] = []
+	suivante.tree_exited.connect(func() -> void:
+		for sig: Signal in [reseau.manche_lancee, reseau.salon_rouvert, reseau.hote_perdu]:
+			for connexion in sig.get_connections():
+				if connexion.callable.get_object() == suivante:
+					connexions_avant_liberation.append(String(sig.get_name())))
+	resultats.terminer_animation()
+	resultats.bouton_salon.pressed.emit()
 	var salon: Node = await _attendre_scene("res://Scenes/Salon.tscn")
 	_check(salon != null and salon.scene_file_path == "res://Scenes/Salon.tscn" and not paused and balise_manche and not reseau.manche_en_cours
 		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1] and not reseau.inscrits[1].pret
 		and salon.titre_niveau.text == "Niveau : Métropole",
 		"Retour au salon : le salon de l'hôte s'ouvre sur la même table (Bob parti), personne prêt, le niveau gardé, les arrivées acceptées")
+	_check(connexions_avant_liberation.is_empty(),
+		"M8 : l'ancien Main (parti au retour au salon) n'avait déjà plus aucune connexion aux autoloads, avant même d'être libéré (%s)" % [connexions_avant_liberation])
 	reseau.manche_lancee.disconnect(compter)
 	if salon != null:
 		salon.free()

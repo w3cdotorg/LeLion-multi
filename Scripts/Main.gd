@@ -236,6 +236,9 @@ func _sur_hote_perdu() -> void:
 	menu_pause.process_mode = Node.PROCESS_MODE_DISABLED
 	if resultats != null:
 		resultats.hide()  # une manche finie : le message remplace l'écran Résultats
+		# M4 de la revue finale (phase 18) : caché mais toujours dans l'arbre, il prenait encore les
+		# touches (Échap y aurait rouvert la confirmation de départ, sous le message).
+		resultats.process_mode = Node.PROCESS_MODE_DISABLED
 	var couche := CanvasLayer.new()
 	couche.name = "HotePerdu"
 	couche.layer = 10

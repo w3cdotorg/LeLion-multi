@@ -132,3 +132,4 @@ RESULTATS_AIDE,Échap : quitter,Esc: quit
 RESULTATS_QUITTER_CONFIRMATION,Quitter la partie pour tout le monde ?,Leave the game for everyone?
 RESULTATS_OUI,Oui,Yes
 RESULTATS_NON,Non,No
+RESULTATS_AIDE_CONFIRMATION,Échap ou Espace : oui · autre touche : non,Esc or Space: yes · any other key: no

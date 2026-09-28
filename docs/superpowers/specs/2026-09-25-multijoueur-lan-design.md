@@ -340,15 +340,25 @@ une gigue Wi-Fi de 30 à 100 ms. Sans prédiction, le retard ressenti serait de 
   boucle ; deux joueurs au moins pour l'un comme l'autre : la manche se relance chez tous sans
   repasser par le salon, la scène de jeu se recharge) ou *Retour au salon* (la même table) ; les
   clients voient « En attente de l'hôte… » ; chacun peut *Quitter* (Échap : le titre ; l'hôte qui
-  quitte ramène ses clients au titre). Aucun bouton ne prend le focus ; une action n'agit qu'à l'appui,
-  jamais tenue depuis la manche, et un choix au clavier n'est pris qu'1 s après l'animation (Espace
-  martelé au gong). En bataille locale : Revanche, Niveau suivant, Quitter.
+  quitte ramène ses clients au titre). Aucun bouton ne prend le focus (invisible ou non : un bouton
+  ignore la souris tant que l'animation tourne, `mouse_filter`, revue finale phase 18) ; une action
+  n'agit qu'à l'appui, jamais tenue depuis la manche ; pendant l'animation, seules les flèches et Échap
+  la terminent (vomir, Tab/Start et la validation restent sans effet, pour ne pas relancer la manche
+  d'un Espace martelé au gong, revue finale) ; un choix au clavier n'est pris qu'1 s après la fin de
+  l'animation ; la sélection ne reste jamais sur un choix devenu impossible ou invisible (elle se
+  déplace sur le premier choix encore possible, dans l'ordre Revanche/Niveau suivant/Retour au
+  salon/Quitter, revue finale). En bataille locale : Revanche, Niveau suivant, Quitter.
   **Confirmation du départ de l'hôte** (décision de l'utilisateur du 27/09) : le départ de l'hôte
   ramenant tout le monde au titre (le réseau quitté, ou l'unique poste de la bataille locale), Échap ou
   le bouton Quitter lui demandent d'abord confirmation (« Quitter la partie pour tout le monde ? »,
-  Oui/Non) ; un second Échap, vomir, la touche de validation (Entrée/Start, `ui_accept`) ou Oui
-  confirment, toute autre touche ou Non annulent, sans rien choisir d'autre. Un client, dont le départ
-  ne retire que lui, quitte sans confirmation, aussitôt.
+  Oui mis en évidence comme le choix sélectionné, l'aide basculant sur « Échap ou Espace : oui · autre
+  touche : non », `RESULTATS_AIDE_CONFIRMATION`, revue finale) ; un second Échap ou le bouton Oui
+  confirment aussitôt ; vomir ou la touche de validation (Entrée/Start, `ui_accept`) ne confirment
+  qu'1 s après l'ouverture de la confirmation (même délai que pour un choix au clavier, pour ne pas la
+  valider par le geste qui vient de l'ouvrir, revue finale) et sont ignorés avant (ni confirmation ni
+  annulation) ; toute autre touche du clavier ou bouton de manette, mappé ou non à une action connue,
+  ou Non, annulent, sans rien choisir d'autre. Un client, dont le départ ne retire que lui, quitte sans
+  confirmation, aussitôt.
 - **Traductions** : tous les nouveaux textes passent par `traductions.csv` (FR + EN).
 
 ## 9. Gestion des erreurs

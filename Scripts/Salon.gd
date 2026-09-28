@@ -76,6 +76,14 @@ func _ready() -> void:
 	_sur_salon_change()
 
 
+## M9 de la revue finale (phase 18) : la fenêtre perd le focus (alt-tab...) avec une touche tenue, dont
+## le relâchement (hors focus) n'arrive jamais ici ; sans ceci, la reprise du focus la croirait tenue
+## depuis toujours et un premier appui réel n'agirait pas.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_tenues.clear()
+
+
 ## Les autoloads survivent au salon : ne rien leur laisser. Ne quitte pas le réseau : la scène de
 ## jeu prend la suite d'une manche lancée ; seuls Retour et un hôte perdu le quittent.
 func _exit_tree() -> void:
