@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # Un tag vX.Y (la version de project.godot) publie une Release avec les trois jeux (job release)
+    tags: ["v*"]
   pull_request:
 
 env:
@@ -10,7 +12,7 @@ env:
 
 jobs:
   test-et-export:
-    name: Tests + exports Web et Windows
+    name: Tests + exports Web, Windows, Linux et macOS
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -142,3 +144,121 @@ jobs:
           path: export/windows/LeLion-multi.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Exporter pour Linux
+        shell: bash
+        run: |
+          mkdir -p export/linux
+          timeout 600 godot --headless --export-release Linux export/linux/LeLion-multi.x86_64
+          test -s export/linux/LeLion-multi.x86_64
+          ls -l export/linux
+
+      - name: Vérifier l'exécutable Linux (il démarre sans rendu et s'arrête seul)
+        shell: bash
+        run: |
+          set -euo pipefail
+          file export/linux/LeLion-multi.x86_64 | tee type_linux.txt
+          grep -q "ELF 64-bit.*x86-64" type_linux.txt || { echo "::error::l'exécutable Linux n'est pas un ELF x86-64"; exit 1; }
+          chmod +x export/linux/LeLion-multi.x86_64
+          statut=0
+          timeout 120 export/linux/LeLion-multi.x86_64 --headless --quit-after 300 > linux_demarrage.log 2>&1 || statut=$?
+          cat linux_demarrage.log
+          [ "$statut" -eq 0 ] || { echo "::error::l'exécutable Linux sort en $statut"; exit 1; }
+          if grep -nE "SCRIPT ERROR|SHADER ERROR" linux_demarrage.log; then echo "::error::erreur de script au démarrage de l'exécutable Linux"; exit 1; fi
+          # Une archive garde le droit d'exécution, que perd un fichier seul (artefact, téléchargement)
+          tar -czf export/LeLion-multi-linux.tar.gz -C export/linux LeLion-multi.x86_64
+
+      - name: Publier l'exécutable Linux (artefact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeLion-multi-linux
+          path: export/LeLion-multi-linux.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Exporter pour macOS
+        shell: bash
+        run: |
+          mkdir -p export/macos
+          timeout 600 godot --headless --export-release macOS export/macos/LeLion-multi-macos.zip
+          test -s export/macos/LeLion-multi-macos.zip
+          ls -l export/macos
+
+      - name: Vérifier l'application macOS (version, réseau local, signature ad hoc, binaire universel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' project.godot)"
+          D="$(mktemp -d)"
+          unzip -q export/macos/LeLion-multi-macos.zip -d "$D"
+          APP="$(find "$D" -maxdepth 2 -name "*.app" -type d | head -1)"
+          test -n "$APP" || { echo "::error::aucune application .app dans le zip macOS"; exit 1; }
+          echo "application : $(basename "$APP")"
+          python3 - "$APP/Contents/Info.plist" "$VERSION" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as f:
+              p = plistlib.load(f)
+          for cle in ("CFBundleName", "CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion", "NSLocalNetworkUsageDescription"):
+              print(f"{cle} = {p.get(cle)}")
+          erreurs = []
+          if p.get("CFBundleShortVersionString") != sys.argv[2]:
+              erreurs.append(f"version {p.get('CFBundleShortVersionString')} au lieu de {sys.argv[2]}")
+          if p.get("CFBundleIdentifier") != "org.w3cdotorg.lelion-multi":
+              erreurs.append("identifiant de l'application inattendu")
+          if not p.get("NSLocalNetworkUsageDescription"):
+              erreurs.append("pas de NSLocalNetworkUsageDescription (macOS refuserait la découverte des parties)")
+          for e in erreurs:
+              print(f"::error::Info.plist : {e}")
+          sys.exit(1 if erreurs else 0)
+          PY
+          test -f "$APP/Contents/_CodeSignature/CodeResources" || { echo "::error::l'application n'est pas signée (ad hoc)"; exit 1; }
+          BIN="$(find "$APP/Contents/MacOS" -type f | head -1)"
+          file "$BIN" | tee type_macos.txt
+          grep -q "Mach-O universal binary with 2 architectures" type_macos.txt || { echo "::error::le binaire macOS n'est pas universel (Intel + Apple Silicon)"; exit 1; }
+
+      - name: Publier l'application macOS (artefact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeLion-multi-macos
+          path: export/macos/LeLion-multi-macos.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Release (tag vX.Y)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test-et-export
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Récupérer les trois jeux
+        uses: actions/download-artifact@v4
+        with:
+          path: jeux
+
+      - name: Publier la Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' project.godot)"
+          [ "$GITHUB_REF_NAME" = "v$VERSION" ] || { echo "::error::le tag $GITHUB_REF_NAME ne suit pas la version du jeu ($VERSION) : tag attendu v$VERSION"; exit 1; }
+          ls -lR jeux
+          cat > notes.md <<NOTES
+          LeLion multi $VERSION : la bataille de peinture en réseau local, de 2 à 6 joueurs.
+
+          - **Windows** : \`LeLion-multi.exe\`.
+          - **Linux** (x86_64) : \`LeLion-multi-linux.tar.gz\`, à extraire, puis lancer \`LeLion-multi.x86_64\`.
+          - **macOS** (Intel et Apple Silicon) : \`LeLion-multi-macos.zip\`, à extraire. L'application n'est pas notarisée : au premier lancement, Réglages Système → Confidentialité et sécurité → « Ouvrir quand même », puis accepter l'accès au réseau local.
+
+          Tout le monde doit avoir la même version. Mise en place et dépannage : section « Jouer en LAN » du README.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "LeLion multi $VERSION" --notes-file notes.md \
+            jeux/LeLion-multi-windows/LeLion-multi.exe \
+            jeux/LeLion-multi-linux/LeLion-multi-linux.tar.gz \
+            jeux/LeLion-multi-macos/LeLion-multi-macos.zip
