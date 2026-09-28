@@ -3,6 +3,9 @@ extends SceneTree
 ## Logique pure (Joueur, puis territoire, couleurs, protocole…), sans charger de scène de jeu.
 
 var _echecs := 0
+## La version du protocole et son empreinte, mesurées (`_tester_protocole`).
+const PROTOCOLE_VERSION := "0.19"
+const PROTOCOLE_EMPREINTE := 3329073800
 
 
 func _init() -> void:
@@ -47,6 +50,7 @@ func _run() -> void:
 	_tester_placement_pseudos()
 	_tester_bilan_manche()
 	_tester_manches_enchainees()
+	_tester_protocole()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -2353,6 +2357,69 @@ func _tester_manches_enchainees() -> void:
 	gs.configurer_solo()
 	gs.nouvelle_partie()
 	gs.partie_en_cours = false
+
+
+## Phase 19 (M7 de la revue de la phase 11) : `application/config/version` est aussi la version du
+## protocole, présentée à la poignée de main et dans la balise ; deux postes de versions différentes se
+## refusent (« Version différente de l'hôte »), deux postes de la même version doivent donc parler le même
+## protocole. Son empreinte (`_signature_protocole`) change avec lui : une empreinte neuve sous la même
+## version fait échouer ce test, jusqu'à ce que la version augmente et que PROTOCOLE_VERSION et
+## PROTOCOLE_EMPREINTE la notent (la ligne PROTOCOLE de la sortie les donne).
+func _tester_protocole() -> void:
+	print("-- Version du protocole (phase 19)")
+	var lignes := _signature_protocole()
+	var empreinte := "\n".join(lignes).hash()
+	var version: String = ProjectSettings.get_setting("application/config/version")
+	print("PROTOCOLE %s %d (%d lignes)" % [version, empreinte, lignes.size()])
+	if version != PROTOCOLE_VERSION:
+		_check(false, "la version (%s) n'est plus celle que note ce test (%s) : noter ici la version et l'empreinte de la ligne PROTOCOLE" % [version, PROTOCOLE_VERSION])
+	else:
+		_check(empreinte == PROTOCOLE_EMPREINTE,
+			"le protocole (RPC, réplication, formats réseau, balise) est celui de la version %s ; s'il a changé, augmenter application/config/version, puis noter ici la version et l'empreinte de la ligne PROTOCOLE" % version)
+
+
+## Ce qui fait le protocole réseau, une ligne par élément, dans un ordre fixe : chaque RPC des scripts qui
+## en déclarent (nom, nombre d'arguments, mode, transfert, appel local, canal), les propriétés répliquées
+## des scènes (`MultiplayerSynchronizer`) et les scènes que fait apparaître la scène de jeu, les tailles des
+## formats réseau, et une balise de découverte.
+func _signature_protocole() -> PackedStringArray:
+	var lignes := PackedStringArray()
+	for fichier in _fichiers_du_dossier("res://Scripts", ".gd"):
+		var chemin := "res://Scripts".path_join(fichier)
+		if not FileAccess.get_file_as_string(chemin).contains("@rpc"):
+			continue
+		var script: Script = load(chemin)
+		var nb_arguments := {}
+		for methode: Dictionary in script.get_script_method_list():
+			nb_arguments[String(methode.name)] = methode.args.size()
+		var config: Dictionary = script.get_rpc_config()
+		var noms: Array[String] = []
+		for nom: StringName in config:
+			noms.append(String(nom))
+		noms.sort()  # des String : un tri de StringName ne suit pas l'ordre alphabétique
+		for nom in noms:
+			var c: Dictionary = config[StringName(nom)]
+			lignes.append("%s %s(%d) %s %s %s %s" % [fichier, nom, nb_arguments.get(nom, -1), c.get("rpc_mode"),
+				c.get("transfer_mode"), c.get("call_local"), c.get("channel", 0)])
+	for fichier in _fichiers_du_dossier("res://Scenes", ".tscn"):
+		for ligne in FileAccess.get_file_as_string("res://Scenes".path_join(fichier)).split("\n"):
+			if ligne.begins_with("properties/") or ligne.begins_with("_spawnable_scenes"):
+				lignes.append("%s %s" % [fichier, ligne.strip_edges()])
+	lignes.append("formats %d %d %d %d %d %d %d %d" % [EtatLion.TAILLE, BilanManche.CHAMPS, BilanManche.TAILLE_LION,
+		Commandes.TAILLE_ENTETE, Commandes.TAILLE_COMMANDE, Commandes.REDONDANCE, Peinture.OCTETS_PAR_TAMPON,
+		Territoire.OCTETS_PAR_CHANGEMENT])
+	lignes.append("balise " + load("res://Scripts/Decouverte.gd").encoder_balise("V", 1, 2, 3, true, 0, "P").get_string_from_utf8())
+	return lignes
+
+
+## Les fichiers du dossier `dossier` qui finissent par `suffixe`, triés.
+func _fichiers_du_dossier(dossier: String, suffixe: String) -> PackedStringArray:
+	var fichiers := PackedStringArray()
+	for f in DirAccess.get_files_at(dossier):
+		if f.ends_with(suffixe):
+			fichiers.append(f)
+	fichiers.sort()
+	return fichiers
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux
