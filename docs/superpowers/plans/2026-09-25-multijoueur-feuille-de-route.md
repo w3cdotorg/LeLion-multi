@@ -84,7 +84,8 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 | 17 | **HUD de bataille, fin au chrono et sons** (17 et 17 bis réunies) : HUD à part du solo (une vignette par joueur dans l'ordre des index : pseudo, lion teint et couronné de travers pour chaque meneur ex æquo compris, part des cellules peintes (100 % à eux tous), rang, crans en points, gerbe XXL décomptée par le HUD, étourdissement, départ en grisé ; celle de ce poste mise en évidence ; chrono de 90 s rouge et tic dans les 10 dernières secondes) ; la manche finie au chrono de l'hôte seul, sa fin (chrono, scores) envoyée à chaque client après ses derniers tampons et son territoire, les départs annoncés ; panneau de fin et sortie (Échap : le titre) en attendant les Résultats ; musique au tiers du temps de la manche ; pseudos des lions écartés sans se chevaucher, dans l'écran (`PlacementPseudos`) ; rythme de la manche à 4-6 (pastilles à plusieurs, toutes les 4 s, qui expirent, loin du centre des lions ; 3 s de répit après un ennemi, pause du peintre doublée) ; sons (« boing » de chaque choc sur chaque poste, étourdissement, gong, tic, annonce du peintre chez les clients, boucle du vomi du seul lion local) ; scénario 13 du test réseau (fin au chrono sous latence simulée) et HUD dans l'empreinte ; version 0.17. | ➕ `Scenes/HUDBataille.tscn` ➕ `Scripts/HUDBataille.gd` ➕ `Scripts/PlacementPseudos.gd` ➕ `Assets/Sons/boing.wav` `tic.wav` `fin.wav` `etourdi.wav` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/ReglesBataille.gd` ✏️ `Scripts/GameState.gd` ✏️ `Scripts/Audio.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/PareChocs.gd` ✏️ `Scripts/Boss.gd` ✏️ `Scenes/Boss.tscn` ✏️ `Scripts/Main.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Spawner.gd` ✏️ `tools/generer_sons.py` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/bataille_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ HUD à 6, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5) |
 | 17 bis | (réunie avec la 17, même PR) | | |
 | 18 | **Résultats** : la fin de manche de l'hôte porte son bilan (`BilanManche` : chrono ; par joueur, cellules, crans, étourdissements infligés, cellules volées, chocs, départ ; l'état final de chaque lion), que chaque client applique (lions posés, prédiction arrêtée) ; l'écran Résultats sur chaque poste, tiré du seul bilan (classement en barres animées, pseudo, couleur, part des cellules peintes, gagnant ou ex æquo, statistiques, les trois titres ex æquo compris), à la place du HUD et de son panneau de fin ; l'hôte choisit pour tous Revanche, Niveau suivant (deux joueurs au moins : la manche se relance chez tous, la scène de jeu se recharge) ou Retour au salon (la même table), les clients attendent, chacun peut quitter (commandes à l'appui, sans focus, choix au clavier 1 s après l'animation) ; le départ de l'hôte demande confirmation (« Quitter la partie pour tout le monde ? », décision de l'utilisateur du 27/09), pas celui d'un client ; le lancement et le retour au salon, avec leur table, sur le canal ordonné de la manche, rien d'une manche finie dans la suivante ; le lion distant ne recule plus pendant un accroc (M2 de la revue 16) ; les places réservées vues des clients, le stick tenu à l'entrée du salon, les adresses relevées une fois ; l'exclusion dite à l'exclu ; la boucle du vomi arrêtée à l'hôte perdu ; scénario 13 étendu (Résultats identiques, revanche, départ sur l'écran Résultats, retour au salon) ; version 0.18. | ➕ `Scripts/BilanManche.gd` ➕ `Scenes/Resultats.tscn` ➕ `Scripts/Resultats.gd` ✏️ `Scripts/InterpolationLion.gd` ✏️ `Scripts/Lion.gd` ✏️ `Scripts/PredictionLocale.gd` ✏️ `Scripts/Manche.gd` ✏️ `Scripts/Main.gd` ✏️ `Scripts/HUDBataille.gd` ✏️ `Scenes/HUDBataille.tscn` ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Salon.gd` ✏️ `Scripts/Titre.gd` ✏️ `Assets/Traductions/traductions.csv` ✏️ `project.godot` ✏️ `tests/unitaires.gd` ✏️ `tests/smoke_test.gd` ✏️ `tests/bataille_test.gd` ✏️ `tests/prediction_test.gd` ✏️ `tests/reseau/joueur.gd` ✏️ `tests/reseau/lancer.sh` | ◉ résultats, suites vertes 5 fois, test réseau vert 5 fois (bash 3.2 et 5) |
-| 19 | **Livraison Windows** : preset, `.pck` intégré, artefact CI, README « Jouer en LAN », captures. | ✏️ `export_presets.cfg` ✏️ `.github/workflows/ci.yml` ✏️ `README.md` ✏️ `tests/screenshots.gd` ✏️ `project.godot` | `.exe` en artefact, testé sur Windows par l'utilisateur |
+| 19 | **Livraison Windows** : l'exe à l'icône, au nom (« LeLion multi », aussi dans la fenêtre du pare-feu) et à la version du jeu, vérifiés par la CI (le preset, le `.pck` intégré et l'artefact venaient de la PR #26) ; README (le multijoueur, « Jouer en LAN » en français : pare-feu de l'hôte et des joueurs, réseau Privé, ports 7777 et 7778, repli par IP, Wi-Fi maillé, dépannage) ; captures versées au dépôt (`tests/screenshots.gd` en parties, `tests/deux_fenetres.gd`) et déroulées sans rendu en CI ; tables du salon numérotées (M6 de la revue finale 18) ; fenêtre gardée dans l'écran (M7 de la revue finale 14) ; journal de la prédiction hors du jeu livré ; garde du protocole (la version reste celle du protocole) ; vraie diffusion en CI ; fiche de l'essai LAN (`docs/essai-lan.md`) ; version 0.19. | ✏️ `Scripts/Reseau.gd` ✏️ `Scripts/Salon.gd` ✏️ `Scripts/Regles.gd` ✏️ `Scripts/PredictionLocale.gd` ✏️ `project.godot` ✏️ `export_presets.cfg` ✏️ `.github/workflows/ci.yml` ✏️ `README.md` ✏️ `tests/unitaires.gd` ✏️ `tests/prediction_test.gd` ✏️ `tests/screenshots.gd` ➕ `tests/deux_fenetres.gd` ✏️ `tests/reseau/lancer.sh` ➕ `docs/essai-lan.md` | ◉ livraison, suites vertes 2 fois, test réseau vert sous bash 5 et sous bash 3.2 (`DIFFUSION=1`), CI verte 3 fois ; `.exe` de la CI essayé par l'utilisateur sous Windows avec la fiche |
+| 19 bis | **Réglages de l'essai LAN** : les réponses de `docs/essai-lan.md` (rythme à 4-6, peintre, `HAUTEUR_BANDE_HUD`, prédiction, HUD, sons, écran Résultats, découverte sous Windows, à-coup de l'intro, hôte perdu), chacune dans la constante que dit la fiche ; la trace de la bataille remesurée à chaque changement du jeu (procédure de la fiche). | selon les réponses | à écrire après l'essai |
 
 ## Points de vigilance transverses
 
@@ -109,8 +110,10 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   l'ajout ; `Main.lion` est le lion de `joueur_local()`. Échap y ouvre un menu local sans pause
   (« La partie continue », « Quitter la partie »), qui suspend les commandes de ce poste
   (`Commandes.suspendues`). Hors du solo, la fenêtre prend le format 16:9
-  (`Regles.appliquer_ecran`, 1400×788) ; **phase 19** : la taille de la fenêtre par défaut dans
-  `project.godot` reste à régler ;
+  (`Regles.appliquer_ecran`, 1400×788) ; (résolu en phase 19) la fenêtre par défaut reste 1400×454
+  (`project.godot`, la largeur des captures validées des phases 17 et 18), toujours gardée dans la zone
+  utile de son écran (`Regles.taille_bornee`, M7) ; sa largeur se juge à l'essai LAN
+  (`docs/essai-lan.md`, § 2, phase 19 bis) ;
 - (résolu en phase 16) `PredictionLocale` (priorité -10) lit les actions de ce poste une seule fois
   par tick physique (direction et vomir au même tick), les numérote, les écrit dans les commandes
   manuelles du lion local et les garde ; `Manche._envoyer_commandes` (priorité 100) envoie ce paquet
@@ -124,7 +127,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
 - Les sous-ressources des scènes instanciées plusieurs fois (formes, matériaux) sont partagées :
   les dupliquer ou les marquer `local_to_scene` avant de les modifier par instance (vu en phase 2
   avec la traceuse du lion).
-- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19) rythme
+- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19 bis) rythme
   de la manche : en bataille, les pastilles arrivent à plusieurs (`Regles.pastilles_en_meme_temps` :
   2 de 2 à 3 joueurs, 3 de 4 à 6), une toutes les 4 s sous ce plafond (`delai_entre_pastilles`, 6 s en
   solo), et une pastille que personne ne ramasse expire au bout de 12 s (`duree_de_vie_pastille`) : elle
@@ -135,8 +138,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   du bas des vignettes non mesurée sur une capture réelle. Le solo ne change pas (une à la fois, 6 s
   après le départ de la précédente, coin du lion, dernier essai ; sa trace non plus). Réglé sans essai
   à 4-6 (justifications dans `ReglesBataille`) : la manche pilotée de `tests/bataille_test.gd` finit
-  avec 7 crans pour chacun des 4 lions (le pilote court à chaque pastille) ; **phase 19** : juger en
-  vrai le rythme des pastilles, le peintre et `HAUTEUR_BANDE_HUD` ;
+  avec 7 crans pour chacun des 4 lions (le pilote court à chaque pastille) ; à juger en vrai à l'essai
+  LAN (`docs/essai-lan.md`, § 5, phase 19 bis) : le rythme des pastilles, le peintre et
+  `HAUTEUR_BANDE_HUD` (175 px depuis la revue finale 17) ;
 - (résolu en phase 17) une bataille finie garde une sortie : le panneau de fin du HUD de la bataille
   (« FIN DE LA MANCHE ! », le gagnant ou les ex æquo) et Échap, Start ou le bouton : le titre, qui
   quitte le réseau (l'hôte qui sort ramène ses clients au titre, « L'hôte a quitté la partie ») ; le
@@ -199,21 +203,23 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   17 à 61 ms chez l'hôte comme chez un client (lignes `MESURE`) ; la frame la plus longue tout
   court (18 à 70 ms) ne génère pas toujours (quatre processus Godot sur un Mac).
   Pas de pré-génération. Mémoire du cache plein : environ 14,5 Mo pour 6 joueurs ;
-- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phases 16 à 18) : le
-  test réseau prend ~170 s sur ce Mac (169 à 178 s mesurés en phase 18 ; ~157 s en phase 17, 140 s
+- **prochaine phase qui ajoute un scénario au test réseau** (temps de la CI, phases 16 à 19) : le
+  test réseau prend ~175 s sur ce Mac (172 s mesurés en préparant la phase 19, avec le scénario 7 de la
+  vraie diffusion, que la CI lance depuis ; 169 à 178 s en phase 18 ; ~157 s en phase 17, 140 s
   avant), dont ~52 s pour le scénario 11 (`DUREE11=45`, décision de l'utilisateur), ~38 s pour le
   scénario 12 (la manche sous latence simulée, `DUREE12=20`) et le scénario 13 prolongé en phase 18
   (la fin au chrono, `DUREE13=10`, puis l'écran Résultats, la revanche de 6 s et le retour au salon), sous le
   `timeout 300` du pas « Test réseau » de `ci.yml` ; le banc de la prédiction (`tests/prediction_test.gd`)
   a son propre pas, ~1 s. Au-delà de ~200 s, raccourcir un scénario ou relever ce `timeout` ;
-- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19) le
+- (résolu en phase 17, décision de l'utilisateur du 27/09 ; à revoir à l'essai LAN, phase 19 bis) le
   peintre en bataille (vu en phase 15) : sur le Village, il couvre toute la bande de peinture, et un
   joueur qui ne fuyait pas était étourdi sans relâche (le programme du scénario 11 sans fuite, mesuré à
   90 s : 21 % de la ville peinte à 4, contre 58 à 66 % en fuyant). En bataille, un étourdissement par
   un ennemi laisse 3 s de répit (`ReglesBataille.DUREE_REPIT_ENNEMI`, l'immunité ; 1 s après un vomi,
   inchangé) : à 350 px/s, plus de deux fois la largeur du peintre (442 px) ; et le peintre se repose
   deux fois plus longtemps entre deux passages (`Regles.facteur_repos_peintre`, 4 s au lieu de 2) : la
-  bande est libre un tiers du temps au lieu d'un cinquième. **Phase 19** : le juger en vrai ;
+  bande est libre un tiers du temps au lieu d'un cinquième. À juger en vrai à l'essai LAN
+  (`docs/essai-lan.md`, § 5, phase 19 bis) ;
 - **phase 18** (résultats, vu en phase 15) : les statistiques de bataille (`Joueur.chocs`,
   `etourdissements_infliges`, `cellules_volees`) ne sont tenues que par l'hôte (règles) et ne sont
   pas répliquées : l'écran Résultats d'un client doit les recevoir de l'hôte (dans le message de fin
@@ -234,14 +240,14 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   minuteries des joueurs que sur l'hôte. (Résolu en phase 17) sur un client, `Joueur.bonus_restant`
   reste celui reçu au début de la gerbe XXL (seule sa fin arrive) : le HUD de la bataille décompte
   lui-même ses secondes (`HUDBataille.xxl_restant`), que la fin reçue efface ;
-- **phase 19** (qui touche `tests/screenshots.gd`) : le coup de `tests/screenshots.gd` (vers la
-  ligne 96) tombe pendant l'intro et n'a aucun effet ; le déplacer après `GS.demarrer()` et relancer
-  le script à la main (la CI ne le lance pas). Les minuteries `null` du Spawner quand la partie se
-  termine pendant l'intro sont corrigées depuis la phase 10 bis (vérifié par
-  `tests/bataille_test.gd`). Y verser aussi les captures de l'écran Réseau (script jetable du plan
-  de la phase 12 bis, Task 3 : titre avec Multijoueur, liste, IP invalide, refus, hébergement,
-  anglais, port des balises occupé) et du salon (plan de la phase 13, Task 5 : hôte seul, salon à 3
-  au bouton grisé, bouton actif, six joueurs aux pseudos larges, anglais, vues d'un client) ;
+- (résolu en phase 19) `tests/screenshots.gd` : le coup de sa partie solo tombe après l'intro
+  (`GS.pret` ; pendant l'intro, il ne comptait pas) ; les captures de l'écran Réseau (phase 12 bis), du
+  salon (phase 13), de la manche à 6 couleurs (phase 17) et de l'écran Résultats (phase 18) y sont
+  versées, en parties (`--parties=solo,reseau,salon,bataille,resultats`, 37 captures) ; la partie à 2
+  fenêtres (phase 14) est `tests/deux_fenetres.gd`, jusqu'aux Résultats et à l'hôte perdu. Sans rendu,
+  les deux déroulent tout sans rien écrire, et la CI les lance ainsi (pas « Captures ») : ils ne
+  pourrissent plus. Les minuteries `null` du Spawner quand la partie se termine pendant l'intro sont
+  corrigées depuis la phase 10 bis (vérifié par `tests/bataille_test.gd`) ;
 - les tests `--script` peuvent nommer `Territoire` (logique pure, phase 9) et les règles, jamais
   la ville, le lion ni les ennemis (qui nomment des autoloads). Les couleurs relues sur la ville
   se comparent après un passage par une image RGBA8 (`_rgba8` du smoke test) : `set_pixel`
@@ -344,39 +350,34 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   tous ses clients. Régler explicitement `ENetPacketPeer.set_timeout(...)` (court au salon, plus
   tolérant pendant les chargements) et, pour un départ volontaire, utiliser
   `peer_disconnect_later()` (ou un RPC « je pars » fiable avant la fermeture) ;
-- **phase 19** (protocole, M7 de la revue de la phase 11) : la version présentée à la poignée de
-  main est `application/config/version`, « 0.13 » depuis la phase 13, qui a introduit les premiers
-  RPC (ceux du salon, sur l'autoload `Reseau`) : deux postes de phases différentes s'y refusent
-  désormais « version différente ». Chaque phase qui change les RPC (14, 16, 17, 18) doit encore
-  l'augmenter (« 0.14 », « 0.16 », « 0.17 », « 0.18 »…) ; sinon un `.exe` de CI (Windows) et une version locale (Mac) de phases
-  différentes s'accepteraient, puis échoueraient en silence sur des RPC ou des caches de nœuds
-  incompatibles. Phase 19 : garder cette règle, ou la remplacer par une constante `PROTOCOLE`
-  envoyée dans la demande et comparée avec le même refus `REFUS_VERSION` ;
-- **phase 19** (qui touche `ci.yml`, phase 12, Écart 5) : le test réseau ne vérifie la vraie diffusion
-  (scénario 7 de `tests/reseau/lancer.sh`) qu'avec `DIFFUSION=1`, mesurée sur macOS seulement ; en
-  CI, le scénario 6 dirige les balises vers 127.0.0.1. Essayer `DIFFUSION=1` dans le pas « Test
-  réseau » (sous Linux, une diffusion revient d'ordinaire aux sockets locales) ; le garder s'il est
-  vert 5 fois, sinon le noter ici. Sur Windows, la découverte n'est vérifiée qu'à la main (`.exe` de
-  la CI) : deux PC de la LAN, dont un avec une carte réseau virtuelle ou un VPN (la balise part aussi
-  en diffusion dirigée a.b.c.255, en supposant des réseaux en /24), **et un PC derrière un routeur
-  maillé** (TP-Link Deco, eero : /22 typique, par exemple 192.168.68.0/22 ou 192.168.4.0/22), où
-  cette même supposition est fausse (revue finale de la phase 12, constat 3) : `a.b.c.255` n'y est
-  pas la diffusion, seulement une adresse unicast du sous-réseau ou une adresse hors lien envoyée à
-  la passerelle (RFC 2644). Godot ne donnant pas le masque de sous-réseau
-  (`IP.get_local_interfaces()` n'a que les adresses), aucune diffusion dirigée calculée depuis une
-  adresse seule n'est fiable au-delà d'un /24 ; sur un tel réseau, seule la saisie par IP fonctionne.
-  Si le test manuel confirme le problème, envisager d'envoyer aussi vers les candidats /23 et /22
-  de chaque adresse privée (a.b.(c|1).255, a.b.(c|3).255) en plus du /24 et du /16, dédoublonnés (un
-  datagramme de plus par seconde vers un hôte muet sur 7778, ou jeté par la passerelle, ne coûte
-  rien) ; sinon, documenter la limite dans le README (« Jouer en LAN ») ;
-- **phase 19** (README, M8) : le premier `heberger()` déclenche la fenêtre du pare-feu Windows
-  Defender sur l'hôte (port 7777), et la première ouverture de l'écran Réseau la déclenche aussi sur
-  chaque client (écoute des balises sur le port 7778, phase 12). « Annuler », ou un réseau classé
-  Public : l'hôte n'est pas joignable (les clients voient « Pas de réponse de l'hôte. Pare-feu de
-  l'hôte ? Réseau Privé ? » après 5 s) ou le client ne voit aucune partie (« Aucune partie trouvée.
-  Pare-feu ? Réseau Privé ? Essaie par IP. »). Le README explique comment autoriser LeLion en réseau
-  Privé et retirer une règle de blocage, et que deux LeLion sur un même PC ne peuvent pas lister les
-  parties tous les deux (« Recherche impossible : port 7778 déjà utilisé… Rejoins par IP. ») ;
+- (résolu en phase 19, M7 de la revue de la phase 11) la version présentée à la poignée de main (et
+  dans la balise) est `application/config/version`, qui est aussi celle du protocole : la règle de la
+  phase 13 reste (« 0.13 », « 0.14 », « 0.16 », « 0.17 », « 0.18 », « 0.19 »), désormais tenue par les
+  tests unitaires (`_tester_protocole`) : une empreinte du protocole (RPC de chaque script, propriétés
+  répliquées des scènes, scènes apparues, tailles des formats réseau, balise) est notée avec sa version
+  (`PROTOCOLE_VERSION`, `PROTOCOLE_EMPREINTE`), et une empreinte neuve sous la même version les fait
+  échouer. Une constante `PROTOCOLE` à part aurait fait deux numéros à tenir au lieu d'un. **Chaque
+  phase qui change le protocole** augmente la version et note la nouvelle empreinte (la ligne
+  `PROTOCOLE` de la sortie des tests unitaires) ;
+- (résolu en phase 19, phase 12, Écart 5) le pas « Test réseau » de `ci.yml` lance aussi le scénario 7
+  (`DIFFUSION=1`, la vraie diffusion) : vert 3 fois en CI sous Linux (Task 9 de la phase 19), comme sur
+  macOS. **Phase 19 bis** : sur Windows, la découverte se vérifie à l'essai LAN (`docs/essai-lan.md`,
+  § 1) : un PC à carte réseau virtuelle ou à VPN (la balise part aussi en diffusion dirigée a.b.c.255,
+  en supposant des réseaux en /24), et un PC derrière un routeur maillé (TP-Link Deco, eero : /22
+  typique, par exemple 192.168.68.0/22 ou 192.168.4.0/22), où cette supposition est fausse (revue finale
+  de la phase 12, constat 3 : `a.b.c.255` n'y est qu'une adresse unicast du sous-réseau, ou hors lien,
+  RFC 2644) ; Godot ne donnant pas le masque (`IP.get_local_interfaces()` n'a que les adresses), aucune
+  diffusion dirigée calculée depuis une adresse seule n'y est fiable, et seule la saisie par IP
+  fonctionne. La limite est documentée dans le README (« Jouer en LAN », dépannage) ; si l'essai la
+  confirme, envoyer aussi la balise vers les candidats /23 et /22 de chaque adresse privée
+  (a.b.(c|1).255, a.b.(c|3).255), dédoublonnés, avec l'identifiant de session I2 (ci-dessous) ;
+- (résolu en phase 19, M8) le README (« Jouer en LAN ») explique la fenêtre du pare-feu Windows
+  Defender au premier `heberger()` sur l'hôte (port 7777) et à la première ouverture de l'écran Réseau
+  sur chaque client (écoute des balises sur le port 7778), le réseau Privé, ce que voient les joueurs
+  après un « Annuler » ou sur un réseau Public, la réparation (autoriser « LeLion multi » en Privé,
+  retirer une règle de blocage dans `wf.msc`), que deux LeLion sur un même PC ne listent pas les parties
+  tous les deux, et que la règle du pare-feu suit le chemin de l'exe. Depuis la phase 19, l'exe porte
+  son nom dans cette fenêtre (« LeLion multi », plus « Godot Engine ») ;
 - (résolu en phase 14) l'intérim de la phase 13 est fini : la manche est synchronisée ;
 - (résolu en phase 18) retour au salon : `Reseau.revenir_au_salon` (l'hôte, depuis l'écran
   Résultats) rouvre le salon chez lui (`ouvrir_salon` : plus de manche en cours, les arrivées de
@@ -397,9 +398,9 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   du meilleur rang d'interface (I1), à côté du point du /22 ci-dessus ;
 - (M9 de la revue finale 12 bis, devenu sans objet en phase 13) : l'écran Réseau n'affiche plus les
   états d'attente ni de nombre de joueurs (remplacés par le salon, qui ne compte que les arrivés) ;
-- **phase 19** (M4 de la revue finale 12 bis ; la phase 14 règle la fenêtre au format de l'écran,
-  `Regles.appliquer_ecran`) : captures du fichier jetable dans `tests/screenshots.gd`, taille de la
-  fenêtre par défaut dans `project.godot`.
+- (résolu en phase 19, M4 de la revue finale 12 bis) les captures des fichiers jetables sont dans
+  `tests/screenshots.gd` et `tests/deux_fenetres.gd` ; la fenêtre par défaut de `project.godot` reste
+  1400×454, gardée dans l'écran (M7, ci-dessous).
 - (résolu en phase 14, M6 de la revue finale 13) barrière « scène de jeu chargée » :
   `Reseau.signaler_scene_chargee` depuis la manche de chaque poste ; l'hôte attend tous les joueurs
   encore là (`Manche._verifier_barriere`), 20 s de jeu au plus (`Manche.delai_chargement`), puis
@@ -416,7 +417,7 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   nombre part avec la table, `Reseau.places_reservees`, `Reseau.fiches_attente`) ; un stick déjà
   penché à l'entrée du salon n'agit pas (l'état des actions relevé à l'ouverture) ; les adresses de
   l'hôte sont relevées une fois, à l'ouverture du salon.
-- **phase 19** (essai sur la LAN, phase 16) : avant la prédiction, l'utilisateur a joué une manche à 3
+- **phase 19 bis** (essai sur la LAN, phase 16 ; `docs/essai-lan.md`, § 4) : avant la prédiction, l'utilisateur a joué une manche à 3
   sous Windows en Wi-Fi et trouvé que les commandes « suivent plutôt bien ». Refaire cet essai avec
   l'`.exe` de la phase 16 : si le lion local paraît élastique, régler `PredictionLocale.DUREE_CORRECTION`
   (0,04 s) ; si les lions distants saccadent, `InterpolationLion.RETARD` (6 ticks) ; le relais
@@ -426,16 +427,17 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   (spec §13) ;
 - (résolu en phase 17) la boucle du vomi n'est qu'au lion de ce poste (`Lion.est_local()`) : un autre
   lion qui arrête de vomir ne la coupe plus ; les autres lions ne jouent rien en vomissant (une boucle
-  spatialisée par lion attend que l'essai à 4-6 la réclame, phase 19) ;
-- **phase 19** (captures ; revue de la phase 14, vérifié en phase 16) : chez un client qui perd
-  l'hôte, le moteur fait disparaître les nœuds apparus par le `MultiplayerSpawner` (lions, ennemis,
-  pastilles) : le message s'affiche sur une ville sans lions. Sans conséquence pour la prédiction
-  (enfant du lion, elle part avec lui ; `Manche._envoyer_commandes` vérifie qu'elle existe encore) ni
-  pour le jeu (retour au titre) ; seulement visuel, à revoir avec les captures ;
-- **phase 19** (captures, phase 14) : le script jetable de la partie à 2 fenêtres (plan de la phase
-  14, Task 9) est à verser avec les autres captures ; il force une fenêtre
-  (`DisplayServer.window_set_mode`) : `Regles.appliquer_ecran` ne règle pas une fenêtre en plein
-  écran (réglage « plein écran » de `Parametres`) ;
+  spatialisée par lion attend que l'essai à 4-6 la réclame : `docs/essai-lan.md`, § 7, phase 19 bis) ;
+- **phase 19 bis** (revue de la phase 14, vérifié en phase 16 ; vu sur la capture `client_5_hote_perdu`
+  de `tests/deux_fenetres.gd`, phase 19) : chez un client qui perd l'hôte, le moteur fait disparaître les
+  nœuds apparus par le `MultiplayerSpawner` (lions, ennemis, pastilles) : le message s'affiche sur une
+  ville sans lions. Sans conséquence pour la prédiction (enfant du lion, elle part avec lui ;
+  `Manche._envoyer_commandes` vérifie qu'elle existe encore) ni pour le jeu (retour au titre) ; seulement
+  visuel : l'essai LAN dit s'il gêne (`docs/essai-lan.md`, § 9 : garder alors la dernière image sous le
+  message) ;
+- (résolu en phase 19) la partie à 2 fenêtres de la phase 14 est `tests/deux_fenetres.gd` ; elle force
+  une fenêtre (`DisplayServer.window_set_mode`) : `Regles.appliquer_ecran` ne règle pas une fenêtre en
+  plein écran (réglage « plein écran » de `Parametres`) ;
 - (résolu en phase 17) la fin de manche existe en réseau : chez l'hôte, son chrono (ou le test réseau
   qui fige sa manche) appelle `terminer_partie` ; `Manche._sur_fin_de_partie` envoie ses derniers
   tampons, son territoire, puis la fin (`_recevoir_fin_manche` : son chrono et ses scores), sur le même
@@ -447,13 +449,13 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   client qui tient ses touches au gong ne voit plus son lion continuer (le banc de la prédiction et le
   scénario 13, chacun peignant sans lâcher ses touches jusqu'au gong : lions identiques partout). Les
   scénarios 9, 11 et 12 gardent quand même leur repos avant le gel (`TICKS_REPOS_AVANT_GEL`) ;
-- **phase 19** (M7 de la revue finale 14) : en fenêtré, la largeur du 16:9 est gardée et la hauteur
-  recalculée (`Regles.appliquer_ecran`) ; sur un écran 1080p, une largeur élargie à 1920 px donne une
-  zone client de 1920×1080 plus la barre de titre, qui dépasse la zone utile de Windows (barre des
-  tâches, bas de la ville et HUD invisibles) — `SetWindowPos` ne recadre pas. Borner par
-  `DisplayServer.screen_get_usable_rect(window_current_screen)` (réduire la largeur pour garder le
-  format), puis recentrer si la fenêtre sort de l'écran ;
-- **phase 19** (M8 de la revue finale 14, avec les captures) : en réseau, aucun lion n'est dessiné
+- (résolu en phase 19, M7 de la revue finale 14) à chaque écran, une fenêtre se garde dans la zone utile
+  de son écran (`DisplayServer.screen_get_usable_rect`, barre de titre comprise), réduite à son format
+  (`Regles.taille_bornee`) et ramenée dans l'écran (`Regles.position_dans`) : une fenêtre du solo élargie
+  à 1920 px ne passe plus sous la barre des tâches en 16:9 ; à revoir sous Windows à l'essai LAN
+  (`docs/essai-lan.md`, § 2) ;
+- **phase 19 bis**, seulement si l'essai LAN voit l'à-coup (M8 de la revue finale 14 ;
+  `docs/essai-lan.md`, § 3 ; l'essai à 3 de l'utilisateur n'en a rien dit) : en réseau, aucun lion n'est dessiné
   pendant le chargement (`Main._preparer_manche_en_reseau` libère celui de la scène avant la
   première image) ; le matériau de teinte, les particules de vomi et les étoiles ne compilent leurs
   shaders qu'à la première image après la barrière, un à-coup sous Windows juste au moment de
@@ -480,14 +482,15 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   sa sortie ; il arrive par `Manche.bilan_recu` en réseau (sur chaque poste, le bilan de l'hôte), par
   `GameState.partie_terminee` en bataille locale. `ReglesBataille.duree_manche` (variable statique du
   test réseau, comme `Manche.delai_chargement`) reste à `DUREE_MANCHE` dans le jeu ;
-- **phase 19** (essai LAN à 4-6 joueurs, phase 17) : juger en vrai le HUD de la bataille (lisibilité
+- **phase 19 bis** (essai LAN à 4-6 joueurs, phase 17 ; `docs/essai-lan.md`, § 5 à 7) : juger en vrai le HUD de la bataille (lisibilité
   des vignettes dans la fenêtre par défaut, 1400×788, et en plein écran 1080p ; la couronne posée de travers sur le lion des meneurs, les parts des cellules peintes), le volume des
   sons neufs (« boing », tic, gong, étourdissement ; `Audio.DB_AUTRES`), et surtout le rythme réglé à
   l'aveugle en phase 17 (plafond et délai des pastilles, leur durée de vie, le répit après un ennemi, la
   pause du peintre, `HAUTEUR_BANDE_HUD` : constantes de `ReglesBataille`).
-- **phase 19** (M5 de la revue finale 16) : `PredictionLocale._journal` (jusqu'à 20 000 entrées par
-  manche) et ses statistiques ne sont que de l'instrumentation de test, livrée telle quelle dans le
-  jeu ; sans danger, mais à borner ou retirer.
+- (résolu en phase 19, M5 de la revue finale 16) `PredictionLocale._journal` (20 000 entrées au plus,
+  160 Ko) n'est tenu que dans les builds de débogage (`PredictionLocale.journal_actif`,
+  `OS.is_debug_build()` : les tests, l'éditeur), jamais dans l'`.exe` d'export release ; le banc vérifie
+  qu'une prédiction sans journal ne change pas.
 - (résolu en phase 18, M3 de la revue finale 17) l'écran Résultats ne lit que le bilan de la fin,
   arrivé après tout le reste sur le canal ordonné (cellules, crans, statistiques, départs) ; une
   réaction du canal 0 encore en route s'applique à son arrivée (elle précède la fin chez l'hôte) ; le
@@ -501,14 +504,23 @@ Légende : ➕ création, ✏️ modification. ◉ = contrôle visuel (captures)
   démarrage, par le même chemin qu'un départ normal (revue de la tâche 5) ;
 - (résolu en phase 18, M5 de la revue finale 17) `Main._sur_hote_perdu` arrête la boucle du vomi
   (`Audio.arreter_vomi`), et `Titre._ready` aussi, en filet.
-- **phase 19** (vu en phase 18, Écart 12 du plan) : après une revanche ou un retour au salon, un
+- (sans objet, phase 19 ; vu en phase 18, Écart 12 du plan) après une revanche ou un retour au salon, un
   client peut écrire `ERROR: Condition "!pinfo.recv_nodes.has(net_id)" is true` (des disparitions des
-  nœuds de la manche finie arrivées après qu'il a quitté sa scène) : sans effet ; à revoir si la
-  console d'un `.exe` sous Windows en montre trop, par exemple en libérant ces nœuds chez l'hôte avant
-  de relancer.
+  nœuds de la manche finie arrivées après qu'il a quitté sa scène) : sans effet, et invisible des
+  joueurs (l'exe n'a pas de console, `export_console_wrapper=0` ; les `ERROR` ne vont qu'à `godot.log`).
+  Libérer ces nœuds chez l'hôte avant de relancer ne garantirait pas l'ordre (les disparitions voyagent
+  sur le canal 0 de la réplication, le lancement sur le canal ordonné). Les journaux de l'essai LAN
+  (`docs/essai-lan.md`, § 10) diront s'il y a pire.
 - (résolu en phase 18, décision de l'utilisateur du 27/09) le départ de l'hôte demande désormais
   confirmation sur l'écran Résultats (« Quitter la partie pour tout le monde ? », Oui/Non ; un second
   Échap, vomir, la validation (Entrée/Start) ou Oui confirment, toute autre touche ou Non annulent) ;
   celui d'un client reste immédiat.
-- **phase 19** (essai LAN, phase 18) : juger l'écran Résultats en vrai (lisibilité à 1400×788 et en
-  plein écran 1080p, durée de l'animation, délai d'1 s avant un choix au clavier).
+- **phase 19 bis** (essai LAN, phase 18 ; `docs/essai-lan.md`, § 8) : juger l'écran Résultats en vrai
+  (lisibilité à 1400×788 et en plein écran 1080p, durée de l'animation, délai d'1 s avant un choix au
+  clavier).
+- (résolu en phase 19, M6 de la revue finale 18) le lancement et le retour au salon (canal ordonné)
+  posaient leur table, places réservées forcées à 0, même quand une table plus récente du canal 0 était
+  déjà arrivée : chaque table est désormais numérotée (`Reseau.numero_table`), un client ne repose jamais
+  une table plus ancienne que la dernière posée (`Reseau.Pose.PERIMEE`), le lancement et le retour portent
+  les places réservées de l'hôte, et une manche se joue toujours sur la table et le niveau de son
+  lancement (`Reseau.niveau_manche`, que lit `Salon.entrer_en_manche`).
