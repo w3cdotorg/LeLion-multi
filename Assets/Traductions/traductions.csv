@@ -76,6 +76,7 @@ RESEAU_REFUS_MANCHE,"Une manche est en cours : réessaie à la fin.","A round is
 RESEAU_REFUS_DEMANDE,"Réponse incomprise : est-ce bien une partie de LeLion ?","Unreadable answer: is this really a LeLion game?"
 RESEAU_ECHEC_CONNEXION,"Pas de réponse de l'hôte. Pare-feu de l'hôte ? Réseau Privé ?","No answer from the host. Host firewall? Private network?"
 RESEAU_HOTE_PERDU,L'hôte a quitté la partie,The host left the game
+RESEAU_EXCLU,"Exclu : ta partie a mis trop de temps à charger.","Removed: your game took too long to load."
 RESEAU_PORT_OCCUPE,Impossible d'héberger : port %d occupé,Can't host: port %d in use
 RESEAU_HEBERGER_IMPOSSIBLE,Impossible d'héberger (erreur %d),Can't host (error %d)
 SALON,Salon,Lobby
@@ -110,4 +111,25 @@ BATAILLE_FIN,FIN DE LA MANCHE !,TIME'S UP!
 BATAILLE_GAGNANT,%s gagne la manche !,%s wins the round!
 BATAILLE_EGALITE,Égalité : %s !,Tie: %s!
 BATAILLE_PERSONNE,Personne n'a peint la ville.,Nobody painted the town.
-BATAILLE_AIDE_FIN,Échap : quitter la partie,Esc: leave the game
+RESULTATS_PART,Part des cellules peintes,Share of painted cells
+RESULTATS_VOLEES,Cellules volées,Cells stolen
+RESULTATS_ETOURDIS,Étourdissements,Stuns dealt
+RESULTATS_CHOCS,Chocs,Bumps
+RESULTATS_VICIEUX,LE PLUS VICIEUX,THE MEANEST
+RESULTATS_VOLEUR,LE VOLEUR,THE THIEF
+RESULTATS_TAMPONNEUR,L'AUTO-TAMPONNEUR,THE BUMPER CAR
+RESULTATS_VICIEUX_VALEUR,Étourdissements infligés : %d,Stuns dealt: %d
+RESULTATS_VOLEUR_VALEUR,Cellules volées : %d,Cells stolen: %d
+RESULTATS_TAMPONNEUR_VALEUR,Chocs : %d,Bumps: %d
+RESULTATS_PERSONNE,Personne,Nobody
+RESULTATS_REVANCHE,Revanche,Rematch
+RESULTATS_SUIVANT,Niveau suivant : %s,Next level: %s
+RESULTATS_SALON,Retour au salon,Back to lobby
+RESULTATS_QUITTER,Quitter,Quit
+RESULTATS_ATTENTE_HOTE,En attente de l'hôte…,Waiting for the host…
+RESULTATS_AIDE_HOTE,"Gauche/Droite : choisir   ·   Espace : valider   ·   Échap : quitter","Left/Right: choose   ·   Space: confirm   ·   Esc: quit"
+RESULTATS_AIDE,Échap : quitter,Esc: quit
+RESULTATS_QUITTER_CONFIRMATION,Quitter la partie pour tout le monde ?,Leave the game for everyone?
+RESULTATS_OUI,Oui,Yes
+RESULTATS_NON,Non,No
+RESULTATS_AIDE_CONFIRMATION,Échap ou Espace : oui · autre touche : non,Esc or Space: yes · any other key: no

@@ -18,7 +18,9 @@ extends CharacterBody2D
 ## manche lui transmet (`Joueur.recevoir_*`). Sur un client (phase 16), un lion distant est affiché
 ## avec un peu de retard, interpolé entre les états reçus (`_suivre_l_hote`, `InterpolationLion`) ; le
 ## lion du joueur local est prédit (`prediction`, `PredictionLocale`) : il avance tout de suite avec les
-## commandes de ce poste, par le même pas que l'hôte (`avancer`), et se recale sur ses états.
+## commandes de ce poste, par le même pas que l'hôte (`avancer`), et se recale sur ses états. À la fin de
+## la manche (phase 18), chaque lion d'un client prend l'état final que l'hôte a au gong
+## (`poser_etat_final`) et ne bouge plus.
 
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 const CENTRE := Vector2(68, 66)  # centre du corps, dans le repère du lion
@@ -88,6 +90,9 @@ var _replique := false
 var _etats_recus: Array[Dictionary] = []
 ## Sur un client, l'affichage d'un lion distant.
 var _interpolation: InterpolationLion
+## Sur un client, vrai une fois l'état final de la manche posé (`poser_etat_final`) : le lion ne bouge
+## plus et ne garde plus aucun état de l'hôte.
+var fige := false
 ## Chez l'hôte, l'état du lion écrit à chaque tick physique (`EtatLion.encoder`), que le `Synchro`
 ## recopie chez chaque client ; sur un client, le setter garde chaque état reçu pour le prochain tick
 ## physique (jamais appliqué pendant le sondage réseau : `avancer` ne se rejoue que dans une image
@@ -95,7 +100,7 @@ var _interpolation: InterpolationLion
 var etat_reseau := PackedByteArray():
 	set(valeur):
 		etat_reseau = valeur
-		if not _replique:
+		if not _replique or fige:
 			return
 		var etat := EtatLion.decoder(valeur)
 		if etat.is_empty():
@@ -143,6 +148,8 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	temps += delta
 	if not multiplayer.is_server():
+		if fige:
+			return
 		if prediction == null:
 			_suivre_l_hote(delta)
 		else:
@@ -248,6 +255,28 @@ func _suivre_l_hote(delta: float) -> void:
 		direction_du_lion = vu.direction
 	deplacement.vitesse = velocity
 	_animer_deplacement(delta)
+
+
+## Sur un client, à la fin de la manche (phase 18) : le lion prend l'état final que l'hôte a au gong
+## (`octets`, un `EtatLion` du bilan de la fin, `Manche._recevoir_fin_manche`) : sa position et son
+## orientation, ni vitesse ni recul, aucun décalage d'affichage ; sa prédiction s'arrête (un joueur qui
+## tient encore ses touches au gong ne le fait plus avancer sur son écran) et plus aucun état de l'hôte
+## n'est gardé. Faux, sans rien changer, pour un état illisible.
+func poser_etat_final(octets: PackedByteArray) -> bool:
+	var etat := EtatLion.decoder(octets)
+	if etat.is_empty():
+		return false
+	fige = true
+	_etats_recus.clear()
+	if prediction != null:
+		prediction.arreter()
+	position = etat.position
+	direction_du_lion = etat.direction
+	velocity = Vector2.ZERO
+	deplacement.vitesse = Vector2.ZERO
+	deplacement.recul = Vector2.ZERO
+	visuel.position = Vector2.ZERO
+	return true
 
 
 ## Sur un client, pour la prédiction : le plus récent des états reçus de l'hôte depuis le dernier appel

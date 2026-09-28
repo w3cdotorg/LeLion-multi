@@ -79,7 +79,7 @@ extends SceneTree
 ##   le départ de l'hôte (« L'hôte a quitté la partie », puis le titre).
 ##   Manche-muet : rejoint l'hôte sans scène (pas de salon ni de scène de jeu), se dit prêt, reçoit le
 ##   lancement de la manche mais ne charge jamais sa scène : l'hôte doit l'exclure après le délai de
-##   la barrière (« EXCLU »). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
+##   la barrière (« EXCLU », avec la raison de la perte de l'hôte : exclu, phase 18). --figer=S (I1, revue finale phase 14) : dès le lancement de la manche
 ##   reçu, fige tout le processus S secondes (« FIGE_MUET ») avant de reprendre et sortir en 0, sans
 ##   rien vérifier lui-même : son ENet ne peut acquitter aucun DISCONNECT pendant ce temps, comme un
 ##   poste dont le fil principal compile ses shaders.
@@ -113,17 +113,25 @@ extends SceneTree
 ##   --fige=chemin. Une fois ses commandes d'après l'arrêt accusées par l'hôte, écrit « PREDICTION … »
 ##   (erreurs de prédiction, recalages, à-coups, plus long rejeu) et vérifie : aucun recalage, l'erreur
 ##   rarement au-delà de 16 px, sous 4 px 150 ms après l'arrêt ; puis sa propre « EMPREINTE ».
-## Fin de manche au chrono (phase 17), par les vraies scènes : 1 hôte + 2 clients (derrière le relais),
-##   une manche courte de --duree-manche=S secondes (`ReglesBataille.duree_manche`, sur chaque poste),
-##   sur le niveau --niveau=L choisi par l'hôte. Chaque poste fait sa passe de peinture (--sens), puis
-##   attend la fin : chez l'hôte par son chrono, chez un client par la fin reçue de l'hôte (son chrono
-##   pris sur celui de l'hôte : « ECART_CHRONO <s> », l'écart qu'il avait) ; tout se fige sur le panneau
-##   de fin, 0:00, les tics des dernières secondes comptés ; « FIN <HUD> » (chrono, pseudos, parts,
-##   rangs : la même ligne sur chaque poste).
-##   Chrono-hôte : --clients=N, --niveau=L, --duree-manche=S, --rester=chemin (« HOTE RESTE », puis,
-##   ce fichier créé, sort par Échap : le titre, hors réseau).
-##   Chrono-client : --sens=1|-1, --duree-manche=S ; attend le départ de l'hôte (« L'hôte a quitté la
-##   partie » à la place du panneau de fin, puis le titre).
+## Fin de manche au chrono (phase 17), résultats, revanche et retour au salon (phase 18), par les vraies
+##   scènes : 1 hôte + 2 clients (derrière le relais), une manche courte de --duree-manche=S secondes
+##   (`ReglesBataille.duree_manche`, sur chaque poste), sur le niveau --niveau=L choisi par l'hôte. Chaque
+##   poste peint (--sens) sans lâcher ses touches jusqu'à la fin : chez l'hôte par son chrono, chez un
+##   client par la fin reçue de l'hôte (son chrono pris sur celui de l'hôte : « ECART_CHRONO FIN <s> »,
+##   l'écart qu'il avait) ; tout se fige, 0:00, les tics des dernières secondes comptés, l'écran
+##   Résultats à la place du HUD ; « FIN <HUD, bilan, lions affichés> » et « RESULTATS FIN <écran> » (les
+##   mêmes lignes sur chaque poste : les lions, lancés au gong, posés sur l'état final de l'hôte). Puis
+##   l'hôte choisit Revanche au clavier : chaque poste recharge la scène de jeu (le même niveau, une manche
+##   neuve de --duree-revanche=S secondes), qui finit de même (« FIN2 », « RESULTATS FIN2 ») ; le client
+##   --quitte quitte l'écran Résultats par Échap (« QUITTE », le titre) ; les autres le voient partir
+##   (« DEPART VU ») ; l'hôte choisit Retour au salon : chacun y revient, la même table sans le partant,
+##   personne prêt (« SALON <table> », la même ligne) ; puis l'hôte quitte le salon et l'autre client
+##   revient à l'écran Réseau, « L'hôte a quitté la partie ».
+##   Chrono-hôte : --clients=N, --niveau=L, --duree-manche=S, --duree-revanche=S, --revanche=chemin
+##   (choisit Revanche une fois ce fichier créé par lancer.sh), --salon=chemin (Retour au salon, de même),
+##   --rester=chemin (quitte le salon, de même).
+##   Chrono-client : --sens=1|-1, --duree-manche=S, --duree-revanche=S, --quitte=chemin (quitte le second
+##   écran Résultats une fois ce fichier créé).
 ## Code de sortie 0 si toutes ses vérifications passent. Compilé avant les autoloads : récupère
 ## `Reseau`, `Decouverte`, `GameState` et `Scores` par `root.get_node`, ne nomme ni `Reseau`, ni
 ## `Decouverte`, ni `GameState`, ni le salon (il peut nommer `EtatPartie`, dont le script ne nomme
@@ -1032,9 +1040,11 @@ func _jouer_muet() -> void:
 	while _issue != "inscrit+hote_perdu" and Time.get_ticks_msec() < fin:
 		await process_frame
 	var apres: float = (Time.get_ticks_msec() - lancee[0]) / 1000.0
-	print("EXCLU apres=%.1f s" % apres)
+	print("EXCLU apres=%.1f s raison=%s" % [apres, reseau.raison_perte])
 	_check(_issue == "inscrit+hote_perdu" and apres >= float(_option("delai-chargement", "0")),
 		"l'hôte l'exclut après le délai de la barrière (%.1f s)" % apres)
+	_check(reseau.raison_perte == reseau.PERTE_EXCLU,
+		"phase 18 : l'exclu l'apprend de l'hôte avant d'être déconnecté (%s, pas « L'hôte a quitté la partie »)" % reseau.raison_perte)
 
 
 ## Rôles « bout-hote » et « bout-client » (phase 15, voir l'en-tête) : une manche entière à 1 hôte et
@@ -1246,59 +1256,169 @@ func _animer_latence_client(main: Node, manche: Node) -> void:
 	await _finir_manche_client(main, manche)
 
 
-## Rôles « chrono-hote » et « chrono-client » (phase 17, voir l'en-tête) : une manche courte que le
-## chrono de l'hôte termine ; chaque poste la voit finir sur le même HUD, puis l'hôte sort par Échap et
-## ses clients le voient partir.
+## Rôles « chrono-hote » et « chrono-client » (phases 17 et 18, voir l'en-tête) : une manche courte que
+## le chrono de l'hôte termine, le même écran Résultats partout ; l'hôte choisit Revanche, une seconde
+## manche, plus courte, finit de même ; un client (--quitte) quitte alors l'écran Résultats, les autres le
+## voient partir ; l'hôte ramène l'autre client au salon, la même table, puis s'en va.
 func _jouer_chrono(hote: bool) -> void:
 	var duree := float(_option("duree-manche", "10"))
 	var script_regles: Script = load("res://Scripts/ReglesBataille.gd")
 	script_regles.duree_manche = duree
 	var main := await _rejoindre_la_manche(hote)
-	if main != null:
-		await _finir_au_chrono(main, hote, duree)
+	if main != null and await _jouer_au_chrono(main, hote, duree, "FIN"):
+		await _enchainer(main, hote, script_regles)
 	script_regles.duree_manche = ReglesBataille.DUREE_MANCHE
 	_effacer_scores()
 
 
-func _finir_au_chrono(main: Node, hote: bool, duree: float) -> void:
+## Une manche au chrono, de la barrière à l'écran Résultats : écrit « <etiquette> <HUD, bilan, lions> »
+## et « RESULTATS <etiquette> <écran Résultats> » (les mêmes lignes sur chaque poste). Vrai si l'écran
+## Résultats est là.
+func _jouer_au_chrono(main: Node, hote: bool, duree: float, etiquette: String) -> bool:
 	var gs: Node = root.get_node("GameState")
 	var manche: Node = main.get_node("Manche")
 	var hud: CanvasLayer = main.hud_bataille
-	_check(await _attendre(func() -> bool: return manche.barriere), "la barrière de chargement passe")
-	_check(await _attendre(func() -> bool: return gs.pret), "l'intro se termine chez tous")
+	_check(await _attendre(func() -> bool: return manche.barriere), "(%s) la barrière de chargement passe" % etiquette)
+	_check(await _attendre(func() -> bool: return gs.pret), "(%s) l'intro se termine chez tous" % etiquette)
 	print("INTRO")
 	_check(hud != null and hud.vignettes.size() == gs.joueurs.size() and gs.joueurs.size() == 3
 		and hud.vignettes[gs.joueur_local().index].badge.text == "TOI",
-		"le HUD de la bataille : une vignette par joueur (1 hôte et 2 clients), « TOI » sur celle de ce poste")
+		"(%s) le HUD de la bataille : une vignette par joueur (1 hôte et 2 clients), « TOI » sur celle de ce poste" % etiquette)
 	_check(await _peindre_jusquau_gong(main, int(_option("sens", "1")), gs, duree + 10.0),
-		"la manche se termine (peinte sans s'arrêter jusqu'au gong, I2 : des tampons et une case de territoire en vol quand la fin part)")
+		"(%s) la manche se termine (peinte sans s'arrêter jusqu'au gong, I2 : des tampons et une case de territoire en vol quand la fin part)" % etiquette)
 	if hote:
 		_check(manche.finie and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
-			"le chrono de l'hôte termine la manche à %.0f s (%.3f s)" % [duree, gs.temps_ecoule])
+			"(%s) le chrono de l'hôte termine la manche à %.0f s (%.3f s)" % [etiquette, duree, gs.temps_ecoule])
 	else:
-		print("ECART_CHRONO %.3f" % manche.ecart_chrono_fin)
+		print("ECART_CHRONO %s %.3f" % [etiquette, manche.ecart_chrono_fin])
 		_check(manche.finie and absf(manche.ecart_chrono_fin) <= ECART_CHRONO and gs.temps_ecoule >= duree and gs.temps_ecoule < duree + 0.1,
-			"la fin de l'hôte termine la manche de ce client, son chrono pris sur celui de l'hôte (%.3f s, écart %.3f s)" % [gs.temps_ecoule, manche.ecart_chrono_fin])
+			"(%s) la fin de l'hôte termine la manche de ce client, son chrono pris sur celui de l'hôte (%.3f s, écart %.3f s)"
+				% [etiquette, gs.temps_ecoule, manche.ecart_chrono_fin])
 	var tics_attendus := mini(ReglesBataille.SECONDES_TIC, ceili(duree) - 1)
-	_check(paused and hud.fin.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
-		"tout se fige sur le panneau de fin, le chrono à 0:00, %d tics sur %d attendus" % [hud.tics_joues, tics_attendus])
-	print("FIN %s" % hud.resume())
+	var resultats_la := await _attendre(func() -> bool: return main.resultats != null)
+	_check(resultats_la and paused and main.resultats.visible and not hud.visible and hud.chrono.text == "0:00" and hud.tics_joues == tics_attendus,
+		"(%s) tout se fige, l'écran Résultats à la place du HUD (le chrono à 0:00, %d tics sur %d attendus)" % [etiquette, hud.tics_joues, tics_attendus])
+	print("%s %s bilan=%s lions=%s" % [etiquette, hud.resume(), manche.bilan.resume() if manche.bilan != null else "", _lions_affiches(main)])
+	if resultats_la:
+		_check(main.resultats.hote == hote and main.resultats.bouton_revanche.visible == hote and main.resultats.bouton_salon.visible == hote
+			and (hote or main.resultats.etat.text == tr("RESULTATS_ATTENTE_HOTE")),
+			"(%s) l'hôte choisit (Revanche, Niveau suivant, Retour au salon) ; un client voit « En attente de l'hôte… »" % etiquette)
+		print("RESULTATS %s %s" % [etiquette, main.resultats.resume()])
+	return resultats_la
+
+
+## Un appui (ou un relâchement) de `action`, comme le clavier ou la manette l'envoient au jeu.
+func _pousser(action: StringName, appuye: bool) -> void:
+	var evenement := InputEventAction.new()
+	evenement.action = action
+	evenement.pressed = appuye
+	root.push_input(evenement)
+	await process_frame
+
+
+## L'hôte choisit `choix` sur son écran Résultats au clavier, comme un joueur : droite jusqu'au bouton,
+## puis vomir (une fois l'animation finie et le délai des choix passé ; vomir relâché d'abord : il était
+## tenu au gong).
+func _choisir_au_clavier(resultats: CanvasLayer, choix: StringName) -> void:
+	_check(await _attendre(func() -> bool: return resultats.animation_finie and resultats._depuis_animation >= resultats.DELAI_CHOIX),
+		"l'animation de l'écran Résultats finie, les choix sont ouverts")
+	var essais := 0
+	while resultats.selection != choix and essais < 4:
+		await _pousser(&"deplacer_droite", true)
+		await _pousser(&"deplacer_droite", false)
+		essais += 1
+	var choisi := [&""]  # l'écran Résultats s'en va avec la scène dès le choix suivi
+	resultats.choix_fait.connect(func(c: StringName) -> void: choisi[0] = c)
+	await _pousser(&"vomir", false)
+	await _pousser(&"vomir", true)
+	await _pousser(&"vomir", false)
+	_check(choisi[0] == choix, "l'hôte choisit « %s » au clavier (%s)" % [choix, choisi[0]])
+
+
+## La suite du scénario 13 (phase 18) : Revanche, une seconde manche, un client qui quitte l'écran
+## Résultats, le retour au salon, puis le départ de l'hôte.
+func _enchainer(premiere: Node, hote: bool, script_regles: Script) -> void:
+	var gs: Node = root.get_node("GameState")
+	var niveau: int = gs.niveau_courant
+	var duree := float(_option("duree-revanche", "6"))
+	script_regles.duree_manche = duree  # la seconde manche, sur chaque poste
+	var id_premiere := premiere.get_instance_id()
 	if hote:
-		var rester := _option("rester", "")
-		print("HOTE RESTE")
-		_check(await _attendre(func() -> bool: return FileAccess.file_exists(rester)), "lancer.sh laisse partir l'hôte (%s)" % rester)
-		var echap := InputEventAction.new()
-		echap.action = &"pause"
-		echap.pressed = true
-		root.push_input(echap)
-		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
-			"Échap, la manche finie : l'hôte revient au titre, hors réseau")
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("revanche", ""))), "chaque poste a son écran Résultats")
+		await _choisir_au_clavier(premiere.resultats, &"revanche")
+	var nouvelle := func() -> bool:
+		return current_scene != null and current_scene.get_instance_id() != id_premiere and _scene_est("Main") and current_scene.is_node_ready()
+	_check(await _attendre(nouvelle), "Revanche : la scène de jeu se recharge sur chaque poste")
+	if not nouvelle.call():
+		reseau.quitter()
+		return
+	var main: Node = current_scene
+	var territoire: Territoire = main.get_node("Ville").territoire
+	_check(not paused and gs.niveau_courant == niveau and gs.joueurs.size() == 3 and reseau.manche_en_cours and main.resultats == null
+		and range(3).all(func(i: int) -> bool: return territoire.cellules_de(i) == 0)
+		and main.hud_bataille.chrono.text == EtatPartie.formater_temps(duree) and main.get_node("Manche").bilan == null,
+		"une manche neuve, le même niveau, les mêmes joueurs : ni pause, ni cellule, ni bilan, le chrono à %s" % EtatPartie.formater_temps(duree))
+	if not await _jouer_au_chrono(main, hote, duree, "FIN2"):
+		reseau.quitter()
+		return
+	var resultats: CanvasLayer = main.resultats
+	if _options.has("quitte"):
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("quitte", ""))), "chaque poste a son second écran Résultats")
+		await _pousser(&"ui_cancel", true)
+		await _pousser(&"ui_cancel", false)
+		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not reseau.en_ligne(), "Quitter (Échap) sur l'écran Résultats : le titre, hors réseau")
+		print("QUITTE")
+		return
+	var partant := -1
+	for j: Joueur in gs.joueurs:
+		if j.pseudo == "Bruno":
+			partant = j.index
+	_check(partant >= 0 and await _attendre(func() -> bool: return resultats.partis[partant]),
+		"Bruno quitte l'écran Résultats : chaque poste resté le voit partir")
+	_check(resultats.lignes.any(func(l: Dictionary) -> bool: return l.index == partant and l.badge.text.contains(tr("BATAILLE_PARTI")))
+		and (not hote or resultats.possible(&"revanche")),
+		"sa ligne se grise ; à deux, l'hôte peut encore relancer")
+	print("DEPART VU")
+	if hote:
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("salon", ""))), "l'autre client a vu partir Bruno")
+		# EXTRA Task 4 : un premier Échap ouvre la confirmation de départ de l'hôte, sans que personne ne
+		# parte ; toute autre touche (ici déplacer à droite) l'annule sans bouger la sélection.
+		await _pousser(&"ui_cancel", true)
+		await _pousser(&"ui_cancel", false)
+		_check(resultats.confirmation_quitter and _scene_est("Main"),
+			"un premier Échap sur l'écran Résultats ouvre la confirmation de départ de l'hôte, sans que personne ne parte")
+		var selection_avant: StringName = resultats.selection
+		await _pousser(&"deplacer_droite", true)
+		await _pousser(&"deplacer_droite", false)
+		_check(not resultats.confirmation_quitter and resultats.selection == selection_avant,
+			"une autre touche (déplacer à droite) annule la confirmation sans bouger la sélection")
+		await _choisir_au_clavier(resultats, &"salon")
+	_check(await _attendre(func() -> bool: return _scene_est("Salon") and current_scene.is_node_ready()), "Retour au salon : chaque poste resté revient au salon")
+	if not _scene_est("Salon"):
+		reseau.quitter()
+		return
+	var salon: Node = current_scene
+	_check(await _attendre(func() -> bool: return reseau.table_salon.size() == 2 and reseau.table_salon.all(func(f: Dictionary) -> bool: return not f.pret))
+		and not reseau.manche_en_cours and not paused,
+		"le salon : la même table sans Bruno, personne prêt, plus de manche en cours")
+	print("SALON %s" % ";".join(reseau.table_salon.map(func(f: Dictionary) -> String: return "%d:%d:%s:%s" % [f.id, f.index, f.pseudo, f.pret])))
+	if hote:
+		_check(await _attendre(func() -> bool: return FileAccess.file_exists(_option("rester", ""))), "lancer.sh laisse partir l'hôte")
+		salon.retour()
+		_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")) and not reseau.en_ligne(), "l'hôte quitte le salon : l'écran Réseau, hors réseau")
 	else:
-		_check(await _attendre(func() -> bool: return _issue == "hote_perdu"), "l'hôte finit par partir")
-		_check(main.get_node_or_null("HotePerdu/Message") != null and not hud.fin.visible,
-			"« L'hôte a quitté la partie » à la place du panneau de fin")
-		_check(await _attendre(func() -> bool: return _scene_est("Titre")) and not paused and not reseau.en_ligne(),
-			"puis retour au titre, hors réseau")
+		_check(await _attendre(func() -> bool: return _scene_est("EcranReseau")) and not reseau.en_ligne()
+			and current_scene.message.text == tr("RESEAU_HOTE_PERDU"),
+			"l'hôte parti du salon : l'écran Réseau, « L'hôte a quitté la partie »")
+	change_scene_to_file("res://Scenes/Titre.tscn")  # l'écran Réseau écoute les balises : le titre, non
+	_check(await _attendre(func() -> bool: return _scene_est("Titre")), "puis le titre")
+
+
+## Les lions de ce poste tels qu'ils s'affichent (le corps et le décalage de la prédiction), en une ligne
+## (phase 18 : la même partout une fois l'état final de l'hôte posé, même lancés en pleine course au gong).
+func _lions_affiches(main: Node) -> String:
+	return ";".join(main.lions.map(func(l: Node) -> String:
+		return "%s@%.1f,%.1f,%d" % [l.name, l.position.x + l.visuel.position.x, l.position.y + l.visuel.position.y, l.direction_du_lion]))
 
 
 ## Joue le programme de ce poste, image après image, jusqu'à `condition` (au plus `delai` secondes).

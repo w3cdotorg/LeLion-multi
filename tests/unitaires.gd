@@ -45,6 +45,8 @@ func _run() -> void:
 	_tester_interpolation_lion()
 	_tester_chrono_bataille()
 	_tester_placement_pseudos()
+	_tester_bilan_manche()
+	_tester_manches_enchainees()
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
 
@@ -1494,9 +1496,35 @@ func _tester_salon() -> void:
 		"au lancement, les index sont compactés (Chloé passe de 3 à 2) et les fiches suivent cet ordre")
 	_check(not reseau.lancer_manche() and not reseau.changer_couleur(1, 1) and not reseau.definir_pret(5, false) and lancees.size() == 1,
 		"pendant la manche : ni second lancement, ni couleur, ni Prêt")
+	# Phase 18 : depuis l'écran Résultats, l'hôte relance une manche avec les joueurs encore là (Revanche,
+	# Niveau suivant), ou ramène tout le monde au salon
+	reseau._sur_pair_deconnecte(5)  # Bob part pendant la manche : un trou à l'index 1
+	reseau.scenes_chargees.assign([1, 9])
+	var niveau_avant: int = reseau.niveau_salon
+	_check(reseau.relancer_manche(niveau_avant + 1 + EtatPartie.NIVEAUX.size()) and reseau.manche_en_cours and lancees.size() == 2
+		and reseau.niveau_salon == posmod(niveau_avant + 1, EtatPartie.NIVEAUX.size())
+		and lancees[1].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 9] and reseau.inscrits[9].index == 1
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.index) == [0, 1] and reseau.scenes_chargees.is_empty()
+		and reseau.silence == reseau.SILENCE_CHARGEMENT
+		and reseau.examiner_demande({"jeu": reseau.JEU, "version": reseau.version, "pseudo": "Tard"}).raison == reseau.REFUS_MANCHE,
+		"Niveau suivant : une manche neuve avec les joueurs encore là (index recompactés), le niveau suivant en boucle, toujours sans arrivée")
+	var rouverts := [0]
+	var sur_salon := func() -> void: rouverts[0] += 1
+	reseau.salon_rouvert.connect(sur_salon)
+	_check(reseau.revenir_au_salon() and not reseau.manche_en_cours and rouverts[0] == 1 and reseau.silence == reseau.SILENCE_SESSION
+		and reseau.inscrits.values().all(func(f: Dictionary) -> bool: return not f.pret)
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1, 9],
+		"Retour au salon : plus de manche en cours (arrivées acceptées), personne n'est prêt, la même table sans les partis")
+	_check(not reseau.revenir_au_salon() and not reseau.relancer_manche(0) and rouverts[0] == 1 and lancees.size() == 2,
+		"hors d'une manche (au salon), ni retour au salon ni relance : c'est « Démarrer la partie »")
+	reseau.manche_en_cours = true
+	reseau._sur_pair_deconnecte(9)
+	_check(not reseau.relancer_manche(0) and lancees.size() == 2 and reseau.manche_en_cours,
+		"seul, l'hôte ne relance pas de manche (Revanche : au moins deux joueurs)")
+	reseau.salon_rouvert.disconnect(sur_salon)
 	reseau.ouvrir_salon(1)
 	_check(not reseau.manche_en_cours and reseau.inscrits.values().all(func(f: Dictionary) -> bool: return not f.pret) and reseau.niveau_salon == 1,
-		"rouvrir le salon (retour de manche, phase 18) : arrivées acceptées, personne n'est prêt")
+		"rouvrir le salon (à l'ouverture de la scène du salon) : arrivées acceptées, personne n'est prêt")
 	reseau.manche_lancee.disconnect(sur_lancement)
 	reseau.quitter()
 	_check(reseau.table_salon.is_empty() and reseau.niveau_salon == 0 and reseau.places_salon == EtatPartie.NB_JOUEURS_MAX,
@@ -1695,6 +1723,18 @@ func _tester_reseau_manche() -> void:
 	_check(reseau.scenes_chargees == [1] and chargees == [1], "chez l'hôte, sa scène chargée est notée et signalée une fois")
 	reseau.scene_chargee.disconnect(sur_scene)
 	reseau.manche_lancee.disconnect(sur_lancement)
+	# Phase 18 : un exclu de la barrière apprend son exclusion avant d'être déconnecté ; la perte de
+	# l'hôte qui suit le dit (`raison_perte`), une fois
+	var raisons: Array[String] = []
+	var sur_perte := func() -> void: raisons.append(reseau.raison_perte)
+	reseau.hote_perdu.connect(sur_perte)
+	reseau._recevoir_exclusion()
+	reseau._fermer_puis_emettre(&"hote_perdu", [], reseau._generation)
+	reseau._fermer_puis_emettre(&"hote_perdu", [], reseau._generation)
+	reseau.hote_perdu.disconnect(sur_perte)
+	_check(raisons == [reseau.PERTE_EXCLU, reseau.PERTE_HOTE] and not reseau._exclu,
+		"l'hôte perdu après une exclusion : « exclu » ; la perte suivante, de nouveau « l'hôte a quitté la partie » (%s)" % [raisons])
+	_check(reseau.heberger(17788) == OK, "(pré-condition) l'hôte écoute de nouveau")
 	reseau.definir_silence(reseau.SILENCE_SESSION)
 	_check(reseau.silence == reseau.SILENCE_SESSION, "fin du chargement : silence de session")
 	reseau.quitter()
@@ -1971,19 +2011,40 @@ func _tester_interpolation_lion() -> void:
 		"sous la gigue et les pertes, le lion affiché avance d'un pas régulier, sans recul ni saut (%.2f à %.2f px par tick, pour %.2f)" % [pas_min, pas_max, vitesse / 60.0])
 	_check(retard_moyen > InterpolationLion.RETARD + 1.0 and retard_moyen < InterpolationLion.RETARD + 5.0,
 		"avec %.1f ticks de retard en moyenne sur l'hôte (le retard d'affichage et la latence)" % retard_moyen)
-	# Plus aucun état (un hôte figé, en fin de manche) : le lion va un peu plus loin sur sa vitesse, puis
-	# revient sur le dernier état reçu, à l'arrêt, au pixel près (celui de l'hôte figé).
+	# Plus aucun état (un hôte figé) : le lion va un peu plus loin sur sa vitesse, puis s'arrête là, sans
+	# jamais revenir en arrière (M2, revue finale phase 16 ; en fin de manche, le bilan de l'hôte pose
+	# l'état final de chaque lion, phase 18)
 	var dernier_etat := Vector2(dernier_recu * vitesse / 60.0, 100.0)
 	var plus_loin := -INF
+	var recule := false
+	var avant_x := -INF
 	for t in range(30):
 		interp.avancer(1.0)
-		plus_loin = maxf(plus_loin, interp.echantillon().position.x)
+		var x: float = interp.echantillon().position.x
+		recule = recule or x < avant_x - 0.001
+		avant_x = x
+		plus_loin = maxf(plus_loin, x)
 	var arret: Dictionary = interp.echantillon()
-	interp.avancer(1.0)
 	_check(plus_loin > dernier_etat.x and plus_loin <= dernier_etat.x + InterpolationLion.EXTRAPOLATION_MAX * vitesse / 60.0 + 0.01,
 		"plus aucun état : le lion continue sur sa vitesse %d ticks au plus (%.2f px au-delà du dernier état)" % [int(InterpolationLion.EXTRAPOLATION_MAX), plus_loin - dernier_etat.x])
-	_check(arret.position == dernier_etat and arret.vitesse == Vector2.ZERO and interp.echantillon().position == dernier_etat,
-		"puis revient sur le dernier état reçu, à l'arrêt, et y reste : un hôte figé laisse le lion là où il l'a chez lui (x = %.2f pour %.2f)" % [arret.position.x, dernier_etat.x])
+	_check(not recule and is_equal_approx(arret.position.x, plus_loin) and arret.vitesse == Vector2.ZERO,
+		"M2 : puis il s'arrête là, sans revenir en arrière vers le dernier état reçu (x = %.2f, dernier état %.2f)" % [arret.position.x, dernier_etat.x])
+	# M2 : un accroc du Wi-Fi de 300 ms en pleine course, puis la reprise : l'affichage ne recule jamais
+	var accroc := InterpolationLion.new(60)
+	var pas_accroc: Array[float] = []
+	var x_avant := -INF
+	for t in range(240):
+		if t < 120 or t >= 138:
+			accroc.ajouter(t, Vector2(t * vitesse / 60.0, 100.0), Vector2(vitesse, 0.0), 1)
+		accroc.avancer(1.0)
+		var vu_accroc := accroc.echantillon()
+		if vu_accroc.is_empty():
+			continue  # le premier état n'est pas encore affiché (RETARD)
+		if x_avant > -INF:
+			pas_accroc.append(vu_accroc.position.x - x_avant)
+		x_avant = vu_accroc.position.x
+	_check(pas_accroc.min() >= -0.001,
+		"M2 : pendant un accroc de 300 ms et à la reprise, le lion distant ne recule jamais (plus petit pas %.2f px)" % pas_accroc.min())
 	var desordre := InterpolationLion.new(60)
 	desordre.ajouter(10, Vector2(0, 0), Vector2.ZERO, 1)
 	desordre.ajouter(12, Vector2(20, 0), Vector2.ZERO, -1)
@@ -2143,6 +2204,125 @@ func _tester_placement_pseudos() -> void:
 	xs = PlacementPseudos.repartir([court, large], 2000.0)
 	_check(xs[0] + court.size.x + PlacementPseudos.ECART <= xs[1],
 		"deux lions à distance de contact (92 px) : le pseudo large reste sur le lion de droite, jamais basculé sur celui de gauche (%s)" % [xs])
+
+
+## Phase 18 : le bilan de la manche, relevé par l'hôte au gong et envoyé à chaque client (format
+## réseau), et ce que l'écran Résultats en tire : classement, parts, meneurs, les trois titres.
+func _tester_bilan_manche() -> void:
+	print("-- Bilan de la manche (phase 18)")
+	var joueurs: Array[Joueur] = []
+	for i in range(4):
+		var j := Joueur.new()
+		j.index = i
+		j.reinitialiser(3)
+		joueurs.append(j)
+	joueurs[1].crans = 5
+	joueurs[0].etourdissements_infliges = 3
+	joueurs[2].etourdissements_infliges = 3
+	joueurs[3].cellules_volees = 120
+	joueurs[1].chocs = 7
+	var etats: Dictionary[int, PackedByteArray] = {
+		0: EtatLion.encoder(900, 0, Vector2(100.5, 200.25), Vector2(350, 0), Vector2.ZERO, 1),
+		1: EtatLion.encoder(900, 42, Vector2(640, 300), Vector2.ZERO, Vector2(-80, 10), -1),
+		3: EtatLion.encoder(880, 7, Vector2(1500, 410), Vector2.ZERO, Vector2.ZERO, 1)}
+	var bilan := BilanManche.relever(joueurs, [300, 900, 300, 0] as Array[int], [3] as Array[int], etats, 90.004)
+	_check(bilan.nb_joueurs() == 4 and bilan.cellules == [300, 900, 300, 0] and bilan.crans == [1, 5, 1, 1]
+		and bilan.etourdissements == [3, 0, 3, 0] and bilan.volees == [0, 0, 0, 120] and bilan.chocs == [0, 7, 0, 0]
+		and bilan.partis == [false, false, false, true] and bilan.lions.keys() == [0, 1] and is_equal_approx(bilan.temps, 90.004),
+		"le bilan relève, par joueur, cellules, crans, statistiques de l'hôte et départ ; l'état final des lions encore là (pas celui d'un parti)")
+	var recu := BilanManche.decoder(bilan.encoder(), 4)
+	_check(recu != null and recu.resume() == bilan.resume() and recu.lions[1] == etats[1],
+		"le bilan fait l'aller-retour du format réseau, états des lions compris (%s)" % ("" if recu == null else recu.resume()))
+	_check(bilan.encoder()[2].size() == 2 * BilanManche.TAILLE_LION and bilan.resume().contains("L1@640.0,300.0,-1"),
+		"deux lions de %d octets ; le résumé donne leur place et leur sens" % BilanManche.TAILLE_LION)
+	var e: Array = bilan.encoder()
+	var entiers_crans_nuls: PackedInt32Array = (e[1] as PackedInt32Array).duplicate()
+	entiers_crans_nuls[1] = 0
+	var lions_doubles: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lions_doubles.append_array((e[2] as PackedByteArray).slice(0, BilanManche.TAILLE_LION))
+	var lion_parti: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lion_parti.append(3)
+	lion_parti.append_array(etats[3])
+	var lion_illisible: PackedByteArray = (e[2] as PackedByteArray).duplicate()
+	lion_illisible[BilanManche.TAILLE_LION - 1] = 0  # l'orientation du premier lion : ni 1 ni -1
+	var refuses: Array = [null, "bilan", [], [90.0, e[1]], [NAN, e[1], e[2]], [-1.0, e[1], e[2]], [90.0, e[1], e[2]].slice(0, 2),
+		[90.0, (e[1] as PackedInt32Array).slice(1), e[2]], [90.0, entiers_crans_nuls, e[2]], [90.0, e[1], lions_doubles],
+		[90.0, e[1], lion_parti], [90.0, e[1], lion_illisible], [90.0, e[1], (e[2] as PackedByteArray).slice(1)], [90, e[1], e[2]]]
+	_check(refuses.all(func(r: Variant) -> bool: return BilanManche.decoder(r, 4) == null) and BilanManche.decoder(e, 3) == null,
+		"un bilan mal formé est refusé : autre type, chrono non fini, négatif ou entier, champs manquants, crans nuls, lion en double, d'un parti, illisible ou tronqué, autre nombre de joueurs")
+	_check(bilan.rangs() == [2, 1, 2, 0] and bilan.parts() == [20, 60, 20, 0] and bilan.meneurs() == [1],
+		"rangs, parts et meneurs viennent des cellules du bilan (%s, %s)" % [bilan.rangs(), bilan.parts()])
+	_check(bilan.classement() == [1, 0, 2, 3], "le classement : le plus de cellules d'abord, les ex æquo par index, sans cellule à la fin (%s)" % [bilan.classement()])
+	_check(bilan.laureats(&"vicieux") == [0, 2] and bilan.record(&"vicieux") == 3 and bilan.laureats(&"voleur") == [3]
+		and bilan.laureats(&"tamponneur") == [1] and bilan.record(&"tamponneur") == 7,
+		"les trois titres : les ex æquo le partagent, un parti peut le porter (le voleur, parti)")
+	var vide := BilanManche.relever(joueurs.slice(0, 2) as Array[Joueur], [0, 0] as Array[int], [] as Array[int], {} as Dictionary[int, PackedByteArray], 90.0)
+	for j in joueurs:
+		j.reinitialiser(3)
+	var calme := BilanManche.relever(joueurs, [0, 0, 0, 0] as Array[int], [] as Array[int], {} as Dictionary[int, PackedByteArray], 90.0)
+	_check(vide.meneurs().is_empty() and vide.parts() == [0, 0] and vide.classement() == [0, 1]
+		and BilanManche.TITRES.all(func(t: StringName) -> bool: return calme.laureats(t).is_empty() and calme.record(t) == 0),
+		"personne n'a peint : aucun meneur, 0 % partout ; personne n'a étourdi, volé ni percuté : aucun titre")
+
+
+## Phase 18 : des manches enchaînées depuis l'écran Résultats ne se mélangent pas chez un client. Le
+## lancement et le retour au salon partent sur le canal fiable ordonné de la manche (celui de ses
+## tampons, de son territoire et de sa fin), avec leur table : une manche relancée n'arrive qu'après tout
+## ce que la précédente y a envoyé. La table seule reste sur le canal 0, celui de la poignée de main. Et
+## une réaction ou un départ de la manche précédente (canal 0) arrivé après le rechargement de la scène
+## ne touche pas la manche neuve tant que sa barrière n'est pas passée.
+func _tester_manches_enchainees() -> void:
+	print("-- Manches enchaînées (phase 18)")
+	var reseau: Node = root.get_node("Reseau")
+	var rpc_reseau: Dictionary = reseau.get_script().get_rpc_config()
+	var script_manche: Script = load("res://Scripts/Manche.gd")
+	var rpc_manche: Dictionary = script_manche.get_rpc_config()
+	var canal: int = rpc_manche[&"_recevoir_fin_manche"].get("channel", 0)
+	_check(canal == reseau.CANAL_ORDONNE and canal != 0 and rpc_manche[&"_recevoir_tampons"].get("channel", 0) == canal
+		and rpc_manche[&"_recevoir_territoire"].get("channel", 0) == canal
+		and [&"_recevoir_manche", &"_recevoir_retour_salon"].all(func(m: StringName) -> bool: return rpc_reseau[m].get("channel", 0) == canal)
+		and rpc_reseau[&"_recevoir_salon"].get("channel", 0) == 0,
+		"le lancement et le retour au salon partent sur le canal des tampons, du territoire et de la fin (%d) ; la table seule, sur celui de la poignée de main (0)" % canal)
+	# Ils portent leur table : un client la prend d'eux, même si la table du canal 0 ne les a pas précédés
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	var table := [{"id": 1, "index": 0, "couleur": palette[0], "pseudo": "Moi", "pret": true},
+		{"id": 5, "index": 1, "couleur": palette[3], "pseudo": "Bob", "pret": true}]
+	var lancements: Array = []
+	var sur_lancement := func(f: Array[Dictionary]) -> void: lancements.append(f)
+	var retours := [0]
+	var sur_retour := func() -> void: retours[0] += 1
+	reseau.manche_lancee.connect(sur_lancement)
+	reseau.salon_rouvert.connect(sur_retour)
+	reseau._recevoir_manche(table, 2)
+	_check(lancements.size() == 1 and lancements[0].map(func(f: Dictionary) -> int: return f.id_reseau) == [1, 5] and reseau.niveau_salon == 2
+		and reseau.table_salon.size() == 2 and reseau.manche_en_cours,
+		"le lancement pose sa table et son niveau, puis lance la manche sur elle")
+	reseau._recevoir_retour_salon(table, 1, 4)
+	_check(retours[0] == 1 and not reseau.manche_en_cours and reseau.niveau_salon == 1 and reseau.places_salon == 4,
+		"le retour au salon pose sa table, son niveau et ses places, puis ramène au salon")
+	reseau.manche_lancee.disconnect(sur_lancement)
+	reseau.salon_rouvert.disconnect(sur_retour)
+	reseau.quitter()
+	var gs: Node = root.get_node("GameState")
+	gs.configurer_bataille(2)
+	gs.nouvelle_partie()
+	var manche: Node = script_manche.new()
+	manche.actif = true
+	manche._recevoir_crans(1, 4)
+	manche._recevoir_depart(1)
+	var departs := [0]
+	manche.depart_vu.connect(func(_i: int) -> void: departs[0] += 1)
+	manche._recevoir_depart(1)
+	_check(gs.joueurs[1].crans == 1 and departs[0] == 0,
+		"avant sa barrière, une manche neuve ignore les réactions et les départs d'une manche précédente arrivés en retard")
+	manche.barriere = true
+	manche._recevoir_crans(1, 4)
+	manche._recevoir_depart(1)
+	_check(gs.joueurs[1].crans == 4 and departs[0] == 1, "sa barrière passée, elle les applique")
+	manche.free()
+	gs.configurer_solo()
+	gs.nouvelle_partie()
+	gs.partie_en_cours = false
 
 
 ## Sert l'hôte (`Reseau`) et le pair `autre` jusqu'à ce que la connexion d'ENet soit établie des deux

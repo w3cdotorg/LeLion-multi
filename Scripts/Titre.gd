@@ -30,6 +30,7 @@ func _ready() -> void:
 	# relancerait un solo où `multiplayer.is_server()` est faux (ennemis, pastilles, gerbe et chocs
 	# inertes), et un ancien hôte émettrait encore sa balise et accepterait des joueurs.
 	Reseau.quitter()
+	Audio.arreter_vomi()  # filet (M5, revue finale phase 17) : aucune boucle de vomi ne survit à une partie
 	# L'écran titre est celui du solo : Jouer, la démo et l'arcade y lancent des parties solo, dont
 	# les règles doivent être branchées avant le changement de scène (Main._enter_tree appelle
 	# nouvelle_partie), même au retour d'une bataille ; l'écran repasse en 2000×648.

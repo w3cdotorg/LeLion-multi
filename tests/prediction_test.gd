@@ -127,6 +127,7 @@ func _run() -> void:
 	await _scenario_choc_pendant_correction()
 	await _scenario_ecarts()
 	await _scenario_hote_fige()
+	await _scenario_fin_de_manche()
 	GS.configurer_solo()
 	GS.nouvelle_partie()
 	GS.partie_en_cours = false
@@ -551,4 +552,35 @@ func _scenario_hote_fige() -> void:
 	_check(etats_pendant == 0 and p.rejeu_max <= p.HISTORIQUE_MAX and p.recalages == 1,
 		"pendant le gel, le même état ne se rejoue pas ; l'historique reste borné (%d pas au plus) ; au dégel, un recalage franc" % p.rejeu_max)
 	_verifier_commandes("hôte figé", h1.commandes.numero_applique)
+	await _liberer()
+
+
+## Phase 18 (M5 de la revue finale 16) : le joueur du client tient encore sa touche au gong. L'hôte se
+## fige (la fin de manche) ; sa fin arrive un aller plus tard avec l'état final de chaque lion (le bilan) :
+## chaque lion du client prend celui de l'hôte, au pixel près, et le lion prédit ne bouge plus, la touche
+## toujours tenue (sa prédiction s'arrête : plus de pas, plus de paquet, aucun décalage).
+func _scenario_fin_de_manche() -> void:
+	print("-- Fin de manche, la touche tenue au gong, sous 80 ms, 40 ms, 5 %")
+	_preparer(Vector2(300, 150), Vector2(400, 600), 80.0, 40.0, 5.0, 1800)
+	for i in range(30):
+		await _pas()
+	_presser(Vector2.RIGHT)
+	for i in range(40):
+		await _pas()
+	_vue_hote.process_mode = Node.PROCESS_MODE_DISABLED  # le gong : tout se fige chez l'hôte
+	var final0: PackedByteArray = h0.etat_reseau
+	var final1: PackedByteArray = h1.etat_reseau
+	for i in range(3):
+		await _pas()  # la fin est en route (un aller) ; la touche est toujours tenue
+	var avance: float = c1.position.x - h1.position.x
+	_check(avance > ECART_MAX, "(pré-condition) la touche tenue, le lion prédit du client est parti devant celui de l'hôte figé (%.1f px)" % avance)
+	_check(c0.poser_etat_final(final0) and c1.poser_etat_final(final1), "le bilan de la fin pose l'état final de l'hôte sur chaque lion du client")
+	for i in range(30):
+		await _pas()
+	var p: Node = c1.prediction
+	_check(c1.position == h1.position and _affiche(c1) == h1.position and p.arretee and p.decalage() == Vector2.ZERO and p.paquet().is_empty(),
+		"la touche toujours tenue, le lion prédit reste sur l'état final de l'hôte, sans décalage ni paquet : la prédiction est arrêtée (%.2f px)"
+			% c1.position.distance_to(h1.position))
+	_check(c0.position == h0.position and c0.velocity == Vector2.ZERO, "le lion distant est sur celui de l'hôte, à l'arrêt (%.2f px)" % c0.position.distance_to(h0.position))
+	_vue_hote.process_mode = Node.PROCESS_MODE_INHERIT
 	await _liberer()

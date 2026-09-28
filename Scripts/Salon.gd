@@ -45,11 +45,20 @@ var cartes: Array[Dictionary] = []
 ## Vrai une fois la manche lancée : plus rien ne se décide ici pendant le changement de scène.
 var _lance := false
 ## Actions tenues : une action n'agit qu'à l'appui, pas à la répétition du clavier ni tant que le
-## stick reste penché (chaque mouvement du stick au-delà de la zone morte est un nouvel événement).
+## stick reste penché (chaque mouvement du stick au-delà de la zone morte est un nouvel événement) ;
+## relevées à l'ouverture (phase 18, M3 de la revue finale 13 : un stick déjà penché en arrivant, d'une
+## manche ou de l'écran Résultats, n'agit pas une fois de lui-même).
 var _tenues: Dictionary[StringName, bool] = {}
+## Chez l'hôte, ses adresses (`Decouverte.adresses_hote`), relevées une fois à l'ouverture (phase 18, M4
+## de la revue finale 13 : pas à chaque changement du salon).
+var _adresses_hote := PackedStringArray()
 
 
 func _ready() -> void:
+	# Au retour de l'écran Résultats (phase 18), l'arbre est encore en pause (la fin de manche l'a figé).
+	get_tree().paused = false
+	for action in ACTIONS:
+		_tenues[action] = Input.is_action_pressed(action)
 	Regles.appliquer_ecran(get_tree(), ReglesBataille.TAILLE_ECRAN)
 	for i in range(EtatPartie.NB_JOUEURS_MAX):
 		cartes.append(_creer_carte())
@@ -59,11 +68,20 @@ func _ready() -> void:
 	Parametres.langue_changee.connect(_sur_langue_changee)
 	if not Reseau.en_ligne():
 		# L'hôte est parti entre l'inscription et l'arrivée ici : son signal n'a trouvé personne.
-		_revenir_au_reseau.call_deferred("RESEAU_HOTE_PERDU")
+		_revenir_au_reseau.call_deferred(Reseau.raison_perte)
 		return
 	if multiplayer.is_server():
+		_adresses_hote = Decouverte.adresses_hote(IP.get_local_interfaces())
 		Reseau.ouvrir_salon(GameState.niveau_courant)
 	_sur_salon_change()
+
+
+## M9 de la revue finale (phase 18) : la fenêtre perd le focus (alt-tab...) avec une touche tenue, dont
+## le relâchement (hors focus) n'arrive jamais ici ; sans ceci, la reprise du focus la croirait tenue
+## depuis toujours et un premier appui réel n'agirait pas.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_tenues.clear()
 
 
 ## Les autoloads survivent au salon : ne rien leur laisser. Ne quitte pas le réseau : la scène de
@@ -160,13 +178,21 @@ func _sur_salon_change() -> void:
 func _sur_manche_lancee(fiches: Array[Dictionary]) -> void:
 	_lance = true
 	bouton_demarrer.disabled = true
+	entrer_en_manche(get_tree(), fiches)
+
+
+## Sur chaque poste, au lancement d'une manche (depuis le salon, ou depuis l'écran Résultats : Revanche,
+## Niveau suivant, phase 18) : le niveau du salon devient celui de la partie, les règles de bataille et la
+## table des joueurs sont branchées (`GameState.configurer_bataille_reseau`), puis la scène de jeu se
+## charge.
+static func entrer_en_manche(arbre: SceneTree, fiches: Array[Dictionary]) -> void:
 	GameState.niveau_courant = Reseau.niveau_salon
 	GameState.configurer_bataille_reseau(fiches)
-	get_tree().change_scene_to_file(SCENE_JEU)
+	arbre.change_scene_to_file(SCENE_JEU)
 
 
 func _sur_hote_perdu() -> void:
-	_revenir_au_reseau("RESEAU_HOTE_PERDU")
+	_revenir_au_reseau(Reseau.raison_perte)
 
 
 func _sur_langue_changee(_langue: String) -> void:
@@ -195,7 +221,7 @@ func _afficher() -> void:
 		# I1 (revue finale 12 bis) : triées par interface (physique d'abord), pas seulement par plage
 		# IPv4, sans quoi une carte virtuelle (bridge, vEthernet, VMware…) pouvait passer devant le
 		# Wi-Fi ; l'écran Réseau utilisait la même liste pour l'hébergement, le salon la reprend ici.
-		var liste := ", ".join(Decouverte.adresses_hote(IP.get_local_interfaces()))
+		var liste := ", ".join(_adresses_hote)
 		adresses.text = tr("SALON_ADRESSES") % (liste if not liste.is_empty() else "?")
 	_afficher_etat()
 
@@ -238,11 +264,11 @@ func _afficher_carte(carte: Dictionary, fiche: Dictionary, id_local: int) -> voi
 
 
 ## Le bouton de l'hôte et la ligne d'état. L'hôte lit ses inscrits (places réservées comprises) et
-## voit pourquoi le bouton est grisé ; un client lit la table : pourquoi la partie attend, ou que
-## l'hôte peut démarrer.
+## voit pourquoi le bouton est grisé ; un client lit la table et les places réservées que l'hôte annonce
+## (`Reseau.fiches_attente`) : pourquoi la partie attend, ou que l'hôte peut démarrer.
 func _afficher_etat() -> void:
 	var hote := multiplayer.is_server()
-	var raison := Reseau.raison_attente(Reseau.inscrits.values() if hote else Reseau.table_salon)
+	var raison := Reseau.raison_attente(Reseau.fiches_attente())
 	bouton_demarrer.visible = hote
 	bouton_demarrer.disabled = _lance or not raison.is_empty()
 	if not raison.is_empty():

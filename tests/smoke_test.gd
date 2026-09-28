@@ -1316,8 +1316,9 @@ func _run() -> void:
 		"la réplique suit les états reçus, interpolés avec un peu de retard (x = %.1f) : position, vitesse (son animation), orientation, vomi (particules)" % repl.position.x)
 	await _frames(30)
 	var arret_repl: Vector2 = repl.position
-	_check(arret_repl.is_equal_approx(Vector2(700 + 11 * pas_repl, 500)) and repl.velocity == Vector2.ZERO,
-		"plus aucun état (hôte figé) : la réplique finit arrêtée sur le dernier état reçu, pas au-delà (x = %.1f)" % arret_repl.x)
+	_check(arret_repl.is_equal_approx(Vector2(700 + (11 + InterpolationLion.EXTRAPOLATION_MAX) * pas_repl, 500)) and repl.velocity == Vector2.ZERO,
+		"plus aucun état (hôte figé) : la réplique continue %d ticks sur sa vitesse, puis s'arrête là, sans revenir en arrière (M2, x = %.1f)"
+			% [int(InterpolationLion.EXTRAPOLATION_MAX), arret_repl.x])
 	repl.vomi_de_l_hote = false
 	for i in range(3):
 		await process_frame
@@ -1332,6 +1333,16 @@ func _run() -> void:
 	_check(not repl.etoiles.visible and mat_repl.get_shader_parameter("barbouillage_force") == 0.0
 		and repl._clignotement != null and repl._clignotement.is_running(),
 		"la fin d'étourdissement reçue efface étoiles et barbouillage, l'immunité clignote")
+	# Phase 18 : la fin de manche pose sur la réplique l'état final de l'hôte, au pixel près ; elle ne
+	# bouge plus, même quand un état de l'hôte encore en route arrive après
+	var final_hote := EtatLion.encoder(1011, 0, Vector2(700 + 11 * pas_repl, 500), Vector2(350, 0), Vector2(40, 0), -1)
+	_check(not repl.poser_etat_final(PackedByteArray([1, 2, 3])) and not repl.fige and repl.poser_etat_final(final_hote),
+		"un état final illisible est refusé sans rien changer ; celui de l'hôte est posé")
+	repl.etat_reseau = EtatLion.encoder(1012, 0, Vector2(900, 500), Vector2(350, 0), Vector2.ZERO, 1)
+	await _frames(3)
+	_check(repl.fige and repl.position == Vector2(700 + 11 * pas_repl, 500) and repl.direction_du_lion == -1 and repl.velocity == Vector2.ZERO
+		and repl.deplacement.vitesse == Vector2.ZERO and repl.deplacement.recul == Vector2.ZERO,
+		"la réplique prend l'état final de l'hôte (place, sens, à l'arrêt) et ne suit plus les états arrivés après (x = %.1f)" % repl.position.x)
 	repl.free()
 	set_multiplayer(null, poste_lion.get_path())
 	pair_lion.close()
@@ -1556,6 +1567,7 @@ func _run() -> void:
 	GS.pret = false
 
 	await _tester_manche_reseau()
+	await _tester_resultats_reseau()
 
 	print("== %d échec(s) ==" % _echecs)
 	quit(1 if _echecs > 0 else 0)
@@ -1852,9 +1864,14 @@ func _tester_salon(params: Node) -> void:
 	reseau.pseudo = "MMMMMMMMMMMM"  # 12 caractères larges : ils doivent tenir dans la carte
 	GS.niveau_courant = 1
 	_check(reseau.heberger(17797) == OK, "(pré-condition) ce poste héberge")
+	Input.action_press("deplacer_droite")  # phase 18 (M3, revue finale 13) : un stick déjà penché en arrivant
 	var salon: Control = load("res://Scenes/Salon.tscn").instantiate()
 	root.add_child(salon)
 	await process_frame
+	await _appuyer(&"deplacer_droite", true)  # un événement de plus du stick toujours penché
+	_check(reseau.inscrits[1].couleur == palette[0], "M3 : un stick déjà penché à l'ouverture du salon n'y change pas la couleur")
+	await _appuyer(&"deplacer_droite", false)
+	Input.action_release("deplacer_droite")
 
 	# L'hôte seul : sa carte, les places libres, le niveau du titre, ses adresses ; aucun focus
 	var c0: Dictionary = salon.cartes[0]
@@ -1875,6 +1892,11 @@ func _tester_salon(params: Node) -> void:
 		"le niveau choisi au titre, l'aide de l'hôte, ses adresses, Démarrer grisé : « Il faut au moins 2 joueurs pour démarrer. »")
 	_check(root.gui_get_focus_owner() == null and salon.bouton_retour.focus_mode == Control.FOCUS_NONE,
 		"aucun contrôle ne prend le focus : flèches, croix, stick, vomir et démarrer vont au salon")
+	var adresses_lues: PackedStringArray = salon._adresses_hote
+	salon._adresses_hote = PackedStringArray(["10.9.9.9"])
+	reseau.salon_change.emit()
+	_check(salon.adresses.text.contains("10.9.9.9"), "M4 : les adresses de l'hôte sont relevées une fois, à l'ouverture, pas à chaque changement du salon")
+	salon._adresses_hote = adresses_lues
 
 	# Une place réservée (poignée de main en cours) n'a pas de carte ; un joueur arrivé a la sienne
 	reseau.inscrits[7] = {"index": 2, "couleur": palette[2], "pseudo": "Rita", "arrive": false, "pret": false}
@@ -1883,6 +1905,7 @@ func _tester_salon(params: Node) -> void:
 	_check(salon.cartes[1].pseudo.text == "Bob" and salon.cartes[1].badge.text == " " and salon.cartes[2].pseudo.text == tr("SALON_LIBRE")
 		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1, 5],
 		"une place seulement réservée n'a pas de carte (M4) ; un joueur arrivé a la sienne")
+	_check(reseau.places_reservees == 1, "phase 18 : la table part avec le nombre de places seulement réservées (%d)" % reseau.places_reservees)
 
 	# Couleurs : la voisine libre (celle d'une place réservée est prise) ; une seule par appui
 	salon.changer_couleur(1)
@@ -1984,9 +2007,14 @@ func _tester_salon(params: Node) -> void:
 	reseau.salon_change.emit()
 	var attente_client: String = salon_client.etat.text
 	reseau.table_salon[1].pret = true
+	reseau.places_reservees = 1  # comme la table de l'hôte pendant qu'un joueur arrive
 	reseau.salon_change.emit()
-	_check(attente_client == tr("SALON_ATTENTE_PRETS") and salon_client.etat.text == tr("SALON_ATTENTE_HOTE"),
-		"un client voit pourquoi la partie attend, puis « l'hôte peut démarrer » (%s | %s)" % [attente_client, salon_client.etat.text])
+	var attente_arrivee: String = salon_client.etat.text
+	reseau.places_reservees = 0
+	reseau.salon_change.emit()
+	_check(attente_client == tr("SALON_ATTENTE_PRETS") and attente_arrivee == tr("SALON_ATTENTE_ARRIVEE") and salon_client.etat.text == tr("SALON_ATTENTE_HOTE"),
+		"un client voit pourquoi la partie attend (un joueur pas prêt ; M2 : un joueur qui arrive), puis « l'hôte peut démarrer » (%s | %s | %s)"
+			% [attente_client, attente_arrivee, salon_client.etat.text])
 	reseau.quitter()
 	reseau.hote_perdu.emit()
 	var ecran: Node = await _attendre_scene("res://Scenes/EcranReseau.tscn")
@@ -2088,6 +2116,13 @@ func _tester_manche_reseau() -> void:
 			_check(not reseau.inscrits.has(7) and main.lions.size() == 1, "(absent) un joueur exclu n'a pas de lion")
 			_check(manche._partis == [1] and hud.partis == [false, true] and hud.vignettes[1].badge.text == "PARTI",
 				"(absent) l'exclu reste au classement, en grisé ; son départ sera annoncé aux clients en passant la barrière")
+			# Phase 18 : chez l'exclu, la perte de l'hôte dit pourquoi
+			reseau.raison_perte = reseau.PERTE_EXCLU
+			main._sur_hote_perdu()
+			_check(main.get_node("HotePerdu/Message").text == "RESEAU_EXCLU",
+				"chez un exclu, le message dit qu'il a été exclu (sa partie trop longue à charger), pas « L'hôte a quitté la partie »")
+			reseau.raison_perte = reseau.PERTE_HOTE
+			paused = false
 			main.free()
 			await _frames(1)
 			reseau.quitter()
@@ -2155,22 +2190,197 @@ func _tester_manche_reseau() -> void:
 		_check(not manche._tampons.is_empty() and not ville.territoire._changements.is_empty(),
 			"(pré-condition) un tampon et une case de territoire sont en attente, pas encore diffusés")
 		manche.envois_ordre.clear()
+		GS.joueurs[0].chocs = 4  # les statistiques de l'hôte, que lui seul tient : elles partent avec la fin
+		GS.joueurs[1].cellules_volees = 17
+		var bilans_vus: Array = []
+		manche.bilan_recu.connect(func(b: RefCounted) -> void: bilans_vus.append(b))
 		# La fin de la manche chez l'hôte : la manche la note (elle part vers chaque client prêt, après les
-		# derniers tampons et le territoire), tout se fige, le panneau de fin s'affiche
+		# derniers tampons et le territoire), tout se fige, l'écran Résultats remplace le HUD
 		GS.terminer_partie(true)
-		_check(manche.finie and paused and hud.fin.visible and not menu.visible, "la fin de manche chez l'hôte : la manche la diffuse, tout se fige, le panneau de fin s'affiche")
+		var resultats: CanvasLayer = main.resultats
+		_check(manche.finie and paused and resultats != null and resultats.visible and not hud.visible and not menu.visible,
+			"la fin de manche chez l'hôte : la manche la diffuse, tout se fige, l'écran Résultats remplace le HUD")
 		_check(manche.envois_ordre == ([&"_recevoir_tampons", &"_recevoir_territoire", &"_recevoir_fin_manche"] as Array[StringName]),
 			"I2 : les derniers tampons et le territoire partent avant la fin, sur le même canal (%s)" % [manche.envois_ordre])
-		# Un hôte perdu (chez un client) : message, tout se fige
+		# Phase 18 : la fin porte le bilan de l'hôte : cellules, crans, statistiques, départs, l'état final
+		# de chaque lion encore là (pas celui de Bob, parti)
+		var bilan: BilanManche = manche.bilan
+		var cellules_fin: Array[int] = [ville.territoire.cellules_de(0), ville.territoire.cellules_de(1)]
+		_check(bilan != null and bilans_vus.size() == 1 and bilans_vus[0] == bilan and bilan.cellules == cellules_fin
+			and bilan.chocs == [4, 0] and bilan.volees == [0, 17] and bilan.partis == [false, true] and bilan.lions.keys() == [0]
+			and EtatLion.decoder(bilan.lions[0]).position == main.lion.position and is_equal_approx(bilan.temps, GS.temps_ecoule),
+			"la fin porte le bilan de l'hôte, annoncé sur ce poste : cellules, statistiques, Bob parti, l'état final de son lion (%s)"
+				% ("" if bilan == null else bilan.resume()))
+		_check(bilan != null and BilanManche.decoder(bilan.encoder(), 2) != null and BilanManche.decoder(bilan.encoder(), 2).resume() == bilan.resume(),
+			"le bilan envoyé se relit à l'identique chez un client")
+		_check(resultats != null and resultats.hote and resultats.en_reseau and resultats.bouton_salon.visible and resultats.partis == [false, true]
+			and resultats.bouton_revanche.disabled and resultats.bouton_suivant.disabled and not resultats.bouton_salon.disabled
+			and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
+			"l'écran Résultats de l'hôte en réseau : Retour au salon ; Bob parti, Revanche et Niveau suivant attendent deux joueurs")
+		# Un hôte perdu (chez un client) : message, tout se fige ; M5 (revue finale phase 17) : la boucle du
+		# vomi d'un joueur qui tenait Espace s'arrête
+		var audio: Node = root.get_node("Audio")
+		audio.demarrer_vomi()
 		main._sur_hote_perdu()
 		var message: Label = main.get_node("HotePerdu/Message")
-		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not hud.fin.visible,
-			"l'hôte perdu : « L'hôte a quitté la partie » (à la place du panneau de fin), la partie se fige")
+		_check(message.text == "RESEAU_HOTE_PERDU" and paused and not resultats.visible and not audio._vomi.playing
+			and resultats.process_mode == Node.PROCESS_MODE_DISABLED,
+			"l'hôte perdu : « L'hôte a quitté la partie » (à la place de l'écran Résultats), la partie se fige, la boucle du vomi s'arrête, l'écran Résultats caché ne prend plus les touches (M4 de la revue finale)")
 		paused = false
 		main.free()
 		await _frames(1)
 		reseau.quitter()
 	script_manche.delai_chargement = delai_du_jeu
+	reseau.pseudo = ""
+	GS.configurer_solo()
+	GS.nouvelle_partie()
+	GS.partie_en_cours = false
+	GS.pret = false
+	GS.niveau_courant = 0
+
+
+## Attend la scène `chemin` qui remplace celle d'identifiant `avant` (la même scène rechargée compte),
+## prête ; bornée comme `_attendre_scene`.
+func _attendre_nouvelle_scene(chemin: String, avant: int, max_ms: int = 5000) -> Node:
+	var fin := Time.get_ticks_msec() + max_ms
+	while Time.get_ticks_msec() < fin and (current_scene == null or current_scene.get_instance_id() == avant
+			or current_scene.scene_file_path != chemin or not current_scene.is_node_ready()):
+		await process_frame
+	return current_scene
+
+
+## Une manche en réseau chez l'hôte (Bob simulé dans `Reseau.inscrits`, comme `_tester_manche_reseau`),
+## jusqu'à la barrière passée : la scène de jeu `main` (déjà chargée).
+func _passer_la_barriere(_main: Node) -> void:
+	await _frames(2)
+	root.get_node("Reseau")._noter_scene_chargee(7)  # comme la RPC de Bob
+	await _frames(2)
+	GS.pret = true  # sans attendre l'intro
+
+
+## Phase 18 : l'écran Résultats chez l'hôte en réseau, et ses choix (les échanges entre postes sont
+## couverts par tests/reseau/lancer.sh, scénario 13) : Revanche relance la manche chez tous (la scène de
+## jeu se recharge, la barrière attend de nouveau chaque joueur), Niveau suivant de même sur le niveau
+## suivant, un choix que l'hôte ne peut plus suivre se regrise, Retour au salon ramène au salon, la même
+## table, personne prêt, les arrivées de nouveau acceptées.
+func _tester_resultats_reseau() -> void:
+	print("-- Écran Résultats en réseau (hôte)")
+	var reseau: Node = root.get_node("Reseau")
+	var palette: Array[Color] = EtatPartie.PALETTE_BATAILLE
+	reseau.pseudo = "Hôte"
+	_check(reseau.heberger(17799) == OK, "(pré-condition) ce poste héberge")
+	reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+	reseau.inscrits[1].pret = true
+	GS.niveau_courant = 0
+	reseau.niveau_salon = 0
+	_check(reseau.lancer_manche(), "(pré-condition) l'hôte lance la manche depuis le salon")
+	var lancements := [0]
+	var compter := func(_f: Array[Dictionary]) -> void: lancements[0] += 1
+	reseau.manche_lancee.connect(compter)
+	GS.configurer_bataille_reseau(reseau.fiches_de_manche(reseau.table_salon, 1))
+	var main: Node = load("res://Scenes/Main.tscn").instantiate()
+	root.add_child(main)
+	current_scene = main
+	await _passer_la_barriere(main)
+	for _k in range(3):
+		main.get_node("Ville").territoire.tamponner(0, Vector2i(1000, 200), 40)
+	_check(main.get_node("Ville").territoire.cellules_de(0) > 0, "(pré-condition) l'hôte a peint pendant la première manche")
+	GS.terminer_partie(true)
+	await _frames(1)
+	_check(main.resultats != null and main.resultats.hote and main.resultats.possible(&"revanche") and main.resultats.possible(&"salon"),
+		"(pré-condition) la manche finie, l'écran Résultats de l'hôte, Bob encore là : Revanche possible")
+	# Revanche : la manche se relance chez tous, la scène de jeu se recharge et attend chaque joueur ;
+	# M7 de la revue finale : le vrai bouton cliqué (un clic n'agit qu'une fois l'animation finie, M2)
+	var id_premiere := main.get_instance_id()
+	main.resultats.terminer_animation()
+	main.resultats.bouton_revanche.pressed.emit()
+	var revanche: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_premiere)
+	_check(revanche != null and revanche.get_instance_id() != id_premiere and not is_instance_valid(main) and lancements[0] == 1 and reseau.manche_en_cours
+		and not paused and revanche.en_reseau and not revanche.get_node("Manche").barriere and reseau.scenes_chargees == [1]
+		and GS.niveau_courant == 0 and GS.joueurs.size() == 2 and GS.joueurs[1].pseudo == "Bob" and revanche.resultats == null,
+		"Revanche : la manche se relance (même niveau, mêmes joueurs), la scène de jeu se recharge et attend Bob à la barrière")
+	await _passer_la_barriere(revanche)
+	_check(revanche.lions.size() == 2 and revanche.get_node("Ville").territoire.cellules_de(0) == 0 and GS.temps_ecoule == 0.0,
+		"la barrière passée : les deux lions, un territoire vierge, le chrono à zéro")
+	# Niveau suivant : de même, sur le niveau suivant
+	GS.terminer_partie(true)
+	await _frames(1)
+	var id_revanche := revanche.get_instance_id()
+	revanche.resultats.terminer_animation()
+	revanche.resultats.bouton_suivant.pressed.emit()  # M7 de la revue finale : le vrai bouton cliqué
+	var suivante: Node = await _attendre_nouvelle_scene("res://Scenes/Main.tscn", id_revanche)
+	_check(suivante != null and lancements[0] == 2 and GS.niveau_courant == 1 and reseau.niveau_salon == 1 and not paused,
+		"Niveau suivant : la manche se relance sur le niveau suivant (Métropole), annoncé à chaque poste avec la table")
+	await _passer_la_barriere(suivante)
+	GS.terminer_partie(true)
+	await _frames(1)
+	var resultats: CanvasLayer = suivante.resultats
+	# Bob part sur l'écran Résultats : il se grise ; seul, l'hôte ne peut plus relancer
+	reseau._sur_pair_deconnecte(7)
+	await _frames(1)
+	_check(resultats.partis == [false, true] and resultats.lignes.any(func(l: Dictionary) -> bool: return l.index == 1 and l.badge.text == "PARTI")
+		and not resultats.possible(&"revanche") and resultats.bouton_revanche.disabled and resultats.etat.text == tr("SALON_ATTENTE_JOUEURS"),
+		"Bob part sur l'écran Résultats : sa ligne se grise, Revanche et Niveau suivant attendent deux joueurs")
+	# M5 de la revue finale : Revanche (sélectionnée à l'ouverture) devient impossible avec Bob parti ;
+	# la sélection ne doit pas y rester sans rien mettre en évidence : Retour au salon, le premier
+	# choix de CHOIX encore possible et visible
+	_check(resultats.selection == &"salon", "M5 : la sélection quitte Revanche (devenu impossible) pour Retour au salon, encore possible")
+	resultats.choix = &"revanche"  # le choix fait (boutons grisés) au moment même où Bob part
+	suivante._sur_choix_resultats(&"revanche")  # l'hôte qui ne peut plus suivre : refusé, le choix se regrise
+	await _frames(2)
+	_check(current_scene == suivante and lancements[0] == 2 and resultats.choix.is_empty() and reseau.manche_en_cours,
+		"une relance que l'hôte ne peut plus suivre est refusée : l'écran reste, on peut encore choisir")
+	# Retour au salon : la même table (Bob en moins), personne prêt, les arrivées de nouveau acceptées ;
+	# M7 de la revue finale : le vrai bouton cliqué (un clic n'agit qu'une fois l'animation finie, M2)
+	var balise_manche: bool = reseau.manche_en_cours
+	# M8 de la revue finale : la vérification plus bas (aucune connexion aux autoloads) tournait après
+	# que l'ancien Main (`suivante`) soit libéré par le changement de scène : un objet déjà libéré ne
+	# peut plus détenir de connexion, qu'il se soit bien désabonné ou non dans `_exit_tree`, donc la
+	# vérification ne pouvait jamais échouer. On la fait plutôt dans `tree_exited`, juste après que
+	# `suivante` ait quitté l'arbre mais avant sa libération (encore un objet valide à cet instant).
+	var connexions_avant_liberation: Array[String] = []
+	suivante.tree_exited.connect(func() -> void:
+		for sig: Signal in [reseau.manche_lancee, reseau.salon_rouvert, reseau.hote_perdu]:
+			for connexion in sig.get_connections():
+				if connexion.callable.get_object() == suivante:
+					connexions_avant_liberation.append(String(sig.get_name())))
+	resultats.terminer_animation()
+	resultats.bouton_salon.pressed.emit()
+	var salon: Node = await _attendre_scene("res://Scenes/Salon.tscn")
+	_check(salon != null and salon.scene_file_path == "res://Scenes/Salon.tscn" and not paused and balise_manche and not reseau.manche_en_cours
+		and reseau.table_salon.map(func(f: Dictionary) -> int: return f.id) == [1] and not reseau.inscrits[1].pret
+		and salon.titre_niveau.text == "Niveau : Métropole",
+		"Retour au salon : le salon de l'hôte s'ouvre sur la même table (Bob parti), personne prêt, le niveau gardé, les arrivées acceptées")
+	_check(connexions_avant_liberation.is_empty(),
+		"M8 : l'ancien Main (parti au retour au salon) n'avait déjà plus aucune connexion aux autoloads, avant même d'être libéré (%s)" % [connexions_avant_liberation])
+	reseau.manche_lancee.disconnect(compter)
+	if salon != null:
+		salon.free()
+	await _frames(1)
+	_check(reseau.manche_lancee.get_connections().is_empty() and reseau.salon_rouvert.get_connections().is_empty()
+		and reseau.hote_perdu.get_connections().is_empty(),
+		"les scènes de jeu fermées et le salon ne laissent aucune connexion aux autoloads")
+	# Revue de la tâche 5 (phase 18) : un pair parti dans l'image entre l'ancienne manche (désabonnée de
+	# `Reseau.joueur_parti` dans son `_exit_tree`) et la neuve (abonnée seulement à `demarrer`, une image
+	# plus tard) n'était jamais marqué parti : Bob quitte `Reseau.inscrits` avant même l'ajout du nouveau
+	# `Main`, comme s'il était parti pendant cette image-là.
+	reseau.inscrits[7] = {"index": 1, "couleur": palette[3], "pseudo": "Bob", "arrive": true, "pret": true}
+	GS.niveau_courant = 0
+	GS.configurer_bataille_reseau([{"id_reseau": 1, "pseudo": "Hôte", "couleur": palette[0]},
+		{"id_reseau": 7, "pseudo": "Bob", "couleur": palette[3]}] as Array[Dictionary])
+	reseau.inscrits.erase(7)
+	var main3: Node = load("res://Scenes/Main.tscn").instantiate()
+	root.add_child(main3)
+	current_scene = main3
+	await _frames(2)
+	var manche3: Node = main3.get_node("Manche")
+	var hud3: CanvasLayer = main3.hud_bataille
+	_check(manche3.barriere and manche3._partis == [1] and main3.lions.size() == 1
+		and hud3.partis == [false, true] and hud3.vignettes[1].badge.text == "PARTI",
+		"revue de la tâche 5 : un pair parti dans l'image entre deux manches est marqué parti dès la manche neuve, sans attendre la barrière")
+	main3.free()
+	await _frames(1)
+	reseau.quitter()
 	reseau.pseudo = ""
 	GS.configurer_solo()
 	GS.nouvelle_partie()

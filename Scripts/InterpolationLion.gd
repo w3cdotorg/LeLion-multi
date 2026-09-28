@@ -7,16 +7,16 @@ extends RefCounted
 ## deux autres, qui suffisent. L'horloge d'affichage avance d'un tick par tick physique du client et se
 ## recale en douceur sur le dernier instant reçu (RATTRAPAGE de l'écart par tick), d'un coup au-delà
 ## d'ECART_MAX (premier état, gel d'un des postes). Plus aucun état : le lion continue sur sa vitesse
-## EXTRAPOLATION_MAX ticks au plus, puis revient au même pas sur le dernier état reçu, où il s'arrête.
-## Un hôte figé ou en pause (fin de manche) n'envoie plus d'état neuf : arrêté en avance sur lui, le
-## lion resterait chez ce client, jusqu'au bout, EXTRAPOLATION_MAX ticks de sa vitesse plus loin que
-## chez l'hôte (mesuré au test réseau : 29 px pour un recul de 580 px/s ; 17,5 px à pleine vitesse).
+## EXTRAPOLATION_MAX ticks au plus, puis s'arrête là, sans jamais revenir en arrière (M2, revue finale
+## phase 16 : le retour vers le dernier état reçu faisait glisser le lion à reculons pendant un accroc
+## du Wi-Fi, puis sauter en avant à la reprise). À la fin de la manche, l'hôte ne diffuse plus d'état :
+## c'est le bilan de sa fin qui pose chez chaque client l'état final de chaque lion
+## (`Lion.poser_etat_final`, phase 18).
 
 ## Retard d'affichage, en ticks de l'hôte (100 ms à 60 ticks par seconde) : plus que la gigue simulée
 ## (40 ms) et deux états perdus de suite (2 × 16,7 ms).
 const RETARD := 6.0
-## Au-delà du dernier état reçu, le lion continue sur sa vitesse au plus autant de ticks, puis revient
-## sur cet état en autant de ticks.
+## Au-delà du dernier état reçu, le lion continue sur sa vitesse au plus autant de ticks, puis s'arrête.
 const EXTRAPOLATION_MAX := 3.0
 const RATTRAPAGE := 0.05
 const ECART_MAX := 30.0
@@ -83,13 +83,11 @@ func echantillon() -> Dictionary:
 			a = _etats[i]
 			var t: float = (_horloge - a.instant) / float(b.instant - a.instant)
 			return {"position": a.position.lerp(b.position, t), "vitesse": a.vitesse.lerp(b.vitesse, t), "direction": a.direction}
-	# Au-delà du dernier état : EXTRAPOLATION_MAX ticks sur sa vitesse, puis le retour au même pas, et
-	# le dernier état lui-même, à l'arrêt (l'horloge d'un hôte figé plafonne à 1 / RATTRAPAGE - 1 -
-	# RETARD = 13 ticks au-delà)
+	# Au-delà du dernier état : EXTRAPOLATION_MAX ticks sur sa vitesse au plus, puis à l'arrêt, là (M2)
 	var dernier: Dictionary = _etats[-1]
 	var au_dela: float = _horloge - dernier.instant
-	var avance := maxf(0.0, EXTRAPOLATION_MAX - absf(au_dela - EXTRAPOLATION_MAX))
-	var vitesse: Vector2 = dernier.vitesse if au_dela <= EXTRAPOLATION_MAX else Vector2.ZERO
+	var avance := minf(au_dela, EXTRAPOLATION_MAX)
+	var vitesse: Vector2 = dernier.vitesse if au_dela < EXTRAPOLATION_MAX else Vector2.ZERO
 	return {"position": dernier.position + dernier.vitesse * avance / _ticks_par_seconde, "vitesse": vitesse, "direction": dernier.direction}
 
 

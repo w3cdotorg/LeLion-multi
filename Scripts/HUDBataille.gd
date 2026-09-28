@@ -12,12 +12,9 @@ extends CanvasLayer
 ## à la fin de sa propre intro), les réactions par les signaux des joueurs (répliqués par la manche) ;
 ## les secondes de la gerbe XXL se décomptent ici (sur un client, `Joueur.bonus_restant` reste la
 ## durée reçue au début de la gerbe). À la fin de la manche (`GameState.partie_terminee`, chez un
-## client la fin décidée par l'hôte), le panneau de fin : le gagnant, ou les ex æquo, et la sortie
-## (Échap, Start ou le bouton : retour au titre, qui quitte le réseau) jusqu'à l'écran Résultats de la
-## phase 18. Tourne aussi l'arbre en pause (le panneau de fin et sa sortie) ; le reste ne bouge pas
-## pendant une pause.
+## client la fin décidée par l'hôte), il se rafraîchit une dernière fois ; l'écran Résultats (phase 18,
+## `Resultats`) prend alors sa place. Ne bouge pas pendant une pause.
 
-const SCENE_TITRE := "res://Scenes/Titre.tscn"
 const TEXTURE_LION := preload("res://Assets/Sprites/LionHead.png")
 const SHADER_TEINTE := preload("res://Shaders/Lion.gdshader")
 ## La couronne sur la tête du lion de la vignette (56 px) : sa place, sa taille et son inclinaison (de
@@ -52,8 +49,6 @@ var tics_joues := 0
 @onready var gauche: HBoxContainer = $Haut/Gauche
 @onready var droite: HBoxContainer = $Haut/Droite
 @onready var chrono: Label = $Haut/Chrono
-@onready var fin: CenterContainer = $Fin
-@onready var gagnant: Label = $Fin/Panneau/Colonne/Gagnant
 
 var _secondes_vues := -1
 ## Le style des points de crans, partagé (un point vide n'est qu'estompé : `modulate`, sans changer
@@ -64,11 +59,6 @@ var _style_point := StyleBoxFlat.new()
 func _ready() -> void:
 	_style_point.bg_color = Color.WHITE
 	_style_point.set_corner_radius_all(6)
-	var fond_fin := StyleBoxFlat.new()
-	fond_fin.bg_color = Color(0.05, 0.03, 0.1, 0.82)
-	fond_fin.set_corner_radius_all(24)
-	fond_fin.set_content_margin_all(48)
-	$Fin/Panneau.add_theme_stylebox_override("panel", fond_fin)
 	var nb := GameState.joueurs.size()
 	for i in range(nb):
 		var joueur: Joueur = GameState.joueurs[i]
@@ -85,8 +75,6 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if get_tree().paused:
-		return
 	if GameState.partie_en_cours and GameState.pret:
 		for i in range(xxl_restant.size()):
 			xxl_restant[i] = maxf(xxl_restant[i] - delta, 0.0)
@@ -99,21 +87,6 @@ func _process(delta: float) -> void:
 		create_tween().tween_property(chrono, "scale", Vector2.ONE, 0.3)
 	_secondes_vues = secondes
 	rafraichir()
-
-
-## Échap (ou Start) une fois la manche finie : la sortie (le menu local est désactivé à la fin).
-func _unhandled_input(event: InputEvent) -> void:
-	if fin.visible and event.is_action_pressed("pause"):
-		get_viewport().set_input_as_handled()
-		quitter()
-
-
-## Retour au titre, qui quitte le réseau (en attendant l'écran Résultats de la phase 18). Ne dépause
-## pas ici (N1, revue finale phase 17) : `Titre._ready` le fait déjà, une fois la scène changée ; sinon
-## l'arbre repart pour le pas physique de cette image avant même la libération de la scène (sans effet
-## aujourd'hui, mais la phase 18 changera de scène par RPC : Revanche, Salon).
-func quitter() -> void:
-	get_tree().change_scene_to_file(SCENE_TITRE)
 
 
 ## Le joueur d'index `index` a quitté la manche : sa vignette reste, en grisé, avec ses cellules.
@@ -200,26 +173,9 @@ func _sur_bonus_dure(duree: float, index: int) -> void:
 
 
 ## Fin de la manche : les scores définitifs (le dernier territoire de l'hôte est déjà appliqué chez un
-## client : il arrive avant la fin, sur le même canal), puis le panneau de fin.
+## client : il arrive avant la fin, sur le même canal) ; l'écran Résultats prend ensuite la place du HUD.
 func _sur_fin(_victoire: bool) -> void:
 	rafraichir()
-	var rangs := ReglesBataille.rangs(_cellules())
-	var meneurs := PackedStringArray()
-	for i in range(rangs.size()):
-		if rangs[i] == 1:
-			meneurs.append(nom_affiche(GameState.joueurs[i]))
-	gagnant.text = texte_gagnant(meneurs)
-	fin.show()
-
-
-## La ligne du panneau de fin pour les meneurs `meneurs` (leurs noms) : le gagnant, les ex æquo, ou
-## personne (aucune cellule peinte).
-func texte_gagnant(meneurs: PackedStringArray) -> String:
-	if meneurs.is_empty():
-		return tr("BATAILLE_PERSONNE")
-	if meneurs.size() == 1:
-		return tr("BATAILLE_GAGNANT") % meneurs[0]
-	return tr("BATAILLE_EGALITE") % ", ".join(meneurs)
 
 
 func _creer_vignette(joueur: Joueur) -> Dictionary:
