@@ -93,11 +93,11 @@ jobs:
           VERSION="$(sed -n 's/^config\/version="\(.*\)"$/\1/p' project.godot)"
           # Les chaînes de la ressource de version (UTF-16) : le nom que montrent l'explorateur et la
           # fenêtre du pare-feu, la version du jeu sur quatre nombres.
-          wrestool -x --type=16 "$EXE" | strings -el > version_exe.txt
+          wrestool -x --raw --type=16 "$EXE" | strings -el > version_exe.txt
           cat version_exe.txt
           grep -qxF "LeLion multi" version_exe.txt || { echo "::error::le nom LeLion multi manque aux métadonnées de l'exe"; exit 1; }
           grep -qxF "${VERSION}.0.0" version_exe.txt || { echo "::error::la version ${VERSION}.0.0 manque aux métadonnées de l'exe"; exit 1; }
-          if [ "$(wrestool -x --type=3 "$EXE" | sha256sum)" = "$(wrestool -x --type=3 "$MODELE" | sha256sum)" ]; then
+          if [ "$(wrestool -x --raw --type=3 "$EXE" | sha256sum)" = "$(wrestool -x --raw --type=3 "$MODELE" | sha256sum)" ]; then
             echo "::error::l'exe porte encore l'icône de Godot"; exit 1
           fi
 
