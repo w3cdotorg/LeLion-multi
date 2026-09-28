@@ -5,7 +5,7 @@ extends SceneTree
 var _echecs := 0
 ## La version du protocole et son empreinte, mesurées (`_tester_protocole`).
 const PROTOCOLE_VERSION := "0.19"
-const PROTOCOLE_EMPREINTE := 3329073800
+const PROTOCOLE_EMPREINTE := 2537463811
 
 
 func _init() -> void:
@@ -1703,6 +1703,9 @@ func _tester_joueur_replique() -> void:
 		and Regles.position_dans(Vector2i(-50, -10), Vector2i(1400, 819), zone) == Vector2i(0, 0)
 		and Regles.position_dans(Vector2i(1920 + 100, 0), Vector2i(1400, 819), Rect2i(1920, 0, 1280, 984)) == Vector2i(1920, 0),
 		"une fenêtre qui sort de la zone utile y revient, collée au bord qu'elle dépassait (au coin si elle est plus grande, second écran compris)")
+	_check(Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), Rect2i(0, 0, 0, 0)) == Vector2i(700, 400)
+		and Regles.position_dans(Vector2i(700, 400), Vector2i(1400, 819), Rect2i(0, 0, 1920, 0)) == Vector2i(700, 400),
+		"une zone utile sans surface (écran inconnu) ne fait pas reposer la fenêtre, comme taille_bornee")
 
 
 
@@ -2341,11 +2344,21 @@ func _tester_manches_enchainees() -> void:
 		"M6 : un lancement plus ancien que la table posée lance la manche sur sa propre table et son niveau, sans reposer la table")
 	reseau.quitter()
 	_check(reseau.numero_table == 0 and reseau.niveau_manche == 0, "hors session, plus de numéro de table ni de niveau de manche")
-	# Chez l'hôte, chaque table diffusée a un numéro de plus ; le lancement porte celui de sa table
+	# Chez l'hôte, chaque table diffusée a un numéro de plus
 	reseau.ouvrir_salon(0)
 	var premier: int = reseau.numero_table
 	reseau.definir_niveau(1)
 	_check(premier == 1 and reseau.numero_table == 2, "chez l'hôte, chaque table diffusée prend le numéro suivant (%d puis %d)" % [premier, reseau.numero_table])
+	# Le lancement diffuse une table de plus et porte son numéro (M6) ; le niveau de la manche
+	# (`Reseau.niveau_manche`) devient celui du salon au lancement
+	var id_hote: int = root.multiplayer.get_unique_id()
+	reseau.inscrits[id_hote] = {"index": 0, "couleur": palette[0], "pseudo": "Hôte", "arrive": true, "pret": true}
+	reseau.inscrits[99] = {"index": 1, "couleur": palette[1], "pseudo": "Autre", "arrive": true, "pret": true}
+	var avant_lancement: int = reseau.numero_table
+	var niveau_salon_avant: int = reseau.niveau_salon
+	_check(reseau.lancer_manche() and reseau.numero_table == avant_lancement + 1 and reseau.niveau_manche == niveau_salon_avant
+		and lancements[-1].map(func(f: Dictionary) -> int: return f.id_reseau) == [id_hote, 99],
+		"le lancement diffuse une table de plus (%d) et porte son numéro, le niveau de la manche est celui du salon" % reseau.numero_table)
 	reseau.quitter()
 	reseau.manche_lancee.disconnect(sur_lancement)
 	reseau.salon_rouvert.disconnect(sur_retour)
@@ -2393,8 +2406,10 @@ func _tester_protocole() -> void:
 
 ## Ce qui fait le protocole réseau, une ligne par élément, dans un ordre fixe : chaque RPC des scripts qui
 ## en déclarent (nom, nombre d'arguments, mode, transfert, appel local, canal), les propriétés répliquées
-## des scènes (`MultiplayerSynchronizer`) et les scènes que fait apparaître la scène de jeu, les tailles des
-## formats réseau, et une balise de découverte.
+## des scènes (`MultiplayerSynchronizer`) et les scènes que fait apparaître la scène de jeu (`root_path`,
+## `spawn_path`, les en-têtes `[node …]` des `MultiplayerSynchronizer` et `MultiplayerSpawner`, M9 de la
+## revue finale : renommer un tel nœud ou changer son `spawn_path` doit faire échouer ce test), les
+## tailles des formats réseau, et une balise de découverte.
 func _signature_protocole() -> PackedStringArray:
 	var lignes := PackedStringArray()
 	for fichier in _fichiers_du_dossier("res://Scripts", ".gd"):
@@ -2416,7 +2431,9 @@ func _signature_protocole() -> PackedStringArray:
 				c.get("transfer_mode"), c.get("call_local"), c.get("channel", 0)])
 	for fichier in _fichiers_du_dossier("res://Scenes", ".tscn"):
 		for ligne in FileAccess.get_file_as_string("res://Scenes".path_join(fichier)).split("\n"):
-			if ligne.begins_with("properties/") or ligne.begins_with("_spawnable_scenes"):
+			if ligne.begins_with("properties/") or ligne.begins_with("_spawnable_scenes") \
+					or ligne.begins_with("root_path") or ligne.begins_with("spawn_path") \
+					or (ligne.begins_with("[node") and (ligne.contains("type=\"MultiplayerSynchronizer\"") or ligne.contains("type=\"MultiplayerSpawner\""))):
 				lignes.append("%s %s" % [fichier, ligne.strip_edges()])
 	lignes.append("formats %d %d %d %d %d %d %d %d" % [EtatLion.TAILLE, BilanManche.CHAMPS, BilanManche.TAILLE_LION,
 		Commandes.TAILLE_ENTETE, Commandes.TAILLE_COMMANDE, Commandes.REDONDANCE, Peinture.OCTETS_PAR_TAMPON,

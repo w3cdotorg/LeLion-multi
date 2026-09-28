@@ -1,5 +1,5 @@
 extends SceneTree
-## Une partie à deux vraies fenêtres sur ce poste (◉, phases 14 et 19 ; la CI ne la lance pas) : un hôte
+## Une partie à deux vraies fenêtres sur ce poste (◉, phases 14 et 19 ; la CI la déroule sans rendu (pas « Captures »)) : un hôte
 ## et un client passent par l'écran Réseau et le salon, jouent une manche courte au clavier simulé,
 ## voient le même écran Résultats, puis l'hôte quitte et le client le voit partir. Deux processus :
 ##   godot --path . --rendering-driver opengl3 --script tests/deux_fenetres.gd -- --role=hote --dossier=<dossier>
@@ -16,9 +16,13 @@ const DUREE_MANCHE := 15.0
 
 var dossier := ""
 var role := ""
+## L'instant de lancement de ce processus (epoch Unix) : un fichier de rendez-vous plus
+## ancien (d'un tour précédent dans le même `--dossier`) ne compte pas comme passé.
+var debut_epoch := 0.0
 
 
 func _init() -> void:
+	debut_epoch = Time.get_unix_time_from_system()
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dossier="):
 			dossier = arg.trim_prefix("--dossier=")
@@ -58,11 +62,31 @@ func _signaler(nom: String) -> void:
 	FileAccess.open(dossier.path_join("%s_%s" % [role, nom]), FileAccess.WRITE).store_string("ok")
 
 
-## Attend que l'autre poste ait passé l'étape `nom` (30 s au plus).
+## Attend que l'autre poste ait passé l'étape `nom` (30 s au plus). N'accepte un fichier de
+## rendez-vous existant que s'il date d'au plus tôt le lancement de ce poste (moins 1 s) :
+## sinon c'est un fichier d'un tour précédent dans le même `--dossier`, laissé par `_signaler`.
 func _attendre_l_autre(nom: String) -> void:
 	var autre := "client" if role == "hote" else "hote"
-	if not await _attendre(func() -> bool: return FileAccess.file_exists(dossier.path_join("%s_%s" % [autre, nom]))):
+	var chemin := dossier.path_join("%s_%s" % [autre, nom])
+	var frais := func() -> bool:
+		return FileAccess.file_exists(chemin) and FileAccess.get_modified_time(chemin) >= debut_epoch - 1
+	if not await _attendre(frais):
 		printerr("❌ l'autre poste n'a pas passé l'étape « %s »" % nom)
+
+
+## Supprime les fichiers de rendez-vous que CE poste a lui-même écrits (jamais ceux de
+## l'autre) : appelé au tout début (un tour précédent dans le même dossier) et après `fin`.
+func _nettoyer_mes_fichiers() -> void:
+	var dir := DirAccess.open(dossier)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var f := dir.get_next()
+	while f != "":
+		if not dir.current_is_dir() and f.begins_with(role + "_"):
+			dir.remove(f)
+		f = dir.get_next()
+	dir.list_dir_end()
 
 
 ## Les deux postes au même point.
@@ -76,6 +100,7 @@ func _run() -> void:
 		printerr("--role=hote|client et --dossier=<chemin>")
 		quit(1)
 		return
+	_nettoyer_mes_fichiers()
 	var reseau: Node = root.get_node("Reseau")
 	var decouverte: Node = root.get_node("Decouverte")
 	var scores: Node = root.get_node("Scores")
@@ -166,4 +191,8 @@ func _run() -> void:
 		await _shot("6_titre")
 	ReglesBataille.duree_manche = ReglesBataille.DUREE_MANCHE
 	scores.effacer()
+	# Après `fin` (et non juste après, pour laisser à l'autre poste le temps de la voir avant
+	# qu'elle disparaisse : sinon une course entre sa détection et cette suppression) : ne pas
+	# laisser de fichiers de rendez-vous pour un tour suivant dans le même `--dossier`.
+	_nettoyer_mes_fichiers()
 	quit(0)

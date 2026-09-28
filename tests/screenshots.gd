@@ -1,5 +1,5 @@
 extends SceneTree
-## Captures pilotées, avec le vrai rendu (pas headless ; la CI ne les lance pas) :
+## Captures pilotées, avec le vrai rendu (pas headless en local ; la CI les déroule sans rendu (pas « Captures »)) :
 ##   godot --path . --rendering-driver opengl3 --script tests/screenshots.gd -- --dossier=<dossier> [--parties=solo,reseau,salon,bataille,resultats]
 ## Écrit ses PNG dans <dossier> (défaut : user://), par partie (toutes par défaut) :
 ##   solo       le titre, une partie solo (gerbe à 3 puis 7 couleurs, ennemis, pause, défaite), une
