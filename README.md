@@ -80,16 +80,23 @@ picks **Rematch**, **Next level** or **Back to lobby** for everyone; anyone can 
 quitting ends the game for everyone (it asks first). Each player uses their own PC's keyboard or
 gamepad, with the solo controls; Esc opens a local menu that does not pause the round.
 
+Windows, Linux and macOS builds of each version are on the
+[Releases](https://github.com/w3cdotorg/LeLion-multi/releases) page; players on different systems
+play together, as long as everyone runs the same version.
+
 ## Jouer en LAN
 
 ### Ce qu'il faut
 
-- Un PC Windows par joueur (2 à 6), tous sur **le même réseau local** : la même box, en Wi-Fi ou
-  par câble. Pas besoin d'Internet pendant la partie.
-- Le même `LeLion-multi.exe` sur chaque PC. Il vient de la CI : sur GitHub, onglet **Actions**, la
-  dernière exécution verte de `main` (ou d'une pull request), **Artifacts** → `LeLion-multi-windows`
-  (un zip ; il faut être connecté à GitHub), qui contient le seul `LeLion-multi.exe` : le jeu est
-  dedans. Deux versions différentes ne jouent pas ensemble (« Version différente de l'hôte (0.19) »).
+- Un ordinateur par joueur (2 à 6), sous Windows, macOS ou Linux (on peut mélanger), tous sur **le
+  même réseau local** : la même box, en Wi-Fi ou par câble. Pas besoin d'Internet pendant la partie.
+- La même version du jeu partout, depuis la page
+  [Releases](https://github.com/w3cdotorg/LeLion-multi/releases) (sans compte GitHub) :
+  `LeLion-multi.exe` pour Windows, `LeLion-multi-macos.zip` pour macOS (Intel et Apple Silicon),
+  `LeLion-multi-linux.tar.gz` pour Linux (x86_64). Chaque fichier contient tout le jeu. Entre deux
+  versions publiées, la CI en fait aussi à chaque passage (onglet **Actions**, **Artifacts**
+  `LeLion-multi-windows`, `-macos`, `-linux` ; il faut être connecté à GitHub). Deux versions
+  différentes ne jouent pas ensemble (« Version différente de l'hôte (0.19) »).
 - Garder l'exe **au même endroit** (par exemple `Documents\LeLion`) et y remplacer le fichier à
   chaque nouvelle version : l'autorisation du pare-feu suit son chemin.
 
@@ -110,6 +117,25 @@ gamepad, with the solo controls; Esc opens a local menu that does not pause the 
    règle par port) : autoriser de la même façon.
 
 Ces fenêtres ne reviennent plus tant que l'exe reste au même endroit.
+
+### Sur Mac
+
+1. Extraire `LeLion-multi-macos.zip` (double clic) et ranger `LeLion.app` dans **Applications**.
+2. L'application n'est pas notarisée par Apple : au premier lancement, macOS refuse de l'ouvrir.
+   **Réglages Système** → **Confidentialité et sécurité** → en bas, « LeLion a été bloqué » →
+   **Ouvrir quand même**, puis confirmer (le mot de passe du Mac est demandé). Autre voie, dans le
+   Terminal : `xattr -dr com.apple.quarantine /Applications/LeLion.app`.
+3. À la première ouverture de l'écran **Multijoueur**, macOS demande si LeLion peut « trouver des
+   appareils sur votre réseau local » : **Autoriser**. Sans cela, la liste des parties reste vide
+   (à rattraper dans Réglages Système → Confidentialité et sécurité → **Réseau local**). Si le
+   pare-feu de macOS est activé et demande d'accepter les connexions entrantes : **Autoriser**.
+
+### Sous Linux
+
+Extraire l'archive (`tar -xzf LeLion-multi-linux.tar.gz`), puis lancer `./LeLion-multi.x86_64`. Le
+jeu tourne de préférence sur Vulkan (sinon OpenGL). Avec un pare-feu actif (ufw, firewalld),
+ouvrir les ports UDP 7777 (sur l'hôte) et 7778 (partout), par exemple
+`sudo ufw allow 7777:7778/udp`.
 
 ### Jouer
 
@@ -146,7 +172,9 @@ réseau → **Autoriser une application via le pare-feu** → **Modifier les par
 sens interdit rouge, puis héberger de nouveau : la fenêtre du premier lancement revient.
 
 Le journal de chaque PC, utile après une soirée qui s'est mal passée :
-`%APPDATA%\Godot\app_userdata\LeLion\logs\godot.log`.
+`%APPDATA%\Godot\app_userdata\LeLion\logs\godot.log` (Windows),
+`~/Library/Application Support/Godot/app_userdata/LeLion/logs/godot.log` (macOS),
+`~/.local/share/godot/app_userdata/LeLion/logs/godot.log` (Linux).
 
 ## Running the game
 
@@ -223,17 +251,24 @@ Sounds are regenerated with `python3 tools/generer_sons.py`, the music with
 ## Export and CI
 
 `export_presets.cfg` defines a Windows Desktop preset (a single `.exe` with the game data embedded,
-the game's icon, name and version in its file properties) and a Web preset (the solo game). With
-the export templates installed:
+the game's icon, name and version in its file properties), a Linux preset (a single x86_64
+executable, data embedded), a macOS preset (a universal `LeLion.app`, Intel and Apple Silicon,
+ad-hoc signed, not notarized, in a `.zip`) and a Web preset (the solo game). With the export
+templates installed:
 
 ```sh
 godot --headless --export-release "Windows Desktop" export/windows/LeLion-multi.exe
+godot --headless --export-release Linux export/linux/LeLion-multi.x86_64
+godot --headless --export-release macOS export/macos/LeLion-multi-macos.zip
 godot --headless --export-release Web export/web/index.html
 ```
 
 The workflow in `.github/workflows/ci.yml` runs on every pull request and every push to `main`: it
 installs Godot 4.7.2 and its export templates, runs the unit tests, the smoke test, the local
 battle test, the prediction bench, the network test (real broadcast included) and the two capture
-scripts without a renderer, exports both builds, checks the icon and metadata of the Windows
-executable, and publishes it as the `LeLion-multi-windows` artifact (kept 30 days). Nothing is
-deployed.
+scripts without a renderer, exports the four builds, checks the icon and metadata of the Windows
+executable, starts the Linux executable headless, checks the macOS app (version, bundle id,
+local-network usage string, ad-hoc signature, universal binary), and publishes the three games as
+the `LeLion-multi-windows`, `LeLion-multi-linux` and `LeLion-multi-macos` artifacts (kept 30 days).
+Pushing a tag `vX.Y` that matches `config/version` in `project.godot` also publishes a GitHub
+Release with the three games (the `release` job refuses a tag that does not match the version).
